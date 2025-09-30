@@ -18,6 +18,16 @@ from airweave.schemas.search import QueryExpansions, QueryExpansionStrategy
 from airweave.search.operations.base import SearchOperation
 
 
+class QueryExpansions(BaseModel):
+    """Structured output for LLM-based query expansions."""
+
+    alternatives: List[str] = Field(
+        ...,
+        description="Alternative query phrasings",
+        max_length=4,
+    )
+
+
 class QueryExpansion(SearchOperation):
     """Expands a query into multiple variations.
 

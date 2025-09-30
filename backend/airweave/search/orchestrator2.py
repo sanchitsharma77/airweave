@@ -20,7 +20,7 @@ from airweave.schemas.search import SearchConfig
 from airweave.search.operations.base import SearchOperation
 
 
-class SearchExecutor:
+class SearchOrchestrator2:
     """Executes search operations in dependency order.
 
     The executor takes a list of operations and executes them in the
@@ -75,26 +75,6 @@ class SearchExecutor:
             # In streaming mode, any operator failure should fail the entire search
             context["streaming_required"] = True
 
-        # Log configuration summary
-        try:
-            ctx.logger.debug(
-                "[SearchExecutor] Config summary: "
-                f"limit={config.limit}, offset={config.offset}, "
-                f"score_threshold={config.score_threshold}, "
-                f"ops={{"
-                f"query_interpretation={'on' if config.query_interpretation else 'off'}, "
-                f"query_expansion={'on' if config.query_expansion else 'off'}, "
-                f"qdrant_filter={'on' if config.qdrant_filter else 'off'}, "
-                f"embedding=on, vector_search=on, "
-                f"recency={'on' if getattr(config, 'recency', None) else 'off'}, "
-                f"reranking={'on' if config.reranking else 'off'}, "
-                f"completion={'on' if config.completion else 'off'}"
-                f"}}"
-            )
-        except Exception:
-            pass
-
-        # Centralized emitter: installs an async emit() on context used by all operators
         op_sequences: Dict[str, int] = {}
         global_sequence: int = 0
         emit_lock = asyncio.Lock()
@@ -181,28 +161,6 @@ class SearchExecutor:
                         await emit(
                             "operator_end", {"name": op.name, "ms": op_time}, op_name=op.name
                         )
-
-                        # Log intermediate state snapshot for key artifacts
-                        try:
-                            snapshot = {
-                                "expanded_queries": len(context.get("expanded_queries", []))
-                                if isinstance(context.get("expanded_queries"), list)
-                                else (1 if context.get("expanded_queries") else 0),
-                                "embeddings": len(context.get("embeddings", []))
-                                if isinstance(context.get("embeddings"), list)
-                                else 0,
-                                "has_filter": bool(context.get("filter")),
-                                "raw_results": len(context.get("raw_results", []))
-                                if isinstance(context.get("raw_results"), list)
-                                else 0,
-                                "final_results": len(context.get("final_results", []))
-                                if isinstance(context.get("final_results"), list)
-                                else 0,
-                                "has_completion": bool(context.get("completion")),
-                            }
-                            ctx.logger.debug(f"[SearchExecutor] State after {op.name}: {snapshot}")
-                        except Exception:
-                            pass
 
                     except Exception as e:
                         # Log the error and always fail the search
@@ -433,3 +391,6 @@ class SearchExecutor:
             await emitter(event_type, data)
 
     # Note: cleaning of results is handled at response-building level, not during streaming
+
+
+orchestrator = SearchOrchestrator()

@@ -1,0 +1,14 @@
+search_defaults:
+  offset: 0
+  limit: 1000
+
+  retrieval_strategy: hybrid
+
+  temporal_relevance: 0.3
+
+  user_filter: null
+
+  expand_query: true
+  interpret_filters: false
+  rerank: true
+  generate_answer: true

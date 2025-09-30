@@ -58,7 +58,7 @@ Here's the context with entity IDs:
 """
 
 
-class CompletionGeneration(SearchOperation):
+class Completion(SearchOperation):
     """Generates AI completions from search results.
 
     This operation takes the search results and generates a natural

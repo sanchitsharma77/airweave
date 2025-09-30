@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Literal
 from airweave.search.operations.base import SearchOperation
 
 
-class Embedding(SearchOperation):
+class EmbedQuery(SearchOperation):
     """Generates vector embeddings for queries.
 
     This operation takes text queries (original or expanded) and

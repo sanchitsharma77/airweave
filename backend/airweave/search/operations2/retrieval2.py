@@ -10,7 +10,7 @@ from uuid import UUID
 from airweave.search.operations.base import SearchOperation
 
 
-class VectorSearch(SearchOperation):
+class Retrieval(SearchOperation):
     """Performs vector similarity search in Qdrant.
 
     This is the core search operation that queries the vector database

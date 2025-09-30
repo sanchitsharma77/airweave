@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from airweave.search.operations.base import SearchOperation
 
 
-class QdrantFilterOperation(SearchOperation):
+class QdrantFilter(SearchOperation):
     """Applies user-provided Qdrant filters to search.
 
     This operation takes the filter from the SearchRequest (if any)

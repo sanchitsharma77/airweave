@@ -23,7 +23,7 @@ from qdrant_client.http import models as rest
 from airweave.search.operations.base import SearchOperation
 
 
-class RecencyBias(SearchOperation):
+class TemporalRelevance(SearchOperation):
     """Compute dynamic DecayConfig before search and store it in context."""
 
     # Fraction of the data age span to use as the decay scale
