@@ -43,6 +43,13 @@ class TestSettings(BaseSettings):
 
     TEST_GOOGLE_CLIENT_SECRET: str = Field(description="Google OAuth client secret for BYOC")
 
+    # OAuth1 test credentials
+    TEST_TRELLO_CONSUMER_KEY: str = Field(
+        description="Trello OAuth1 consumer key (API key) for BYOC"
+    )
+
+    TEST_TRELLO_CONSUMER_SECRET: str = Field(description="Trello OAuth1 consumer secret for BYOC")
+
     TEST_PIPEDREAM_PROJECT_ID: str = Field(description="Pipedream project ID for BYOC")
     TEST_PIPEDREAM_ACCOUNT_ID: str = Field(description="Pipedream account ID for BYOC")
     TEST_PIPEDREAM_EXTERNAL_USER_ID: str = Field(description="Pipedream external user ID for BYOC")

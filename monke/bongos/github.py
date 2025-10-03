@@ -197,16 +197,128 @@ class GitHubBongo(BaseBongo):
         return deleted_paths
 
     async def cleanup(self):
-        """Clean up any remaining test data."""
-        self.logger.info("🧹 Cleaning up remaining test data in GitHub")
+        """Comprehensive cleanup of all test data from GitHub repository."""
+        self.logger.info("🧹 Starting comprehensive GitHub cleanup")
 
-        # Force delete any remaining test files
-        for test_file in self.test_files:
-            try:
-                await self._force_delete_file(test_file["path"])
-                self.logger.info(f"🧹 Force deleted file: {test_file['path']}")
-            except Exception as e:
-                self.logger.warning(f"⚠️ Could not force delete file {test_file['path']}: {e}")
+        cleanup_stats = {"files_deleted": 0, "errors": 0}
+
+        try:
+            # First, delete current session files
+            if self.test_files:
+                self.logger.info(f"🗑️ Cleaning up {len(self.test_files)} current session files")
+                for test_file in self.test_files:
+                    try:
+                        await self._force_delete_file(test_file["path"])
+                        cleanup_stats["files_deleted"] += 1
+                        self.logger.info(f"🧹 Force deleted file: {test_file['path']}")
+                    except Exception as e:
+                        cleanup_stats["errors"] += 1
+                        self.logger.warning(
+                            f"⚠️ Could not force delete file {test_file['path']}: {e}"
+                        )
+
+                self.test_files.clear()
+
+            # Search for any remaining monke test files in the repository
+            await self._cleanup_orphaned_test_files(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['files_deleted']} files deleted, "
+                f"{cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_files(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test files from previous runs."""
+        try:
+            async with httpx.AsyncClient() as client:
+                # Get repository contents
+                response = await client.get(
+                    f"https://api.github.com/repos/{self.repo_name}/contents/",
+                    headers={
+                        "Authorization": f"token {self.personal_access_token}",
+                        "Accept": "application/vnd.github.v3+json",
+                    },
+                    params={"ref": self.branch},
+                )
+
+                if response.status_code == 200:
+                    files = response.json()
+
+                    # Filter for test files with monke patterns
+                    test_patterns = ["monke", "test", "demo", "sample"]
+                    test_files = []
+
+                    for file in files:
+                        if file["type"] == "file":
+                            filename_lower = file["name"].lower()
+                            # Check if filename contains any test patterns
+                            if any(pattern in filename_lower for pattern in test_patterns):
+                                # Also check for UUID patterns (our tokens)
+                                if (
+                                    "-" in file["name"]
+                                    and len(file["name"].split("-")[-1].split(".")[0]) == 8
+                                ):
+                                    test_files.append(file)
+
+                    if test_files:
+                        self.logger.info(
+                            f"🔍 Found {len(test_files)} potential test files to clean"
+                        )
+
+                        # Delete all test files in parallel
+                        async def delete_orphaned_file(file_info):
+                            try:
+                                await self._rate_limit()
+                                # Use the request method for DELETE with body
+                                import json
+
+                                del_response = await client.request(
+                                    "DELETE",
+                                    f"https://api.github.com/repos/{self.repo_name}/contents/{file_info['path']}",
+                                    headers={
+                                        "Authorization": f"token {self.personal_access_token}",
+                                        "Accept": "application/vnd.github.v3+json",
+                                        "Content-Type": "application/json",
+                                    },
+                                    data=json.dumps(
+                                        {
+                                            "message": f"Cleanup: Remove orphaned test file {file_info['name']}",
+                                            "sha": file_info["sha"],
+                                            "branch": self.branch,
+                                        }
+                                    ),
+                                )
+
+                                if del_response.status_code == 200:
+                                    stats["files_deleted"] += 1
+                                    self.logger.info(
+                                        f"✅ Deleted orphaned file: {file_info['name']}"
+                                    )
+                                else:
+                                    stats["errors"] += 1
+                                    self.logger.warning(
+                                        f"⚠️ Failed to delete {file_info['name']}: {del_response.status_code}"
+                                    )
+                            except Exception as e:
+                                stats["errors"] += 1
+                                self.logger.warning(
+                                    f"⚠️ Failed to delete file {file_info['name']}: {e}"
+                                )
+
+                        # Delete all orphaned files in parallel
+                        await asyncio.gather(
+                            *[delete_orphaned_file(f) for f in test_files], return_exceptions=True
+                        )
+                    else:
+                        self.logger.info("✅ No orphaned test files found")
+                else:
+                    self.logger.warning(
+                        f"⚠️ Could not list repository contents: {response.status_code}"
+                    )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned files: {e}")
 
     # Helper methods for GitHub API calls
     async def _create_test_file(self, filename: str, content: str) -> Dict[str, Any]:

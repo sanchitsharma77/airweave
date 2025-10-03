@@ -1,4 +1,19 @@
 integrations:
+  airtable:
+    oauth_type: "with_refresh"
+    url: "https://airtable.com/oauth2/v1/authorize"
+    backend_url: "https://airtable.com/oauth2/v1/token"
+    grant_type: "authorization_code"
+    client_id: "8d29922c-a4e0-4633-880c-8f3f887f768e"
+    client_secret: "airtable-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "header"
+    scope: "schema.bases:read data.records:read data.recordComments:read"
+    requires_pkce: true
+    additional_frontend_params:
+      response_type: "code"
+
+
   asana:
     oauth_type: "with_refresh"
     url: "https://app.asana.com/-/oauth_authorize"
@@ -9,7 +24,20 @@ integrations:
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"
 
+  attio:
+
   bitbucket:
+
+  box:
+    oauth_type: "with_refresh"
+    url: "https://account.box.com/api/oauth2/authorize"
+    backend_url: "https://api.box.com/oauth2/token"
+    grant_type: "authorization_code"
+    client_id: "9v2ljrwlogpn0j6xm7prup7lp0ql4t2y"
+    client_secret: "box-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "root_readwrite"
 
   confluence:
     oauth_type: "with_rotating_refresh"
@@ -40,6 +68,17 @@ integrations:
       token_access_type: "offline"
 
   github:
+
+  gitlab:
+    oauth_type: "with_refresh"
+    url: "https://gitlab.com/oauth/authorize"
+    backend_url: "https://gitlab.com/oauth/token"
+    grant_type: "authorization_code"
+    client_id: "624ae3aab6bfaded8f98c0335a6f4f2703c347788ca9b857e1dbde344feaec02"
+    client_secret: "gitlab-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "read_api read_user read_repository openid profile email"
 
   gmail:
     oauth_type: "with_refresh"
@@ -132,6 +171,21 @@ integrations:
     client_credential_location: "body"
     scope: "read"
 
+  teams:
+    oauth_type: "with_rotating_refresh"
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    backend_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    grant_type: "authorization_code"
+    client_id: "f5478ddf-ee3f-4010-8ef1-9525e4e09f0b"
+    client_secret: "teams-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Team.ReadBasic.All https://graph.microsoft.com/Channel.ReadBasic.All https://graph.microsoft.com/ChannelMessage.Read.All https://graph.microsoft.com/Chat.Read https://graph.microsoft.com/ChatMessage.Read https://graph.microsoft.com/Group.Read.All"
+    additional_frontend_params:
+      response_type: "code"
+      response_mode: "query"
+
+
   monday:
     oauth_type: "access_only"
     url: "https://auth.monday.com/oauth2/authorize"
@@ -194,6 +248,20 @@ integrations:
     additional_frontend_params:
       response_mode: "query"
 
+  sharepoint:
+    oauth_type: "with_rotating_refresh"
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    backend_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    grant_type: "authorization_code"
+    client_id: "050726fc-a4bf-4ffb-88de-42fc614ccadb"
+    client_secret: "sharepoint-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "offline_access https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Group.Read.All https://graph.microsoft.com/Sites.Read.All https://graph.microsoft.com/Files.Read.All"
+    additional_frontend_params:
+      response_type: "code"
+      response_mode: "query"
+
   slack:
     oauth_type: "access_only"
     url: "https://slack.com/oauth/v2/authorize"
@@ -207,6 +275,16 @@ integrations:
 
   stripe:
 
+  trello:
+    oauth_type: "oauth1"
+    request_token_url: "https://trello.com/1/OAuthGetRequestToken"
+    authorization_url: "https://trello.com/1/OAuthAuthorizeToken"
+    access_token_url: "https://trello.com/1/OAuthGetAccessToken"
+    consumer_key: "65319d6cb1a017fafcb23b1f0d3c8dea"  # Get from https://trello.com/power-ups/admin
+    consumer_secret: "trello-consumer-secret-key"  # Fetched from Azure Key Vault
+    scope: "read,write"
+    expiration: "never"
+
   todoist:
     oauth_type: "access_only"
     url: "https://todoist.com/oauth/authorize"
@@ -218,12 +296,25 @@ integrations:
     client_credential_location: "body"
     scope: "data:read"
 
+  zendesk:
+    oauth_type: "with_refresh"
+    url: "https://{subdomain}.zendesk.com/oauth/authorizations/new"
+    backend_url: "https://{subdomain}.zendesk.com/oauth/tokens"
+    grant_type: "authorization_code"
+    client_id: "zendesk-client-id-key"
+    client_secret: "zendesk-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "read write"
+    url_template: true
+    backend_url_template: true
+
   clickup:
     oauth_type: "access_only"
     url: "https://app.clickup.com/api"
     backend_url: "https://api.clickup.com/api/v2/oauth/token"
     grant_type: "authorization_code"
-    client_id: "30LY0PV6VDDFDP0R6XB74N7FGNCLA41V"
+    client_id: "QX6BMR7JE2THP2GQL87ZLZ61T7E7L3DP"
     client_secret: "clickup-client-secret-key"
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"
@@ -231,5 +322,20 @@ integrations:
     additional_frontend_params:
       access_type: "offline"
       prompt: "consent"
+
+  salesforce:
+    oauth_type: "with_refresh"
+    url: "https://{instance_url}/services/oauth2/authorize"
+    backend_url: "https://{instance_url}/services/oauth2/token"
+    url_template: true
+    backend_url_template: true
+    grant_type: "authorization_code"
+    client_id: "salesforce-client-id-key"
+    client_secret: "salesforce-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "api refresh_token"
+    additional_frontend_params:
+      response_type: "code"
 
   qdrant:

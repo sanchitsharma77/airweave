@@ -1,4 +1,6 @@
-import asyncio, time, uuid
+import asyncio
+import time
+import uuid
 from typing import Any, Dict, List
 
 import httpx
@@ -92,10 +94,74 @@ class OutlookMailBongo(BaseBongo):
         return deleted
 
     async def cleanup(self):
+        """Comprehensive cleanup of all test emails."""
+        self.logger.info("🧹 Starting comprehensive Outlook Mail cleanup")
+
+        cleanup_stats = {"messages_deleted": 0, "errors": 0}
+
         try:
-            await self.delete_specific_entities(self._messages)
-        except Exception:
-            pass
+            # First, delete current session messages
+            if self._messages:
+                self.logger.info(f"🗑️ Cleaning up {len(self._messages)} current session messages")
+                deleted = await self.delete_specific_entities(self._messages)
+                cleanup_stats["messages_deleted"] += len(deleted)
+                self._messages.clear()
+
+            # Search for any remaining monke test emails
+            await self._cleanup_orphaned_test_messages(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['messages_deleted']} messages deleted, "
+                f"{cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_messages(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test messages from previous runs."""
+        try:
+            async with httpx.AsyncClient(base_url=GRAPH, timeout=30) as client:
+                # Search for messages with monke test patterns
+                filter_query = "startswith(subject, 'Test') or contains(subject, 'monke')"
+                r = await client.get(
+                    "/me/messages",
+                    headers=self._hdrs(),
+                    params={"$filter": filter_query, "$top": 100},
+                )
+
+                if r.status_code == 200:
+                    messages = r.json().get("value", [])
+                    test_messages = [
+                        m
+                        for m in messages
+                        if any(
+                            pattern in m.get("subject", "").lower()
+                            for pattern in ["test", "monke", "demo", "sample"]
+                        )
+                    ]
+
+                    if test_messages:
+                        self.logger.info(
+                            f"🔍 Found {len(test_messages)} potential test messages to clean"
+                        )
+                        for msg in test_messages:
+                            try:
+                                await self._pace()
+                                del_r = await client.delete(
+                                    f"/me/messages/{msg['id']}", headers=self._hdrs()
+                                )
+                                if del_r.status_code == 204:
+                                    stats["messages_deleted"] += 1
+                                    self.logger.info(
+                                        f"✅ Deleted orphaned message: {msg.get('subject')}"
+                                    )
+                                else:
+                                    stats["errors"] += 1
+                            except Exception as e:
+                                stats["errors"] += 1
+                                self.logger.warning(f"⚠️ Failed to delete message {msg['id']}: {e}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned messages: {e}")
 
     def _hdrs(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}

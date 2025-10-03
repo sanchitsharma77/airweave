@@ -183,7 +183,9 @@ class TestDirectAuthentication:
         updated_connection = response.json()
 
         assert updated_connection["sync"]["last_job"]["status"] in ["completed", "running"]
-        assert updated_connection["sync"]["last_job"]["entities_processed"] >= 0
+        # Verify individual entity metrics are tracked
+        assert updated_connection["sync"]["last_job"]["entities_inserted"] >= 0
+        assert updated_connection["sync"]["last_job"]["entities_updated"] >= 0
 
         # Cleanup
         await api_client.delete(f"/source-connections/{connection['id']}")

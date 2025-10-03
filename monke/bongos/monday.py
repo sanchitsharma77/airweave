@@ -1,4 +1,7 @@
-import asyncio, time, uuid, json
+import asyncio
+import time
+import uuid
+import json
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -120,10 +123,66 @@ class MondayBongo(BaseBongo):
         return deleted
 
     async def cleanup(self):
+        """Comprehensive cleanup of all test Monday.com boards and items."""
+        self.logger.info("🧹 Starting comprehensive Monday.com cleanup")
+
+        cleanup_stats = {"boards_deleted": 0, "items_deleted": 0, "errors": 0}
+
         try:
-            await self._delete_board()
-        except Exception:
-            pass
+            # First, delete current session board
+            if self._board_id:
+                try:
+                    await self._delete_board()
+                    cleanup_stats["boards_deleted"] += 1
+                    self.logger.info(f"🗑️ Deleted current session board: {self._board_id}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to delete current board: {e}")
+                    cleanup_stats["errors"] += 1
+
+            # Search for any remaining monke test boards
+            await self._cleanup_orphaned_test_boards(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['boards_deleted']} boards deleted, "
+                f"{cleanup_stats['items_deleted']} items deleted, {cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_boards(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test boards from previous runs."""
+        try:
+            async with httpx.AsyncClient(base_url=MONDAY_API, timeout=30) as client:
+                # Query all boards to find test boards
+                query = "query { boards(limit: 100) { id name } }"
+                resp = await self._gql(client, query, {})
+
+                boards = (resp.get("data") or {}).get("boards") or []
+
+                # Filter for test boards
+                test_boards = [
+                    board
+                    for board in boards
+                    if any(
+                        pattern in board.get("name", "").lower()
+                        for pattern in ["test", "monke", "demo", "sample"]
+                    )
+                ]
+
+                if test_boards:
+                    self.logger.info(f"🔍 Found {len(test_boards)} potential test boards to clean")
+                    for board in test_boards:
+                        try:
+                            await self._pace()
+                            mutation = "mutation($id: ID!) { delete_board(board_id: $id) { id } }"
+                            await self._gql(client, mutation, {"id": board["id"]})
+                            stats["boards_deleted"] += 1
+                            self.logger.info(f"✅ Deleted orphaned board: {board.get('name')}")
+                        except Exception as e:
+                            stats["errors"] += 1
+                            self.logger.warning(f"⚠️ Failed to delete board {board['id']}: {e}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned boards: {e}")
 
     async def _create_board(self, client, name: str) -> str:
         await self._pace()

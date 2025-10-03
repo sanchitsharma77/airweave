@@ -29,6 +29,7 @@ class AuthenticationMethod(str, Enum):
 class OAuthType(str, Enum):
     """OAuth token types for sources."""
 
+    OAUTH1 = "oauth1"  # OAuth 1.0a flow (consumer key/secret)
     ACCESS_ONLY = "access_only"  # Just access token, no refresh
     WITH_REFRESH = "with_refresh"  # Access + refresh token
     WITH_ROTATING_REFRESH = "with_rotating_refresh"  # Refresh token rotates on use
@@ -81,18 +82,53 @@ class OAuthTokenAuthentication(BaseModel):
 
 
 class OAuthBrowserAuthentication(BaseModel):
-    """OAuth authentication via browser flow."""
+    """OAuth authentication via browser flow.
+
+    Supports both OAuth2 and OAuth1 BYOC (Bring Your Own Client):
+    - OAuth2 BYOC: Provide client_id + client_secret
+    - OAuth1 BYOC: Provide consumer_key + consumer_secret
+    """
 
     redirect_uri: Optional[str] = Field(None, description="OAuth redirect URI")
-    # Optional BYOC fields
-    client_id: Optional[str] = Field(None, description="OAuth client ID (for custom apps)")
-    client_secret: Optional[str] = Field(None, description="OAuth client secret (for custom apps)")
+
+    # OAuth2 BYOC fields
+    client_id: Optional[str] = Field(None, description="OAuth2 client ID (for custom apps)")
+    client_secret: Optional[str] = Field(None, description="OAuth2 client secret (for custom apps)")
+
+    # OAuth1 BYOC fields
+    consumer_key: Optional[str] = Field(None, description="OAuth1 consumer key (for custom apps)")
+    consumer_secret: Optional[str] = Field(
+        None, description="OAuth1 consumer secret (for custom apps)"
+    )
 
     @model_validator(mode="after")
     def validate_byoc_credentials(self):
-        """Validate BYOC credentials are both provided or neither."""
+        """Validate BYOC credentials are both provided or neither.
+
+        OAuth2: client_id + client_secret
+        OAuth1: consumer_key + consumer_secret
+        Cannot mix OAuth1 and OAuth2 credentials.
+        """
+        has_oauth2 = bool(self.client_id) or bool(self.client_secret)
+        has_oauth1 = bool(self.consumer_key) or bool(self.consumer_secret)
+
+        # Validate OAuth2 BYOC
         if bool(self.client_id) != bool(self.client_secret):
-            raise ValueError("Custom OAuth requires both client_id and client_secret or neither")
+            raise ValueError("OAuth2 BYOC requires both client_id and client_secret or neither")
+
+        # Validate OAuth1 BYOC
+        if bool(self.consumer_key) != bool(self.consumer_secret):
+            raise ValueError(
+                "OAuth1 BYOC requires both consumer_key and consumer_secret or neither"
+            )
+
+        # Cannot mix OAuth1 and OAuth2 credentials
+        if has_oauth2 and has_oauth1:
+            raise ValueError(
+                "Cannot provide both OAuth2 (client_id/client_secret) and "
+                "OAuth1 (consumer_key/consumer_secret) credentials"
+            )
+
         return self
 
 
@@ -308,7 +344,6 @@ class SyncJobDetails(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     duration_seconds: Optional[float] = None
-    entities_processed: int = 0
     entities_inserted: int = 0
     entities_updated: int = 0
     entities_deleted: int = 0
@@ -400,7 +435,6 @@ class SourceConnectionJob(BaseModel):
     duration_seconds: Optional[float] = None
 
     # Metrics
-    entities_processed: int = 0
     entities_inserted: int = 0
     entities_updated: int = 0
     entities_deleted: int = 0

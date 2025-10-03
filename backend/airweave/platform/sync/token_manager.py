@@ -11,7 +11,7 @@ from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.exceptions import TokenRefreshError
 from airweave.core.logging import logger
-from airweave.platform.auth.services import oauth2_service
+from airweave.platform.auth.oauth2_service import oauth2_service
 
 
 class TokenManager:
@@ -62,6 +62,15 @@ class TokenManager:
 
         # Auth provider instance
         self.auth_provider_instance = auth_provider_instance
+
+        # NEW: Store config fields for token refresh (needed for templated backend URLs)
+        self.config_fields = getattr(source_connection, "config_fields", None)
+
+        # Log if config_fields available
+        if self.config_fields and self.logger:
+            self.logger.debug(
+                f"TokenManager initialized with config_fields: {list(self.config_fields.keys())}"
+            )
 
         # Extract the token from credentials
         self._current_token = self._extract_token_from_credentials(initial_credentials)
@@ -299,6 +308,7 @@ class TokenManager:
                     ctx=self.ctx,
                     connection_id=self.connection_id,
                     decrypted_credential=decrypted_credential,
+                    config_fields=self.config_fields,
                 )
 
                 return oauth2_response.access_token

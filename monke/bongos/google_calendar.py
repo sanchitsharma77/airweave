@@ -74,15 +74,24 @@ class GoogleCalendarBongo(BaseBongo):
 
         from monke.generation.google_calendar import generate_google_calendar_artifact
 
-        for i in range(self.entity_count):
-            token = str(uuid.uuid4())[:8]
+        # Generate all content in parallel
+        tokens = [str(uuid.uuid4())[:8] for _ in range(self.entity_count)]
+
+        async def generate_event_content(token: str, index: int):
             title, description, duration_hours = await generate_google_calendar_artifact(
                 self.openai_model, token
             )
-
-            start_time = datetime.now(timezone.utc) + timedelta(days=i + 1)
+            start_time = datetime.now(timezone.utc) + timedelta(days=index + 1)
             end_time = start_time + timedelta(hours=duration_hours)
+            return token, title, description, start_time, end_time
 
+        # Generate all content in parallel
+        gen_results = await asyncio.gather(
+            *[generate_event_content(token, i) for i, token in enumerate(tokens)]
+        )
+
+        # Create events sequentially to respect API rate limits
+        for token, title, description, start_time, end_time in gen_results:
             event = await self._create_test_event(
                 self.test_calendar_id, title, description, start_time, end_time
             )
@@ -115,12 +124,22 @@ class GoogleCalendarBongo(BaseBongo):
 
         from monke.generation.google_calendar import generate_google_calendar_artifact
 
-        for event_info in self.test_events[: min(3, self.entity_count)]:
+        events_to_update = self.test_events[: min(3, self.entity_count)]
+
+        async def generate_update_content(event_info):
             token = event_info.get("token") or str(uuid.uuid4())[:8]
             title, description, _ = await generate_google_calendar_artifact(
                 self.openai_model, token, is_update=True
             )
+            return event_info, token, title, description
 
+        # Generate all updates in parallel
+        gen_results = await asyncio.gather(
+            *[generate_update_content(event) for event in events_to_update]
+        )
+
+        # Apply updates sequentially
+        for event_info, token, title, description in gen_results:
             await self._update_test_event(
                 self.test_calendar_id, event_info["id"], title, description
             )

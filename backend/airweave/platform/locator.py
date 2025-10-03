@@ -136,5 +136,30 @@ class ResourceLocator:
         )
         return getattr(module, entity_definition.class_name)
 
+    @staticmethod
+    def get_available_auth_provider_classes() -> list[Type[BaseAuthProvider]]:
+        """Get all available auth provider classes.
+
+        Attempts to import each known auth provider and returns only those
+        that are available. This allows graceful handling of optional providers.
+
+        Returns:
+            List of available auth provider classes
+        """
+        auth_provider_classes = []
+
+        # List of known auth providers with their module and class names
+        known_providers = [
+            ("pipedream", "PipedreamAuthProvider"),
+            ("composio", "ComposioAuthProvider"),
+        ]
+
+        for short_name, class_name in known_providers:
+            module = importlib.import_module(f"{PLATFORM_PATH}.auth_providers.{short_name}")
+            provider_class = getattr(module, class_name)
+            auth_provider_classes.append(provider_class)
+
+        return auth_provider_classes
+
 
 resource_locator = ResourceLocator()

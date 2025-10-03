@@ -84,13 +84,56 @@ class CRUDConnectionInitSession(CRUDBaseOrganization[ConnectionInitSession, Base
     ) -> Optional[ConnectionInitSession]:
         """Fetch a session by its state without auth validation.
 
-        Used for OAuth callbacks where the user is not yet authenticated.
+        Used for OAuth2 callbacks where the user is not yet authenticated.
         """
         q = select(self.model).where(
             self.model.state == state,
         )
         res = await db.execute(q)
         return res.scalar_one_or_none()
+
+    async def get_by_oauth_token_no_auth(
+        self,
+        db: AsyncSession,
+        *,
+        oauth_token: str,
+    ) -> Optional[ConnectionInitSession]:
+        """Fetch a session by OAuth1 request token without auth validation.
+
+        Used for OAuth1 callbacks. OAuth1 doesn't send our state parameter back,
+        so we look up the session by the oauth_token stored in overrides.
+
+        Args:
+            db: Database session
+            oauth_token: OAuth1 request token from the callback
+
+        Returns:
+            ConnectionInitSession if found, None otherwise
+        """
+        # Debug: Log what we're searching for
+        logger.debug(f"Searching for OAuth1 session with oauth_token: {oauth_token}")
+
+        # First, let's try to find ANY pending session and check its overrides
+        all_pending = select(self.model).where(
+            self.model.status == ConnectionInitStatus.PENDING,
+        )
+        all_res = await db.execute(all_pending)
+        all_sessions = all_res.scalars().all()
+
+        logger.debug(f"Found {len(all_sessions)} pending sessions")
+        for session in all_sessions:
+            oauth_token_value = session.overrides.get("oauth_token") if session.overrides else None
+            logger.debug(
+                f"Session {session.id}: overrides={session.overrides}, "
+                f"has oauth_token={oauth_token_value}"
+            )
+            # Match manually
+            if session.overrides and session.overrides.get("oauth_token") == oauth_token:
+                logger.debug(f"Found matching session: {session.id}")
+                return session
+
+        logger.warning(f"No OAuth1 session found with oauth_token: {oauth_token}")
+        return None
 
     async def mark_completed(
         self,

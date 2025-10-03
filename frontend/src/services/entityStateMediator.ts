@@ -128,7 +128,6 @@ export class EntityStateMediator {
         last_sync_job: {
           id: jobId,
           status: 'pending',
-          entities_processed: 0,
           entities_inserted: 0,
           entities_updated: 0,
           entities_deleted: 0,
@@ -182,8 +181,7 @@ export class EntityStateMediator {
                   entity_states: entityStates,
                   last_sync_job: {
                     ...currentConnection.last_sync_job,
-                    status: 'in_progress' as const,
-                    entities_processed: data.total_entities || 0
+                    status: 'in_progress' as const
                   },
                   lastUpdated: new Date()
                 };
@@ -216,7 +214,6 @@ export class EntityStateMediator {
                   last_sync_job: {
                     ...currentConnection.last_sync_job,
                     status: data.final_status || (data.is_failed ? 'failed' : 'completed'),
-                    entities_processed: data.total_entities || 0,
                     completed_at: data.timestamp || new Date().toISOString(),
                     error: data.error
                   },

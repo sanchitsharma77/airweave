@@ -29,26 +29,36 @@ navigation:
     path: docs/pages/search.mdx
   - page: MCP Server
     path: docs/pages/mcp-server.mdx
-  - section: Auth Providers
-    contents:
-    - page: Overview
-      path: docs/pages/auth-providers/overview.mdx
-    - page: Composio
-      path: docs/pages/auth-providers/composio.mdx
-    - page: Pipedream
-      path: docs/pages/auth-providers/pipedream.mdx
   - page: Add New Connector
     path: docs/pages/add-new-source.mdx
-  - section: Advanced Concepts
+  - section: Authentication
     contents:
+    - section: Auth Providers
+      contents:
+      - page: Overview
+        path: docs/pages/auth-providers/overview.mdx
+      - page: Composio
+        path: docs/pages/auth-providers/composio.mdx
+      - page: Pipedream
+        path: docs/pages/auth-providers/pipedream.mdx
+    - page: OAuth
+      path: docs/pages/connecting-sources/direct-oauth.mdx
     - page: Direct Token Injection
       path: docs/pages/direct-token-injection.mdx
   - section: Connectors
     contents:
+    - page: Airtable
+      path: docs/pages/connectors/airtable/main.mdx
     - page: Asana
       path: docs/pages/connectors/asana/main.mdx
+    - page: Attio
+      path: docs/pages/connectors/attio/main.mdx
     - page: Bitbucket
       path: docs/pages/connectors/bitbucket/main.mdx
+    - page: Box
+      path: docs/pages/connectors/box/main.mdx
+    - page: Clickup
+      path: docs/pages/connectors/clickup/main.mdx
     - page: Confluence
       path: docs/pages/connectors/confluence/main.mdx
     - page: Ctti
@@ -57,6 +67,8 @@ navigation:
       path: docs/pages/connectors/dropbox/main.mdx
     - page: Github
       path: docs/pages/connectors/github/main.mdx
+    - page: Gitlab
+      path: docs/pages/connectors/gitlab/main.mdx
     - page: Gmail
       path: docs/pages/connectors/gmail/main.mdx
     - page: Google Calendar
@@ -81,10 +93,20 @@ navigation:
       path: docs/pages/connectors/outlook_mail/main.mdx
     - page: Postgresql
       path: docs/pages/connectors/postgresql/main.mdx
+    - page: Salesforce
+      path: docs/pages/connectors/salesforce/main.mdx
+    - page: Sharepoint
+      path: docs/pages/connectors/sharepoint/main.mdx
     - page: Stripe
       path: docs/pages/connectors/stripe/main.mdx
+    - page: Teams
+      path: docs/pages/connectors/teams/main.mdx
     - page: Todoist
       path: docs/pages/connectors/todoist/main.mdx
+    - page: Trello
+      path: docs/pages/connectors/trello/main.mdx
+    - page: Zendesk
+      path: docs/pages/connectors/zendesk/main.mdx
 - api: API Reference
   alphabetized: false
   display-errors: true
@@ -95,7 +117,6 @@ navigation:
     - GET /collections/{readable_id}
     - GET /collections/{readable_id}/search
     - POST /collections/{readable_id}/search
-    - PUT /collections/{readable_id}
     - POST /collections
     - POST /collections/{readable_id}/refresh_all
     - DELETE /collections/{readable_id}

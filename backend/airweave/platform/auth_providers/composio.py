@@ -22,6 +22,16 @@ from airweave.platform.decorators import auth_provider
 class ComposioAuthProvider(BaseAuthProvider):
     """Composio authentication provider."""
 
+    # Sources that Composio does not support
+    BLOCKED_SOURCES = [
+        "postgresql",
+        "confluence",
+        "jira",
+        "bitbucket",
+        "github",
+        "ctti",
+    ]
+
     # Mapping of Airweave field names to Composio field names
     # Key: Airweave field name, Value: Composio field name
     FIELD_NAME_MAPPING = {
@@ -30,13 +40,16 @@ class ComposioAuthProvider(BaseAuthProvider):
     }
 
     # Mapping of Airweave source short names to Composio toolkit slugs
-    # Key: Airweave short name, Value: Composio slug
+    # Key: Airweave short name, Value: Composio toolkit slug
+    # Only include mappings where names differ between Airweave and Composio
     SLUG_NAME_MAPPING = {
         "google_drive": "googledrive",
         "google_calendar": "googlecalendar",
         "outlook_mail": "outlook",
         "outlook_calendar": "outlook",
         "onedrive": "one_drive",
+        "sharepoint": "one_drive",  # Use OneDrive integration (same Graph API)
+        "teams": "microsoft_teams",
         # Add more mappings as needed
     }
 
@@ -327,22 +340,35 @@ class ComposioAuthProvider(BaseAuthProvider):
             # Map the field name if needed
             composio_field = self._map_field_name(airweave_field)
 
-            if airweave_field != composio_field:
-                self.logger.info(
-                    f"\n  🔄 Mapped field '{airweave_field}' to Composio field '{composio_field}'\n"
-                )
+            # For api_key field, try multiple possible field names in Composio
+            # Some sources use generic_api_key (API key auth), others use access_token (OAuth)
+            possible_fields = [composio_field]
+            if airweave_field == "api_key":
+                possible_fields.extend(["generic_api_key", "access_token"])
+                # Remove duplicates while preserving order
+                seen = set()
+                possible_fields = [x for x in possible_fields if not (x in seen or seen.add(x))]
 
-            if composio_field in source_creds_dict:
-                # Store with the original Airweave field name
-                found_credentials[airweave_field] = source_creds_dict[composio_field]
-                self.logger.info(
-                    f"\n  ✅ Found field: '{airweave_field}' (as '{composio_field}' in Composio)\n"
-                )
-            else:
+            found = False
+            for field_to_check in possible_fields:
+                if field_to_check in source_creds_dict:
+                    # Store with the original Airweave field name
+                    found_credentials[airweave_field] = source_creds_dict[field_to_check]
+                    if airweave_field != field_to_check:
+                        self.logger.info(
+                            f"\n  🔄 Mapped field '{airweave_field}' to Composio field '{field_to_check}'\n"
+                        )
+                    self.logger.info(
+                        f"\n  ✅ Found field: '{airweave_field}' (as '{field_to_check}' in Composio)\n"
+                    )
+                    found = True
+                    break
+
+            if not found:
                 missing_fields.append(airweave_field)
                 self.logger.warning(
                     f"\n  ❌ Missing field: '{airweave_field}' (looked for "
-                    f"'{composio_field}' in Composio)\n"
+                    f"{possible_fields} in Composio)\n"
                 )
 
         if missing_fields:

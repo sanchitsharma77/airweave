@@ -2,14 +2,116 @@
 
 from typing import Optional, get_args, get_origin
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_core import PydanticUndefined
 
 
-class BaseConfig(BaseModel):
-    """Base config class."""
+def RequiredTemplateConfig(*args, **kwargs):
+    """Create a Field marked as required for OAuth URL templates.
 
-    pass
+    This helper marks config fields that must be provided BEFORE OAuth flow starts.
+    These fields are used for template rendering in OAuth URLs (e.g., {instance_url}).
+
+    Args:
+        *args: Positional arguments passed to Field()
+        **kwargs: Keyword arguments passed to Field()
+
+    Returns:
+        Field with required_for_auth=True in json_schema_extra
+
+    Example:
+        ```python
+        class SalesforceConfig(BaseConfig):
+            instance_url: str = RequiredTemplateConfig(
+                title="Instance URL",
+                description="Your Salesforce instance (e.g., mycompany.salesforce.com)",
+            )
+        ```
+    """
+    if "json_schema_extra" not in kwargs:
+        kwargs["json_schema_extra"] = {}
+    kwargs["json_schema_extra"]["required_for_auth"] = True
+    return Field(*args, **kwargs)
+
+
+class BaseConfig(BaseModel):
+    """Base config class with template config field support."""
+
+    @classmethod
+    def get_template_config_fields(cls) -> list[str]:
+        """Get list of field names required for OAuth URL templates.
+
+        Returns:
+            List of field names marked with required_for_auth=True
+
+        Example:
+            ```python
+            >>> SalesforceConfig.get_template_config_fields()
+            ['instance_url']
+            ```
+        """
+        template_fields = []
+        for field_name, field_info in cls.model_fields.items():
+            json_schema_extra = field_info.json_schema_extra or {}
+            if json_schema_extra.get("required_for_auth"):
+                template_fields.append(field_name)
+        return template_fields
+
+    @classmethod
+    def extract_template_configs(cls, config_dict: dict) -> dict:
+        """Extract only template config fields from config dict.
+
+        Useful for OAuth URL template rendering.
+
+        Args:
+            config_dict: Full config dictionary
+
+        Returns:
+            Dictionary with only template config fields
+
+        Example:
+            ```python
+            >>> config = {"instance_url": "mycompany.sf.com", "api_version": "v58.0"}
+            >>> SalesforceConfig.extract_template_configs(config)
+            {'instance_url': 'mycompany.sf.com'}
+            ```
+        """
+        template_fields = cls.get_template_config_fields()
+        return {k: v for k, v in config_dict.items() if k in template_fields}
+
+    @classmethod
+    def validate_template_configs(cls, config_dict: dict) -> None:
+        """Validate that all template config fields are present and not empty.
+
+        Should be called BEFORE starting OAuth flow to fail fast.
+
+        Args:
+            config_dict: Config dictionary to validate
+
+        Raises:
+            ValueError: If any template config fields are missing, None, or empty strings
+
+        Example:
+            ```python
+            >>> SalesforceConfig.validate_template_configs({"api_version": "v58.0"})
+            ValueError: Template config fields missing: instance_url.
+            ```
+        """
+        template_fields = cls.get_template_config_fields()
+        missing = []
+
+        for field in template_fields:
+            if field not in config_dict or config_dict[field] is None:
+                missing.append(field)
+            elif isinstance(config_dict[field], str) and not config_dict[field].strip():
+                # Reject empty strings or strings with only whitespace
+                missing.append(field)
+
+        if missing:
+            raise ValueError(
+                f"Template config fields missing or empty: {', '.join(missing)}. "
+                f"These must be provided before OAuth authentication."
+            )
 
 
 class ConfigField(BaseModel):

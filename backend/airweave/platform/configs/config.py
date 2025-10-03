@@ -1,8 +1,10 @@
 """Configuration classes for platform components."""
 
-from pydantic import Field, validator
+from typing import Optional
 
-from airweave.platform.configs._base import BaseConfig
+from pydantic import Field, field_validator, validator
+
+from airweave.platform.configs._base import BaseConfig, RequiredTemplateConfig
 
 
 class SourceConfig(BaseConfig):
@@ -11,8 +13,20 @@ class SourceConfig(BaseConfig):
     pass
 
 
+class AirtableConfig(SourceConfig):
+    """Airtable configuration schema."""
+
+    pass
+
+
 class AsanaConfig(SourceConfig):
     """Asana configuration schema."""
+
+    pass
+
+
+class AttioConfig(SourceConfig):
+    """Attio configuration schema."""
 
     pass
 
@@ -47,6 +61,20 @@ class BitbucketConfig(SourceConfig):
         return value
 
 
+class BoxConfig(SourceConfig):
+    """Box configuration schema."""
+
+    folder_id: str = Field(
+        default="0",
+        title="Folder ID",
+        description=(
+            "Specific Box folder ID to sync. Default is '0' (root folder, syncs all files). "
+            "To sync a specific folder, enter its folder ID. "
+            "You can find folder IDs in the Box URL when viewing a folder."
+        ),
+    )
+
+
 class ClickUpConfig(SourceConfig):
     """ClickUp configuration schema."""
 
@@ -78,6 +106,25 @@ class GitHubConfig(SourceConfig):
         description=(
             "Specific branch to sync (e.g., 'main', 'development'). "
             "If empty, uses the default branch."
+        ),
+    )
+
+
+class GitLabConfig(SourceConfig):
+    """GitLab configuration schema."""
+
+    project_id: str = Field(
+        default="",
+        title="Project ID",
+        description=(
+            "Specific project ID to sync (e.g., '12345'). If empty, syncs all accessible projects."
+        ),
+    )
+    branch: str = Field(
+        default="",
+        title="Branch name",
+        description=(
+            "Specific branch to sync (e.g., 'main', 'master'). If empty, uses the default branch."
         ),
     )
 
@@ -238,6 +285,12 @@ class PostgreSQLConfig(SourceConfig):
     pass
 
 
+class SharePointConfig(SourceConfig):
+    """SharePoint configuration schema."""
+
+    pass
+
+
 class SlackConfig(SourceConfig):
     """Slack configuration schema."""
 
@@ -262,10 +315,58 @@ class StripeConfig(SourceConfig):
     pass
 
 
+class SalesforceConfig(SourceConfig):
+    """Salesforce configuration schema."""
+
+    instance_url: str = RequiredTemplateConfig(
+        title="Salesforce Instance URL",
+        description="Your Salesforce instance domain only (e.g. 'mycompany.my.salesforce.com')",
+        json_schema_extra={"required_for_auth": True},
+    )
+
+    @field_validator("instance_url", mode="before")
+    @classmethod
+    def strip_https_prefix(cls, value):
+        """Remove https:// or http:// prefix if present."""
+        if isinstance(value, str):
+            if value.startswith("https://"):
+                return value.replace("https://", "", 1)
+            elif value.startswith("http://"):
+                return value.replace("http://", "", 1)
+        return value
+
+
 class TodoistConfig(SourceConfig):
     """Todoist configuration schema."""
 
     pass
+
+
+class TrelloConfig(SourceConfig):
+    """Trello configuration schema."""
+
+    pass
+
+
+class TeamsConfig(SourceConfig):
+    """Microsoft Teams configuration schema."""
+
+    pass
+
+
+class ZendeskConfig(SourceConfig):
+    """Zendesk configuration schema."""
+
+    subdomain: str = RequiredTemplateConfig(
+        title="Zendesk Subdomain",
+        description="Your Zendesk subdomain only (e.g., 'mycompany' NOT 'mycompany.zendesk.com')",
+        json_schema_extra={"required_for_auth": True},
+    )
+    exclude_closed_tickets: Optional[bool] = Field(
+        default=False,
+        title="Exclude Closed Tickets",
+        description="Skip closed tickets during sync (recommended for faster syncing)",
+    )
 
 
 # AUTH PROVIDER CONFIGURATION CLASSES

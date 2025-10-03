@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   all_connectors_one_runner:
+    if: false # Temporarily disabled
     runs-on: ubuntu-latest
     environment: dev
     # Add Azure permissions for OIDC authentication
@@ -36,13 +37,6 @@ jobs:
       # Core configuration
       AIRWEAVE_API_URL: http://localhost:8001
 
-      # Azure Key Vault configuration
-      AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
-
-      # Only essential secrets that might not be in Key Vault yet
-      # These will be overridden by Key Vault if present
-      DM_AUTH_PROVIDER: composio
-
       # AI provider keys for backend runtime
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
@@ -52,27 +46,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      # Login to Azure for Key Vault access (if configured)
-      - name: Azure Login
-        if: env.AZURE_KEY_VAULT_URL != ''
-        uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          fetch-depth: 0 # Fetch all history for change detection
 
       # Build images ONCE on this runner (with repo-scoped local layer caches)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Restore backend build cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.BACKEND_CACHE_DIR }}
-          key: buildx-backend-${{ runner.os }}-${{ hashFiles('backend/**','backend/Dockerfile') }}
-          restore-keys: |
-            buildx-backend-${{ runner.os }}-
 
       - name: Restore frontend build cache
         uses: actions/cache@v4
@@ -81,22 +60,6 @@ jobs:
           key: buildx-frontend-${{ runner.os }}-${{ hashFiles('frontend/**','frontend/Dockerfile') }}
           restore-keys: |
             buildx-frontend-${{ runner.os }}-
-
-      - name: Build backend (cached, load into daemon)
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: ${{ env.BACKEND_TAG }}
-          cache-from: type=local,src=${{ env.BACKEND_CACHE_DIR }}
-          cache-to: type=local,dest=${{ env.BACKEND_CACHE_DIR }},mode=max
-
-      # temporal-worker uses the same Dockerfile/context as backend — re-tag
-      - name: Tag backend as temporal-worker
-        run: docker tag "${BACKEND_TAG}" "${TEMPORAL_WORKER_TAG}"
 
       - name: Build frontend (cached, load into daemon)
         uses: docker/build-push-action@v6
@@ -117,7 +80,6 @@ jobs:
           cat > docker/docker-compose.ci.yml <<'YAML'
           services:
             backend:
-              image: ${BACKEND_TAG}
               pull_policy: never
               environment:
                 # Core dependencies
@@ -128,9 +90,7 @@ jobs:
                 - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
                 # Azure Key Vault for SaaS credentials
                 - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL}
-                - DM_AUTH_PROVIDER=${DM_AUTH_PROVIDER}
             temporal-worker:
-              image: ${TEMPORAL_WORKER_TAG}
               pull_policy: never
               environment:
                 # Core dependencies
@@ -141,7 +101,6 @@ jobs:
                 - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
                 # Azure Key Vault for SaaS credentials
                 - AZURE_KEY_VAULT_URL=${AZURE_KEY_VAULT_URL}
-                - DM_AUTH_PROVIDER=${DM_AUTH_PROVIDER}
             frontend:
               image: ${FRONTEND_TAG}
               pull_policy: never
@@ -196,11 +155,15 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
 
-          # Azure Key Vault for SaaS app credentials
-          AZURE_KEY_VAULT_URL: ${{ secrets.AZURE_KEY_VAULT_URL }}
+          # Monke test authentication
+          MONKE_COMPOSIO_API_KEY: ${{ secrets.MONKE_COMPOSIO_API_KEY }}
+          MONKE_COMPOSIO_PROVIDER_ID: ${{ secrets.MONKE_COMPOSIO_PROVIDER_ID }}
 
-          # Auth provider configuration
-          DM_AUTH_PROVIDER: composio
+          # Bitbucket direct auth credentials
+          MONKE_BITBUCKET_USERNAME: ${{ secrets.MONKE_BITBUCKET_USERNAME }}
+          MONKE_BITBUCKET_API_TOKEN: ${{ secrets.MONKE_BITBUCKET_API_TOKEN }}
+          MONKE_BITBUCKET_WORKSPACE: ${{ secrets.MONKE_BITBUCKET_WORKSPACE }}
+          MONKE_BITBUCKET_REPO_SLUG: ${{ secrets.MONKE_BITBUCKET_REPO_SLUG }}
 
           # All SaaS app credentials (Composio configs, API tokens, etc.)
           # will be fetched from Azure Key Vault at runtime
@@ -208,9 +171,17 @@ jobs:
           # Make script executable
           chmod +x ./monke.sh
 
+          # Fetch base branch for change detection in PRs
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
+            export BASE_BRANCH="origin/${{ github.base_ref }}"
+          else
+            export BASE_BRANCH="origin/main"
+          fi
+
           # Let monke.sh handle change detection and test execution
           # The --changed flag will automatically detect what to test based on git diff
-          echo "Running tests for changed connectors..."
+          echo "Running tests for changed connectors vs $BASE_BRANCH..."
           ./monke.sh --changed
 
       - name: Upload logs

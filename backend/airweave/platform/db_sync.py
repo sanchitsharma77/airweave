@@ -1,8 +1,10 @@
 """Module for syncing embedding models, sources, destinations, and auth providers."""
 
+import asyncio
 import importlib
 import inspect
 import os
+import re
 from typing import Callable, Dict, Type, Union
 from uuid import UUID
 
@@ -18,6 +20,119 @@ from airweave.platform.embedding_models._base import BaseEmbeddingModel
 from airweave.platform.sources._base import BaseSource
 
 sync_logger = logger.with_prefix("Platform sync: ").with_context(component="platform_sync")
+
+
+def _extract_template_variables(template_string: str) -> set[str]:
+    """Extract variable names from a template string like 'https://{instance_url}/path'.
+
+    Args:
+        template_string: String containing {variable} placeholders
+
+    Returns:
+        Set of variable names found in the template
+
+    Example:
+        >>> _extract_template_variables("https://{instance_url}/oauth/{version}")
+        {'instance_url', 'version'}
+    """
+    # Find all {variable} patterns
+    pattern = r"\{(\w+)\}"
+    matches = re.findall(pattern, template_string)
+    return set(matches)
+
+
+def _validate_source_template_config(source_class: Type[BaseSource]) -> None:
+    """Validate that source's YAML template variables match config class RequiredTemplateConfigs.
+
+    Args:
+        source_class: Source class to validate
+
+    Raises:
+        ValueError: If template variables don't match auth-required config fields
+    """
+    short_name = source_class._short_name
+    config_class_name = source_class._config_class
+
+    # Skip if no config class
+    if not config_class_name:
+        return
+
+    # Load integration settings to check for templates
+    try:
+        from airweave.platform.auth.settings import integration_settings
+
+        # Get settings (note: this is sync context, but integration_settings is loaded at startup)
+        oauth_settings = asyncio.run(integration_settings.get_by_short_name(short_name))
+
+        # Skip if no OAuth settings or no templates
+        if not oauth_settings:
+            return
+
+        if not getattr(oauth_settings, "url_template", False):
+            return  # No templates, nothing to validate
+
+        # Extract template variables from URLs
+        url_vars = _extract_template_variables(oauth_settings.url)
+        backend_url_vars = set()
+        if getattr(oauth_settings, "backend_url_template", False):
+            backend_url_vars = _extract_template_variables(oauth_settings.backend_url)
+
+        # Combine all required template variables
+        all_template_vars = url_vars | backend_url_vars
+
+        if not all_template_vars:
+            sync_logger.warning(
+                f"Source '{short_name}' has url_template=true but no template variables found"
+            )
+            return
+
+        # Load config class and get template config fields
+        from airweave.platform.locator import resource_locator
+
+        config_class = resource_locator.get_config(config_class_name)
+        template_config_fields = set(config_class.get_template_config_fields())
+
+        # Validate: every template variable must have a matching RequiredTemplateConfig
+        missing_in_config = all_template_vars - template_config_fields
+        if missing_in_config:
+            raise ValueError(
+                f"Source '{short_name}' template validation failed:\n"
+                f"  YAML template variables: {sorted(all_template_vars)}\n"
+                f"  Config template fields: {sorted(template_config_fields)}\n"
+                f"  Missing in config class: {sorted(missing_in_config)}\n\n"
+                f"Fix: Add to {config_class_name}:\n"
+                + "\n".join(
+                    [
+                        f"    {var}: str = RequiredTemplateConfig("
+                        f'title="{var.replace("_", " ").title()}")'
+                        for var in sorted(missing_in_config)
+                    ]
+                )
+            )
+
+        # Warn if config has extra template fields not in YAML template
+        extra_in_config = template_config_fields - all_template_vars
+        if extra_in_config:
+            sync_logger.warning(
+                f"Source '{short_name}' has template config fields not used in YAML: "
+                f"{sorted(extra_in_config)}. These may be for direct auth or API calls."
+            )
+
+        # Success!
+        sync_logger.info(
+            f"✅ Template validation passed for '{short_name}': "
+            f"YAML variables {sorted(all_template_vars)} match config fields"
+        )
+
+    except ValueError:
+        # Re-raise validation errors
+        raise
+    except Exception as e:
+        # Log but don't fail sync for validation errors (backward compatibility)
+        sync_logger.warning(
+            f"Could not validate templates for '{short_name}': {e}. "
+            f"This is non-fatal but templates may not work correctly."
+        )
 
 
 def _process_module_classes(module, components: Dict[str, list[Type | Callable]]) -> None:
@@ -349,6 +464,14 @@ async def _sync_sources(
     for source_class in sources:
         # Get the source's short name (e.g., "slack" for SlackSource)
         source_module_name = source_class._short_name
+
+        # NEW: Validate template configuration if source has templates
+        try:
+            _validate_source_template_config(source_class)
+        except ValueError:
+            # Template validation failures are critical - fail the sync
+            sync_logger.error(f"Template validation failed for {source_module_name}")
+            raise
 
         # Get entity IDs for this module
         output_entity_ids = []

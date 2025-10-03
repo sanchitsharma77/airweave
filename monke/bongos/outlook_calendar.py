@@ -95,10 +95,76 @@ class OutlookCalendarBongo(BaseBongo):
         return deleted
 
     async def cleanup(self):
+        """Comprehensive cleanup of all test calendar events."""
+        self.logger.info("🧹 Starting comprehensive Outlook Calendar cleanup")
+
+        cleanup_stats = {"events_deleted": 0, "errors": 0}
+
         try:
-            await self.delete_specific_entities(self._events)
-        except Exception:
-            pass
+            # First, delete current session events
+            if self._events:
+                self.logger.info(f"🗑️ Cleaning up {len(self._events)} current session events")
+                deleted = await self.delete_specific_entities(self._events)
+                cleanup_stats["events_deleted"] += len(deleted)
+                self._events.clear()
+
+            # Search for any remaining monke test events by subject pattern
+            # This catches any events that might have been created in previous failed runs
+            await self._cleanup_orphaned_test_events(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['events_deleted']} events deleted, "
+                f"{cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_events(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test events from previous runs."""
+        try:
+            async with httpx.AsyncClient(base_url=GRAPH, timeout=30) as client:
+                # Search for events with monke test patterns in subject
+                # Using OData filter to find test events
+                filter_query = "startswith(subject, 'Test') or contains(subject, 'monke')"
+                r = await client.get(
+                    "/me/events",
+                    headers=self._hdrs(),
+                    params={"$filter": filter_query, "$top": 100},
+                )
+
+                if r.status_code == 200:
+                    events = r.json().get("value", [])
+                    test_events = [
+                        e
+                        for e in events
+                        if any(
+                            pattern in e.get("subject", "").lower()
+                            for pattern in ["test", "monke", "demo", "sample"]
+                        )
+                    ]
+
+                    if test_events:
+                        self.logger.info(
+                            f"🔍 Found {len(test_events)} potential test events to clean"
+                        )
+                        for event in test_events:
+                            try:
+                                await self._pace()
+                                del_r = await client.delete(
+                                    f"/me/events/{event['id']}", headers=self._hdrs()
+                                )
+                                if del_r.status_code in (204, 202):
+                                    stats["events_deleted"] += 1
+                                    self.logger.info(
+                                        f"✅ Deleted orphaned event: {event.get('subject')}"
+                                    )
+                                else:
+                                    stats["errors"] += 1
+                            except Exception as e:
+                                stats["errors"] += 1
+                                self.logger.warning(f"⚠️ Failed to delete event {event['id']}: {e}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned events: {e}")
 
     def _hdrs(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}

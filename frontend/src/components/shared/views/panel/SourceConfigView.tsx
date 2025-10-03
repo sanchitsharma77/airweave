@@ -48,7 +48,6 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ context }) =
 
     const { authProviderConnections, isLoadingConnections, fetchAuthProviderConnections } = useAuthProvidersStore();
 
-    const SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = ["confluence", "jira", "bitbucket", "github", "ctti", "monday", "postgresql"];
 
     const isTokenField = (fieldName: string): boolean => {
         const lowerName = fieldName.toLowerCase();
@@ -213,7 +212,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ context }) =
                 )}
 
                 {/* External Auth Provider Toggle */}
-                {!SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceShortName || '') && (
+                {sourceDetails?.supported_auth_providers && sourceDetails.supported_auth_providers.length > 0 && (
                     <div className="space-y-4 p-4 border rounded-md">
                         <div className="flex items-center justify-between">
                             <div>

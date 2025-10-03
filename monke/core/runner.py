@@ -1,4 +1,4 @@
-"""Core test runner that orchestrates the entire testing process (fixed duration calc)."""
+"""Core test runner that orchestrates the entire testing process."""
 
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
@@ -19,33 +19,34 @@ class TestResult:
     warnings: List[str]
 
 
-def _compute_duration(metrics: Dict[str, Any]) -> float:
-    """
-    Prefer a single wall-clock measurement if present; otherwise sum only per-step durations.
-    Avoid double counting and ignore non-numeric / boolean values.
-    """
-    wall = metrics.get("total_duration_wall_clock")
-    if isinstance(wall, (int, float)):
-        return float(wall)
+def compute_test_duration(metrics: Dict[str, Any]) -> float:
+    """Compute total test duration from metrics.
 
-    # Fallback: sum per-step durations only (keys ending with "_duration")
+    Prefers wall-clock time if available, otherwise sums step durations.
+    """
+    # Prefer wall clock time if available
+    wall_time = metrics.get("total_duration_wall_clock")
+    if isinstance(wall_time, (int, float)):
+        return float(wall_time)
+
+    # Otherwise sum step durations
     total = 0.0
-    for k, v in metrics.items():
-        if not isinstance(v, (int, float)) or isinstance(v, bool):
-            continue
-        if k.endswith("_duration"):
-            total += float(v)
+    for key, value in metrics.items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if key.endswith("_duration"):
+                total += float(value)
     return total
 
 
 class TestRunner:
-    """Main test runner that orchestrates the entire testing process."""
+    """Orchestrates test execution using TestFlow."""
 
     def __init__(self, config_path: str, run_id: Optional[str] = None):
         """Initialize the test runner.
 
         Args:
             config_path: Path to the test configuration file
+            run_id: Optional run ID for tracking
         """
         self.config = TestConfig.from_file(config_path)
         self.logger = get_logger("test_runner")
@@ -57,22 +58,23 @@ class TestRunner:
         self.logger.info(f"📝 Description: {self.config.description}")
         self.logger.info(f"🔗 Connector: {self.config.connector.type}")
 
-        test_flow: Optional[TestFlow] = None
         try:
-            # Create and set up the flow
+            # Create test flow
             test_flow = TestFlow.create(self.config, run_id=self.run_id)
+
+            # Setup environment
             if not await test_flow.setup():
                 raise Exception("Failed to setup test environment")
 
-            # Execute flow
+            # Execute test flow
             await test_flow.execute()
 
-            # Clean up
+            # Cleanup
             await test_flow.cleanup()
 
-            # Build result with corrected duration
+            # Build and return result
             metrics = test_flow.get_metrics()
-            duration = _compute_duration(metrics)
+            duration = compute_test_duration(metrics)
 
             result = TestResult(
                 success=True,
@@ -84,4 +86,20 @@ class TestRunner:
             return [result]
 
         except Exception as e:
-            raise e
+            self.logger.error(f"❌ Test failed: {e}")
+            # Try to get partial metrics if available
+            metrics = {}
+            warnings = []
+            if "test_flow" in locals():
+                metrics = test_flow.get_metrics()
+                warnings = test_flow.get_warnings()
+
+            return [
+                TestResult(
+                    success=False,
+                    duration=compute_test_duration(metrics),
+                    metrics=metrics,
+                    errors=[str(e)],
+                    warnings=warnings,
+                )
+            ]

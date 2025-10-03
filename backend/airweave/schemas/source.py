@@ -174,6 +174,14 @@ class Source(SourceInDBBase):
             "Describes field types, validation rules, and user interface hints."
         ),
     )
+    supported_auth_providers: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "List of auth provider short names that support this source "
+            "(e.g., ['composio', 'pipedream']). Computed dynamically for API responses. "
+            "This field is not stored in the database."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -199,6 +207,7 @@ class Source(SourceInDBBase):
                     "labels": ["code"],
                     "created_at": "2024-01-01T00:00:00Z",
                     "modified_at": "2024-01-01T00:00:00Z",
+                    "supported_auth_providers": [],
                     "auth_fields": {
                         "fields": [
                             {
@@ -254,6 +263,7 @@ class Source(SourceInDBBase):
                     "labels": ["Communication", "Email"],
                     "created_at": "2024-01-01T00:00:00Z",
                     "modified_at": "2024-01-01T00:00:00Z",
+                    "supported_auth_providers": ["pipedream", "composio"],
                     "auth_fields": None,  # OAuth sources don't have auth_fields
                     "config_fields": {
                         "fields": [

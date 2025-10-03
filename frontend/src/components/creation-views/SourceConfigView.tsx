@@ -22,9 +22,10 @@ interface SourceDetails {
   short_name: string;
   name: string;
   auth_methods?: string[];  // Array of supported auth methods
-  oauth_type?: string;  // OAuth token type (access_only, with_refresh, etc.)
+  oauth_type?: string;  // OAuth token type (oauth1, access_only, with_refresh, etc.)
   requires_byoc?: boolean;  // Whether source requires user to bring their own OAuth credentials
   auth_config_class?: string;  // Optional, only for DIRECT auth sources
+  supported_auth_providers?: string[];  // Array of auth provider short names that support this source
   auth_fields?: {  // Optional, only present for DIRECT auth sources
     fields: Array<{
       name: string;
@@ -75,16 +76,6 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
 
   const { authProviderConnections, fetchAuthProviderConnections } = useAuthProvidersStore();
 
-  // Sources that are temporarily blocked from using auth providers
-  const SOURCES_BLOCKED_FROM_AUTH_PROVIDERS = [
-    "confluence",
-    "jira",
-    "bitbucket",
-    "github",
-    "ctti",
-    "monday",
-    "postgresql"
-  ];
 
   const [isCreating, setIsCreating] = useState(false);
   const [sourceDetails, setSourceDetails] = useState<SourceDetails | null>(null);
@@ -146,6 +137,11 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
 
   const [connectionUrl, setConnectionUrl] = useState('');
 
+  // Check if source uses OAuth1 (vs OAuth2)
+  const isOAuth1 = () => {
+    return sourceDetails?.oauth_type === 'oauth1';
+  };
+
   // Check if source requires custom OAuth credentials (BYOC - Bring Your Own Credentials)
   const requiresCustomOAuth = () => {
     // Check the requires_byoc flag on the source
@@ -174,10 +170,11 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
       methods.push('oauth2');
     }
 
-    // Add external provider if any are connected and source supports it and is not blocked
+    // Add external provider if any are connected and source supports it
     if (authProviderConnections.length > 0 &&
       sourceDetails.auth_methods.includes('auth_provider') &&
-      !SOURCES_BLOCKED_FROM_AUTH_PROVIDERS.includes(sourceDetails.short_name)) {
+      sourceDetails.supported_auth_providers &&
+      sourceDetails.supported_auth_providers.length > 0) {
       methods.push('external_provider');
     }
 
@@ -286,24 +283,33 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
       );
 
       if (selectedProviderConnection) {
-        // Check if all required config fields are filled
+        // Check if all required provider config fields are filled
         const requiredFields = getRequiredProviderConfigFields(selectedProviderConnection.short_name);
         if (requiredFields.length > 0) {
-          return requiredFields.every(fieldName => authProviderConfig[fieldName]?.trim());
+          const allFilled = requiredFields.every(fieldName => authProviderConfig[fieldName]?.trim());
+          if (!allFilled) return false;
         }
       }
-
-      return true;
     } else if (authMode === 'direct_auth') {
-      // Need auth fields filled
+      // Check if all required auth fields are filled
       if (sourceDetails?.auth_fields?.fields) {
         const requiredFields = sourceDetails.auth_fields.fields.filter(f => f.required);
-        return requiredFields.every(field => authFields[field.name]?.trim());
+        const allFilled = requiredFields.every(field => authFields[field.name]?.trim());
+        if (!allFilled) return false;
       }
     } else if (authMode === 'oauth2') {
-      // Check if custom credentials are required
+      // Check if custom OAuth credentials are required
       if (requiresCustomOAuth() || useOwnCredentials) {
-        return !!(clientId.trim() && clientSecret.trim());
+        if (!clientId.trim() || !clientSecret.trim()) return false;
+      }
+    }
+
+    // Check required config fields (applies to ALL auth modes)
+    if (sourceDetails?.config_fields?.fields) {
+      const requiredConfigFields = sourceDetails.config_fields.fields.filter(f => f.required);
+      if (requiredConfigFields.length > 0) {
+        const allFilled = requiredConfigFields.every(field => configData[field.name]?.trim());
+        if (!allFilled) return false;
       }
     }
 
@@ -336,20 +342,28 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
           credentials: authFields
         };
       } else if (authMode === 'oauth2') {
-        // OAuth2 flow
+        // OAuth flow (OAuth1 or OAuth2)
         authentication = {
           redirect_uri: customRedirectUrl.trim() || getDefaultRedirectUrl()
         };
 
-        // Add client credentials if BYOC or user chose to use own credentials
+        // Add credentials if BYOC or user chose to use own credentials
         if (requiresCustomOAuth() || useOwnCredentials) {
           if (!clientId || !clientSecret) {
-            toast.error('Please provide OAuth client credentials');
+            const credType = isOAuth1() ? 'consumer' : 'client';
+            toast.error(`Please provide OAuth ${credType} credentials`);
             setIsCreating(false);
             return;
           }
-          authentication.client_id = clientId;
-          authentication.client_secret = clientSecret;
+
+          // OAuth1 uses consumer_key/consumer_secret, OAuth2 uses client_id/client_secret
+          if (isOAuth1()) {
+            authentication.consumer_key = clientId;
+            authentication.consumer_secret = clientSecret;
+          } else {
+            authentication.client_id = clientId;
+            authentication.client_secret = clientSecret;
+          }
         }
       } else if (authMode === 'external_provider') {
         // External provider auth
@@ -376,18 +390,28 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
         sync_immediately: authMode === 'direct_auth' || authMode === 'external_provider',
       };
 
-      // Add config fields if any
+      // Add config fields if any - filter out empty values
       if (Object.keys(configData).length > 0) {
-        payload.config = configData;
+        const filteredConfig = Object.entries(configData).reduce((acc, [key, value]) => {
+          // Only include non-empty values
+          if (value !== '' && value !== null && value !== undefined) {
+            acc[key] = value;
+          }
+          return acc;
+        }, {} as Record<string, any>);
+
+        // Only add config if there are actual values
+        if (Object.keys(filteredConfig).length > 0) {
+          payload.config = filteredConfig;
+        }
       }
 
       const response = await apiClient.post('/source-connections', payload);
 
       if (!response.ok) {
-        // const error = await response.json();
-        const error = await response.text();
-        console.error(error)
-        throw new Error(error.detail || 'Failed to create connection');
+        const errorText = await response.text();
+        console.error(errorText);
+        throw new Error(errorText || 'Failed to create connection');
       }
 
       const result = await response.json();
@@ -538,16 +562,17 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                     </div>
                   )}
 
-                  {/* Config fields (optional additional configuration) */}
+                  {/* Config fields */}
                   {sourceDetails?.config_fields?.fields && sourceDetails.config_fields.fields.length > 0 && (
                     <div className="space-y-3">
                       <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Additional Configuration (optional)
+                        Additional Configuration
                       </label>
                       {sourceDetails.config_fields.fields.map((field) => (
                         <div key={field.name}>
                           <label className="block text-sm font-medium mb-1">
                             {field.title || field.name}
+                            {field.required && <span className="text-red-500 ml-1">*</span>}
                           </label>
                           {field.description && (
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
@@ -620,18 +645,35 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                                     "text-xs leading-relaxed",
                                     isDark ? "text-gray-400" : "text-gray-600"
                                   )}>
-                                    OAuth credentials (Client ID and Client Secret) are like a special key that allows Airweave to securely access your {sourceName} data on your behalf. You create these in {sourceName}'s developer settings, and they ensure only authorized applications can connect to your account.
+                                    {isOAuth1() ? (
+                                      <>OAuth1 credentials (Consumer Key and Consumer Secret) are like a special key that allows Airweave to securely access your {sourceName} data on your behalf. You create these in {sourceName}'s developer settings, and they ensure only authorized applications can connect to your account.</>
+                                    ) : (
+                                      <>OAuth credentials (Client ID and Client Secret) are like a special key that allows Airweave to securely access your {sourceName} data on your behalf. You create these in {sourceName}'s developer settings, and they ensure only authorized applications can connect to your account.</>
+                                    )}
                                   </p>
                                   <div className={cn(
                                     "text-xs space-y-1 pt-2 border-t",
                                     isDark ? "border-gray-700" : "border-gray-200"
                                   )}>
-                                    <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
-                                      <span className="font-medium">Client ID:</span> Public identifier for your app
-                                    </p>
-                                    <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
-                                      <span className="font-medium">Client Secret:</span> Private key (keep this secure!)
-                                    </p>
+                                    {isOAuth1() ? (
+                                      <>
+                                        <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
+                                          <span className="font-medium">Consumer Key:</span> Public identifier for your app
+                                        </p>
+                                        <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
+                                          <span className="font-medium">Consumer Secret:</span> Private key (keep this secure!)
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
+                                          <span className="font-medium">Client ID:</span> Public identifier for your app
+                                        </p>
+                                        <p className={cn(isDark ? "text-gray-500" : "text-gray-500")}>
+                                          <span className="font-medium">Client Secret:</span> Private key (keep this secure!)
+                                        </p>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -662,7 +704,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                           <div className="space-y-2.5">
                             <ValidatedInput
                               type="text"
-                              placeholder="Client ID"
+                              placeholder={isOAuth1() ? "Consumer Key" : "Client ID"}
                               value={clientId}
                               onChange={setClientId}
                               validation={clientIdValidation}
@@ -675,7 +717,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                             />
                             <ValidatedInput
                               type="password"
-                              placeholder="Client Secret"
+                              placeholder={isOAuth1() ? "Consumer Secret" : "Client Secret"}
                               value={clientSecret}
                               onChange={setClientSecret}
                               validation={clientSecretValidation}
@@ -751,7 +793,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                               )}>
                                 Optional: Use your own OAuth app for enhanced control.{' '}
                                 <a
-                                  href="https://docs.airweave.ai/integrations/custom-oauth"
+                                  href="https://docs.airweave.ai/direct-oauth#byoc-bring-your-own-credentials"
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={cn(
@@ -770,7 +812,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                             <div className="mt-3 space-y-2.5 pl-13">
                               <ValidatedInput
                                 type="text"
-                                placeholder="Client ID"
+                                placeholder={isOAuth1() ? "Consumer Key" : "Client ID"}
                                 value={clientId}
                                 onChange={setClientId}
                                 validation={clientIdValidation}
@@ -783,7 +825,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                               />
                               <ValidatedInput
                                 type="password"
-                                placeholder="Client Secret"
+                                placeholder={isOAuth1() ? "Consumer Secret" : "Client Secret"}
                                 value={clientSecret}
                                 onChange={setClientSecret}
                                 validation={clientSecretValidation}

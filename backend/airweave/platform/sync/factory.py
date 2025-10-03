@@ -16,7 +16,7 @@ from airweave.core.exceptions import NotFoundException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
 from airweave.core.sync_cursor_service import sync_cursor_service
-from airweave.platform.auth.services import oauth2_service
+from airweave.platform.auth.oauth2_service import oauth2_service
 from airweave.platform.auth_providers._base import BaseAuthProvider
 from airweave.platform.auth_providers.auth_result import AuthProviderMode
 from airweave.platform.auth_providers.pipedream import PipedreamAuthProvider
@@ -364,8 +364,16 @@ class SyncFactory:
             # Non-fatal: older sources may ignore this
             pass
 
-        # Setup token manager if needed
-        if auth_config.get("auth_provider_instance"):
+        # Setup token manager for OAuth sources (if applicable)
+        # Skip only for direct token injection - let _setup_token_manager decide if
+        # a token manager should actually be created based on OAuth type and credentials
+        auth_mode = auth_config.get("auth_mode")
+        auth_provider_instance = auth_config.get("auth_provider_instance")
+        is_direct_injection = auth_mode == AuthProviderMode.DIRECT and isinstance(
+            source_credentials, str
+        )
+
+        if not is_direct_injection:
             try:
                 await cls._setup_token_manager(
                     db=db,
@@ -374,7 +382,7 @@ class SyncFactory:
                     source_credentials=auth_config["credentials"],
                     ctx=ctx,
                     logger=logger,
-                    auth_provider_instance=auth_config["auth_provider_instance"],
+                    auth_provider_instance=auth_provider_instance,
                 )
             except Exception as e:
                 logger.error(
@@ -615,8 +623,9 @@ class SyncFactory:
             try:
                 auth_config_class = resource_locator.get_auth_config(auth_config_class_name)
                 processed_credentials = auth_config_class.model_validate(raw_credentials)
-                msg = f"Converted credentials dict to {auth_config_class_name} object"
-                logger.info(f"{msg} for {short_name}")
+                logger.debug(
+                    f"Converted credentials dict to {auth_config_class_name} for {short_name}"
+                )
                 return processed_credentials
             except Exception as e:
                 logger.error(f"Failed to convert credentials to auth config object: {e}")
@@ -792,9 +801,16 @@ class SyncFactory:
                 ctx,
                 connection_id,
                 decrypted_credential,
+                source_connection_data["config_fields"],
             )
-            # Just use the access token
-            return oauth2_response.access_token
+            # Update the access_token in the credentials while preserving other fields
+            # This is critical for sources like Salesforce that need instance_url
+            updated_credentials = decrypted_credential.copy()
+            updated_credentials["access_token"] = oauth2_response.access_token
+
+            # Return the updated credentials dict (NOT just the access token)
+            # This preserves fields like instance_url, client_id, etc.
+            return updated_credentials
 
         return source_credentials
 
@@ -818,10 +834,10 @@ class SyncFactory:
                 db,
                 source,
                 source_connection_data,
-                ctx,
-                None,
                 final_access_token,
+                ctx,
                 logger,
+                None,
             )
 
     @classmethod
@@ -878,6 +894,7 @@ class SyncFactory:
                     "integration_credential_id": source_connection_data[
                         "integration_credential_id"
                     ],
+                    "config_fields": source_connection_data.get("config_fields"),
                 },
             )()
 

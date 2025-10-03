@@ -1,8 +1,11 @@
 """Clean source connection service with auth method inference."""
 
 from datetime import datetime
-from typing import Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from airweave.platform.auth.schemas import OAuth1Settings, OAuth2Settings
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +22,7 @@ from airweave.core.temporal_service import temporal_service
 from airweave.crud import connection_init_session
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.models.connection_init_session import ConnectionInitStatus
-from airweave.platform.auth.services import oauth2_service
+from airweave.platform.auth.oauth2_service import oauth2_service
 from airweave.platform.auth.settings import integration_settings
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import (
@@ -160,6 +163,62 @@ class SourceConnectionService:
 
         # All other patterns (including "0 * * * *" for hourly) are allowed
 
+    async def _validate_and_extract_template_configs(
+        self,
+        db: AsyncSession,
+        source: schemas.Source,
+        validated_config: Optional[dict],
+        ctx: ApiContext,
+    ) -> Optional[dict]:
+        """Validate and extract template config fields for OAuth flows.
+
+        Template configs are config fields that are required before OAuth can begin
+        (e.g., instance URLs like Zendesk subdomain).
+
+        Args:
+            db: Database session
+            source: Source model
+            validated_config: Already validated config dictionary
+            ctx: API context
+
+        Returns:
+            Dictionary of template configs or None if not applicable
+
+        Raises:
+            HTTPException: If required template configs are missing or invalid
+        """
+        template_configs = None
+        if source.config_class and validated_config is not None:
+            from airweave.platform.locator import resource_locator
+
+            try:
+                config_class = resource_locator.get_config(source.config_class)
+
+                # Check if this source has template config fields
+                template_config_fields = config_class.get_template_config_fields()
+
+                if template_config_fields:
+                    # Validate template config fields are present
+                    # (even if validated_config is empty dict)
+                    try:
+                        config_class.validate_template_configs(validated_config)
+                        template_configs = config_class.extract_template_configs(validated_config)
+
+                        ctx.logger.info(
+                            f"✅ Validated template configs for {source.short_name}: "
+                            f"{list(template_configs.keys())}"
+                        )
+                    except ValueError as e:
+                        raise HTTPException(status_code=422, detail=str(e))
+            except HTTPException:
+                # Re-raise HTTP exceptions (like validation errors)
+                raise
+            except Exception as e:
+                # Log but don't fail if config class not found (backward compatibility)
+                ctx.logger.warning(f"Could not load config class for {source.short_name}: {e}")
+
+        return template_configs
+
     """Clean service with automatic auth method inference.
 
     Key improvements:
@@ -194,8 +253,13 @@ class SourceConnectionService:
         elif isinstance(auth, OAuthTokenAuthentication):
             return AuthenticationMethod.OAUTH_TOKEN
         elif isinstance(auth, OAuthBrowserAuthentication):
-            # Check if BYOC based on presence of client credentials
-            if auth.client_id and auth.client_secret:
+            # Check if BYOC based on presence of custom credentials
+            # OAuth2 BYOC: client_id + client_secret
+            # OAuth1 BYOC: consumer_key + consumer_secret
+            has_oauth2_byoc = auth.client_id and auth.client_secret
+            has_oauth1_byoc = auth.consumer_key and auth.consumer_secret
+
+            if has_oauth2_byoc or has_oauth1_byoc:
                 return AuthenticationMethod.OAUTH_BYOC
             else:
                 return AuthenticationMethod.OAUTH_BROWSER
@@ -235,6 +299,14 @@ class SourceConnectionService:
                 f"Supported methods: {[m.value for m in supported]}",
             )
 
+        # Validate BYOC requirement: If source requires BYOC, auth method must be OAUTH_BYOC
+        if source_class.requires_byoc() and auth_method == AuthenticationMethod.OAUTH_BROWSER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source {obj_in.short_name} requires custom OAuth client credentials. "
+                "Please provide client_id and client_secret in the authentication configuration.",
+            )
+
         # Handle the edge case where authentication was None (defaults to OAuth browser)
         # and Pydantic couldn't determine the default
         if obj_in.sync_immediately is None:
@@ -257,11 +329,33 @@ class SourceConnectionService:
         if auth_method == AuthenticationMethod.DIRECT:
             source_connection = await self._create_with_direct_auth(db, obj_in=obj_in, ctx=ctx)
         elif auth_method == AuthenticationMethod.OAUTH_BROWSER:
-            source_connection = await self._create_with_oauth_browser(db, obj_in=obj_in, ctx=ctx)
+            # Determine OAuth1 vs OAuth2
+            oauth_settings = await integration_settings.get_by_short_name(obj_in.short_name)
+            from airweave.platform.auth.schemas import OAuth1Settings
+
+            if isinstance(oauth_settings, OAuth1Settings):
+                source_connection = await self._create_with_oauth1_browser(
+                    db, obj_in=obj_in, oauth_settings=oauth_settings, ctx=ctx
+                )
+            else:
+                source_connection = await self._create_with_oauth2_browser(
+                    db, obj_in=obj_in, oauth_settings=oauth_settings, ctx=ctx
+                )
         elif auth_method == AuthenticationMethod.OAUTH_TOKEN:
             source_connection = await self._create_with_oauth_token(db, obj_in=obj_in, ctx=ctx)
         elif auth_method == AuthenticationMethod.OAUTH_BYOC:
-            source_connection = await self._create_with_oauth_byoc(db, obj_in=obj_in, ctx=ctx)
+            # Determine OAuth1 vs OAuth2 BYOC
+            oauth_settings = await integration_settings.get_by_short_name(obj_in.short_name)
+            from airweave.platform.auth.schemas import OAuth1Settings
+
+            if isinstance(oauth_settings, OAuth1Settings):
+                source_connection = await self._create_with_oauth1_byoc(
+                    db, obj_in=obj_in, oauth_settings=oauth_settings, ctx=ctx
+                )
+            else:
+                source_connection = await self._create_with_oauth2_byoc(
+                    db, obj_in=obj_in, oauth_settings=oauth_settings, ctx=ctx
+                )
         elif auth_method == AuthenticationMethod.AUTH_PROVIDER:
             source_connection = await self._create_with_auth_provider(db, obj_in=obj_in, ctx=ctx)
         else:
@@ -554,56 +648,78 @@ class SourceConnectionService:
 
         return response
 
-    async def _create_with_oauth_browser(
+    async def _create_with_oauth1_browser(
         self,
         db: AsyncSession,
         obj_in: SourceConnectionCreate,
+        oauth_settings: "OAuth1Settings",
         ctx: ApiContext,
+        custom_consumer_key: Optional[str] = None,
+        custom_consumer_secret: Optional[str] = None,
     ) -> SourceConnection:
-        """Create shell connection and start OAuth browser flow."""
-        from airweave.schemas.source_connection import OAuthBrowserAuthentication
+        """Create shell connection and start OAuth1 browser flow.
 
+        OAuth1 flow:
+        1. Get request token from provider
+        2. Store request token credentials
+        3. Redirect user to authorization URL with request token
+        4. After approval, exchange verifier for access token (handled in callback)
+
+        Args:
+            db: Database session
+            obj_in: Source connection creation request
+            oauth_settings: OAuth1 integration settings
+            ctx: API context
+            custom_consumer_key: Optional custom consumer key for BYOC
+            custom_consumer_secret: Optional custom consumer secret for BYOC
+        """
         source = await self._get_and_validate_source(db, obj_in.short_name)
-
-        # Extract OAuth config from nested authentication (or use defaults)
-        oauth_auth = None
-        if obj_in.authentication is not None:
-            if not isinstance(obj_in.authentication, OAuthBrowserAuthentication):
-                raise HTTPException(
-                    status_code=400, detail="Invalid authentication type for OAuth browser"
-                )
-            oauth_auth = obj_in.authentication
-        else:
-            # Create default OAuth browser authentication
-            oauth_auth = OAuthBrowserAuthentication()
 
         # Validate config
         validated_config = await self._validate_config_fields(
             db, obj_in.short_name, obj_in.config, ctx
         )
 
-        # Generate OAuth URL
-        oauth_settings = await integration_settings.get_by_short_name(source.short_name)
-        if not oauth_settings:
-            raise HTTPException(
-                status_code=400,
-                detail=f"OAuth not configured for source: {source.short_name}",
-            )
-
         import secrets
 
         state = secrets.token_urlsafe(24)
         api_callback = f"{core_settings.api_url}/source-connections/callback"
 
-        # Use custom client if provided
-        client_id = oauth_auth.client_id if oauth_auth.client_id else None
+        # Use custom consumer credentials if provided (BYOC), otherwise platform defaults
+        consumer_key = custom_consumer_key or oauth_settings.consumer_key
+        consumer_secret = custom_consumer_secret or oauth_settings.consumer_secret
 
-        provider_auth_url = await oauth2_service.generate_auth_url_with_redirect(
-            oauth_settings,
-            redirect_uri=api_callback,
-            client_id=client_id,
-            state=state,
+        # Step 1: Get request token from OAuth1 provider
+        from airweave.platform.auth.oauth1_service import oauth1_service
+
+        flow_type = "OAuth1 BYOC" if custom_consumer_key else "OAuth1"
+        ctx.logger.info(f"Starting {flow_type} flow for {source.short_name}")
+
+        request_token_response = await oauth1_service.get_request_token(
+            request_token_url=oauth_settings.request_token_url,
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            callback_url=api_callback,
+            logger=ctx.logger,
         )
+
+        # Step 2: Store request token credentials for later exchange
+        oauth1_overrides = {
+            "oauth_token": request_token_response.oauth_token,
+            "oauth_token_secret": request_token_response.oauth_token_secret,
+            "consumer_key": consumer_key,
+            "consumer_secret": consumer_secret,
+        }
+
+        # Step 3: Build authorization URL with request token
+        provider_auth_url = oauth1_service.build_authorization_url(
+            authorization_url=oauth_settings.authorization_url,
+            oauth_token=request_token_response.oauth_token,
+            scope=oauth_settings.scope,
+            expiration=oauth_settings.expiration,
+        )
+
+        ctx.logger.debug(f"OAuth1 request token obtained for {source.short_name}")
 
         async with UnitOfWork(db) as uow:
             # Create shell source connection
@@ -624,9 +740,144 @@ class SourceConnectionService:
                 uow.session, provider_auth_url, ctx, uow
             )
 
-            # Create init session with the redirect_session_id
+            # Create init session with OAuth1 credentials
             init_session = await self._create_init_session(
-                uow.session, obj_in, state, ctx, uow, redirect_session_id=redirect_session_id
+                uow.session,
+                obj_in,
+                state,
+                ctx,
+                uow,
+                redirect_session_id=redirect_session_id,
+                additional_overrides=oauth1_overrides,
+            )
+
+            # Link them
+            source_conn.connection_init_session_id = init_session.id
+            uow.session.add(source_conn)
+
+            # Add auth URL to response
+            source_conn.authentication_url = proxy_url
+            source_conn.authentication_url_expiry = proxy_expiry
+
+            await uow.commit()
+            await uow.session.refresh(source_conn)
+
+        # Build response with the main db session after commit
+        response = await self._build_source_connection_response(db, source_conn, ctx)
+
+        return response
+
+    async def _create_with_oauth2_browser(
+        self,
+        db: AsyncSession,
+        obj_in: SourceConnectionCreate,
+        oauth_settings: "OAuth2Settings",
+        ctx: ApiContext,
+    ) -> SourceConnection:
+        """Create shell connection and start OAuth2 browser flow.
+
+        OAuth2 flow:
+        1. Generate authorization URL (with optional PKCE)
+        2. Redirect user to authorization URL
+        3. After approval, exchange code for access token (handled in callback)
+        """
+        from airweave.schemas.source_connection import OAuthBrowserAuthentication
+
+        source = await self._get_and_validate_source(db, obj_in.short_name)
+
+        # Extract OAuth config from nested authentication (or use defaults)
+        oauth_auth = None
+        if obj_in.authentication is not None:
+            if not isinstance(obj_in.authentication, OAuthBrowserAuthentication):
+                raise HTTPException(
+                    status_code=400, detail="Invalid authentication type for OAuth browser"
+                )
+            oauth_auth = obj_in.authentication
+        else:
+            # Create default OAuth browser authentication
+            oauth_auth = OAuthBrowserAuthentication()
+
+        # Enforce BYOC if required by the source
+        if source.requires_byoc:
+            if not oauth_auth.client_id or not oauth_auth.client_secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Source '{source.name}' requires BYOC (Bring Your Own Credentials). "
+                    f"You must provide both client_id and client_secret in the auth object.",
+                )
+
+        # Validate config
+        validated_config = await self._validate_config_fields(
+            db, obj_in.short_name, obj_in.config, ctx
+        )
+
+        # Validate and extract template config fields for OAuth flow
+        template_configs = await self._validate_and_extract_template_configs(
+            db, source, validated_config, ctx
+        )
+
+        # Generate OAuth URL
+        oauth_settings = await integration_settings.get_by_short_name(source.short_name)
+        if not oauth_settings:
+            raise HTTPException(
+                status_code=400,
+                detail=f"OAuth not configured for source: {source.short_name}",
+            )
+
+        import secrets
+
+        state = secrets.token_urlsafe(24)
+        api_callback = f"{core_settings.api_url}/source-connections/callback"
+
+        # Use custom client if provided
+        client_id = oauth_auth.client_id if oauth_auth.client_id else None
+
+        # Generate authorization URL with PKCE support if required
+        provider_auth_url, code_verifier = await oauth2_service.generate_auth_url_with_redirect(
+            oauth_settings,
+            redirect_uri=api_callback,
+            client_id=client_id,
+            state=state,
+            template_configs=template_configs,
+        )
+
+        # Store PKCE code verifier if present (will be used during token exchange)
+        oauth2_overrides = {}
+        if code_verifier:
+            oauth2_overrides["code_verifier"] = code_verifier
+            ctx.logger.debug(
+                f"Generated PKCE challenge for {source.short_name} (code_verifier stored)"
+            )
+
+        async with UnitOfWork(db) as uow:
+            # Create shell source connection
+            source_conn = await self._create_source_connection(
+                uow.session,
+                obj_in,
+                connection_id=None,
+                collection_id=obj_in.readable_collection_id,
+                sync_id=None,
+                config_fields=validated_config,
+                is_authenticated=False,
+                ctx=ctx,
+                uow=uow,
+            )
+
+            # Generate proxy URL first to get the redirect_session_id
+            proxy_url, proxy_expiry, redirect_session_id = await self._create_proxy_url(
+                uow.session, provider_auth_url, ctx, uow
+            )
+
+            # Create init session with OAuth2 PKCE overrides
+            init_session = await self._create_init_session(
+                uow.session,
+                obj_in,
+                state,
+                ctx,
+                uow,
+                redirect_session_id=redirect_session_id,
+                template_configs=template_configs,
+                additional_overrides=oauth2_overrides,
             )
 
             # Link them
@@ -751,13 +1002,58 @@ class SourceConnectionService:
 
         return response
 
-    async def _create_with_oauth_byoc(
+    async def _create_with_oauth1_byoc(
         self,
         db: AsyncSession,
         obj_in: SourceConnectionCreate,
+        oauth_settings: "OAuth1Settings",
         ctx: ApiContext,
     ) -> SourceConnection:
-        """Create connection with bring-your-own-client OAuth."""
+        """Create connection with bring-your-own-client OAuth1.
+
+        User provides their own consumer_key and consumer_secret instead of using
+        the platform's credentials.
+        """
+        from airweave.schemas.source_connection import OAuthBrowserAuthentication
+
+        # Verify consumer credentials are present
+        if not obj_in.authentication or not isinstance(
+            obj_in.authentication, OAuthBrowserAuthentication
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "OAuth1 BYOC requires OAuth browser authentication with consumer credentials"
+                ),
+            )
+
+        if not obj_in.authentication.consumer_key or not obj_in.authentication.consumer_secret:
+            raise HTTPException(
+                status_code=400, detail="OAuth1 BYOC requires consumer_key and consumer_secret"
+            )
+
+        # Delegate to OAuth1 browser flow with custom consumer credentials
+        return await self._create_with_oauth1_browser(
+            db,
+            obj_in=obj_in,
+            oauth_settings=oauth_settings,
+            ctx=ctx,
+            custom_consumer_key=obj_in.authentication.consumer_key,
+            custom_consumer_secret=obj_in.authentication.consumer_secret,
+        )
+
+    async def _create_with_oauth2_byoc(
+        self,
+        db: AsyncSession,
+        obj_in: SourceConnectionCreate,
+        oauth_settings: "OAuth2Settings",
+        ctx: ApiContext,
+    ) -> SourceConnection:
+        """Create connection with bring-your-own-client OAuth2.
+
+        User provides their own client_id and client_secret instead of using
+        the platform's credentials.
+        """
         from airweave.schemas.source_connection import OAuthBrowserAuthentication
 
         # Verify client credentials are present
@@ -766,16 +1062,19 @@ class SourceConnectionService:
         ):
             raise HTTPException(
                 status_code=400,
-                detail="BYOC OAuth requires OAuth browser authentication with client credentials",
+                detail="OAuth2 BYOC requires OAuth browser authentication with client credentials",
             )
 
         if not obj_in.authentication.client_id or not obj_in.authentication.client_secret:
             raise HTTPException(
-                status_code=400, detail="BYOC OAuth requires client_id and client_secret"
+                status_code=400, detail="OAuth2 BYOC requires client_id and client_secret"
             )
 
-        # Use the browser flow with custom client
-        return await self._create_with_oauth_browser(db, obj_in, ctx)
+        # Use the OAuth2 browser flow with custom client credentials
+        # The oauth2_browser handler already supports custom client_id via oauth_auth parameter
+        return await self._create_with_oauth2_browser(
+            db, obj_in=obj_in, oauth_settings=oauth_settings, ctx=ctx
+        )
 
     async def _create_with_auth_provider(
         self,
@@ -805,6 +1104,20 @@ class SourceConnectionService:
             raise HTTPException(
                 status_code=404,
                 detail=f"Auth provider '{obj_in.authentication.provider_readable_id}' not found",
+            )
+
+        # Validate that the source supports this auth provider
+        supported_providers = auth_provider_service.get_supported_providers_for_source(
+            obj_in.short_name
+        )
+        if auth_provider_conn.short_name not in supported_providers:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Source '{obj_in.short_name}' does not support "
+                    f"'{auth_provider_conn.short_name}' as an auth provider. "
+                    f"Supported providers: {supported_providers}"
+                ),
             )
 
         # Validate provider config
@@ -1299,25 +1612,102 @@ class SourceConnectionService:
         sync_job_schema = schemas.SyncJob.model_validate(sync_job, from_attributes=True)
         return sync_job_schema.to_source_connection_job(source_connection_id)
 
-    async def complete_oauth_callback(
+    async def complete_oauth1_callback(
+        self,
+        db: AsyncSession,
+        *,
+        oauth_token: str,
+        oauth_verifier: str,
+    ) -> schemas.SourceConnection:
+        """Complete OAuth1 flow from callback.
+
+        OAuth1 doesn't send our state parameter back, so we look up the session
+        by oauth_token (the request token we stored during authorization).
+
+        Args:
+            db: Database session
+            oauth_token: OAuth1 request token (matches what we stored)
+            oauth_verifier: OAuth1 verifier code from user authorization
+
+        Returns:
+            Completed source connection with authentication details
+        """
+        # Find init session by oauth_token (stored in overrides during authorization)
+        init_session = await connection_init_session.get_by_oauth_token_no_auth(
+            db, oauth_token=oauth_token
+        )
+        if not init_session:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "OAuth1 session not found or expired. Request token may have been used already."
+                ),
+            )
+
+        if init_session.status != ConnectionInitStatus.PENDING:
+            raise HTTPException(
+                status_code=400, detail=f"OAuth session already {init_session.status}"
+            )
+
+        # Reconstruct ApiContext from session data
+        ctx = await self._reconstruct_context_from_session(db, init_session)
+
+        # Find shell source connection
+        source_conn_shell = await crud.source_connection.get_by_query_and_org(
+            db, ctx=ctx, connection_init_session_id=init_session.id
+        )
+        if not source_conn_shell:
+            raise HTTPException(status_code=404, detail="Source connection shell not found")
+
+        # Get OAuth1 settings
+        from airweave.platform.auth.schemas import OAuth1Settings
+        from airweave.platform.auth.settings import integration_settings
+
+        oauth_settings = await integration_settings.get_by_short_name(init_session.short_name)
+
+        if not isinstance(oauth_settings, OAuth1Settings):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source {init_session.short_name} is not configured for OAuth1",
+            )
+
+        # Exchange verifier for access token
+        token_response = await self._exchange_oauth1_code(
+            init_session.short_name,
+            oauth_verifier,
+            init_session.overrides,
+            oauth_settings,
+            ctx,
+        )
+
+        # Complete OAuth1 connection
+        source_conn = await self._complete_oauth1_connection(
+            db, source_conn_shell, init_session, token_response, ctx
+        )
+
+        return await self._finalize_oauth_callback(db, source_conn, ctx)
+
+    async def complete_oauth2_callback(
         self,
         db: AsyncSession,
         *,
         state: str,
         code: str,
     ) -> schemas.SourceConnection:
-        """Complete OAuth flow from callback.
+        """Complete OAuth2 flow from callback.
 
-        This method reconstructs the ApiContext from the stored session data
-        since OAuth callbacks come from external providers without platform auth.
+        Args:
+            db: Database session
+            state: OAuth2 state parameter for CSRF protection
+            code: OAuth2 authorization code
 
         Returns:
-            Source connection with authentication details
+            Completed source connection with authentication details
         """
-        # Find init session without auth validation
+        # Find init session by state
         init_session = await connection_init_session.get_by_state_no_auth(db, state=state)
         if not init_session:
-            raise HTTPException(status_code=404, detail="OAuth session not found or expired")
+            raise HTTPException(status_code=404, detail="OAuth2 session not found or expired")
 
         if init_session.status != ConnectionInitStatus.PENDING:
             raise HTTPException(
@@ -1335,11 +1725,11 @@ class SourceConnectionService:
             raise HTTPException(status_code=404, detail="Source connection shell not found")
 
         # Exchange code for token
-        token_response = await self._exchange_oauth_code(
-            db, init_session.short_name, code, init_session.overrides, ctx
+        token_response = await self._exchange_oauth2_code(
+            init_session.short_name, code, init_session.overrides, ctx
         )
 
-        # Validate token
+        # Validate OAuth2 token
         await self._validate_oauth_token(
             db,
             await crud.source.get_by_short_name(db, short_name=init_session.short_name),
@@ -1348,11 +1738,31 @@ class SourceConnectionService:
             ctx,
         )
 
-        # Complete the connection - also creates a sync if run_immediately is True
-        source_conn = await self._complete_oauth_connection(
+        # Complete OAuth2 connection
+        source_conn = await self._complete_oauth2_connection(
             db, source_conn_shell, init_session, token_response, ctx
         )
 
+        return await self._finalize_oauth_callback(db, source_conn, ctx)
+
+    async def _finalize_oauth_callback(
+        self,
+        db: AsyncSession,
+        source_conn: Any,
+        ctx: ApiContext,
+    ) -> schemas.SourceConnection:
+        """Common finalization logic for OAuth callbacks (OAuth1 and OAuth2).
+
+        Builds response and triggers sync workflow if needed.
+
+        Args:
+            db: Database session
+            source_conn: Completed source connection
+            ctx: API context
+
+        Returns:
+            Source connection response schema
+        """
         # Build the proper response model with redirect URL
         source_conn_response = await self._build_source_connection_response(db, source_conn, ctx)
 
@@ -1437,8 +1847,10 @@ class SourceConnectionService:
     _cleanup_temporal_schedules = source_connection_helpers.cleanup_temporal_schedules
     _sync_job_to_source_connection_job = source_connection_helpers.sync_job_to_source_connection_job
     _reconstruct_context_from_session = source_connection_helpers.reconstruct_context_from_session
-    _exchange_oauth_code = source_connection_helpers.exchange_oauth_code
-    _complete_oauth_connection = source_connection_helpers.complete_oauth_connection
+    _exchange_oauth1_code = source_connection_helpers.exchange_oauth1_code
+    _exchange_oauth2_code = source_connection_helpers.exchange_oauth2_code
+    _complete_oauth1_connection = source_connection_helpers.complete_oauth1_connection
+    _complete_oauth2_connection = source_connection_helpers.complete_oauth2_connection
 
 
 # Singleton instance

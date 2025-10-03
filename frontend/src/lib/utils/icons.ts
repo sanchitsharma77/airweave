@@ -2,6 +2,10 @@ import { useTheme } from "@/lib/theme-provider";
 
 export function getAppIconUrl(shortName: string, theme?: string): string {
   try {
+    // Special handling for Attio icon in dark mode
+    if (shortName === "attio" && theme === "dark") {
+      return new URL(`/src/components/icons/apps/attio-light.svg`, import.meta.url).href;
+    }
     // Special handling for Notion icon in dark mode
     if (shortName === "notion" && theme === "dark") {
       return new URL(`/src/components/icons/apps/notion-light.svg`, import.meta.url).href;

@@ -1,0 +1,731 @@
+"""GitLab source implementation for syncing projects, files, issues, and merge requests."""
+
+import base64
+import mimetypes
+from datetime import datetime
+from pathlib import Path
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+import httpx
+import tenacity
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from airweave.platform.decorators import source
+from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities.gitlab import (
+    GitLabCodeFileEntity,
+    GitLabDirectoryEntity,
+    GitLabIssueEntity,
+    GitLabMergeRequestEntity,
+    GitLabProjectEntity,
+    GitLabUserEntity,
+)
+from airweave.platform.sources._base import BaseSource
+from airweave.platform.utils.file_extensions import (
+    get_language_for_extension,
+    is_text_file,
+)
+from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
+
+
+@source(
+    name="GitLab",
+    short_name="gitlab",
+    auth_methods=[
+        AuthenticationMethod.OAUTH_BROWSER,
+        AuthenticationMethod.OAUTH_TOKEN,
+        AuthenticationMethod.AUTH_PROVIDER,
+    ],
+    oauth_type=OAuthType.WITH_REFRESH,
+    auth_config_class="GitLabAuthConfig",
+    config_class="GitLabConfig",
+    labels=["Code"],
+    supports_continuous=False,
+)
+class GitLabSource(BaseSource):
+    """GitLab source connector integrates with the GitLab REST API to extract data.
+
+    Connects to your GitLab projects.
+
+    It supports syncing projects, users, repository files, issues, and merge requests
+    with configurable filtering options for branches and file types.
+    """
+
+    BASE_URL = "https://gitlab.com/api/v4"
+
+    @classmethod
+    async def create(
+        cls, access_token: str, config: Optional[Dict[str, Any]] = None
+    ) -> "GitLabSource":
+        """Create a new source instance with authentication.
+
+        Args:
+            access_token: OAuth access token for GitLab API
+            config: Optional source configuration parameters
+
+        Returns:
+            Configured GitLab source instance
+        """
+        instance = cls()
+        instance.access_token = access_token
+
+        # Parse config fields
+        if config:
+            instance.project_id = config.get("project_id")
+            instance.branch = config.get("branch", "")
+        else:
+            instance.project_id = None
+            instance.branch = ""
+
+        return instance
+
+    @tenacity.retry(
+        retry=retry_if_exception_type(httpx.HTTPError),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def _get_with_auth(
+        self, client: httpx.AsyncClient, url: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Make authenticated API request using OAuth access token.
+
+        Args:
+            client: HTTP client
+            url: API endpoint URL
+            params: Optional query parameters
+
+        Returns:
+            JSON response
+        """
+        # Get a valid token (will refresh if needed)
+        access_token = await self.get_access_token()
+        if not access_token:
+            raise ValueError("No access token available")
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        }
+
+        try:
+            response = await client.get(url, headers=headers, params=params)
+
+            # Handle 401 Unauthorized - token might have expired
+            if response.status_code == 401:
+                self.logger.warning(f"Received 401 Unauthorized for {url}, refreshing token...")
+
+                if self.token_manager:
+                    try:
+                        # Force refresh the token
+                        from airweave.core.exceptions import TokenRefreshError
+
+                        new_token = await self.token_manager.refresh_on_unauthorized()
+                        headers = {"Authorization": f"Bearer {new_token}"}
+
+                        # Retry with new token
+                        self.logger.info(f"Retrying request with refreshed token: {url}")
+                        response = await client.get(url, headers=headers, params=params)
+
+                    except TokenRefreshError as e:
+                        self.logger.error(f"Failed to refresh token: {str(e)}")
+                        response.raise_for_status()
+                else:
+                    self.logger.error("No token manager available to refresh expired token")
+                    response.raise_for_status()
+
+            response.raise_for_status()
+            return response.json()
+
+        except httpx.HTTPStatusError as e:
+            self.logger.error(f"HTTP error from GitLab API: {e.response.status_code} for {url}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error accessing GitLab API: {url}, {str(e)}")
+            raise
+
+    async def _get_paginated_results(
+        self, client: httpx.AsyncClient, url: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Get all pages of results from a paginated GitLab API endpoint.
+
+        Args:
+            client: HTTP client
+            url: API endpoint URL
+            params: Optional query parameters
+
+        Returns:
+            List of all results from all pages
+        """
+        if params is None:
+            params = {}
+
+        # Set per_page to maximum to minimize requests
+        params["per_page"] = 100
+
+        all_results = []
+        page = 1
+
+        while True:
+            params["page"] = page
+            token = await self.get_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
+
+            try:
+                response = await client.get(url, headers=headers, params=params)
+
+                # Handle 401 Unauthorized - token might have expired
+                if response.status_code == 401:
+                    self.logger.warning(f"Received 401 Unauthorized for {url}, refreshing token...")
+
+                    if self.token_manager:
+                        try:
+                            # Force refresh the token
+                            from airweave.core.exceptions import TokenRefreshError
+
+                            new_token = await self.token_manager.refresh_on_unauthorized()
+                            headers = {
+                                "Authorization": f"Bearer {new_token}",
+                                "Accept": "application/json",
+                            }
+
+                            # Retry with new token
+                            self.logger.info(
+                                f"Retrying paginated request with refreshed token: {url}"
+                            )
+                            response = await client.get(url, headers=headers, params=params)
+
+                        except TokenRefreshError as e:
+                            self.logger.error(f"Failed to refresh token: {str(e)}")
+                            response.raise_for_status()
+                    else:
+                        self.logger.error("No token manager available to refresh expired token")
+                        response.raise_for_status()
+
+                response.raise_for_status()
+
+                results = response.json()
+                if not results:  # Empty page means we're done
+                    break
+
+                all_results.extend(results)
+
+                # Check if there's a next page via header
+                if "x-next-page" not in response.headers or not response.headers["x-next-page"]:
+                    break
+
+                page += 1
+
+            except httpx.HTTPStatusError as e:
+                self.logger.error(f"HTTP error from GitLab API: {e.response.status_code} for {url}")
+                raise
+            except Exception as e:
+                self.logger.error(f"Unexpected error accessing GitLab API: {url}, {str(e)}")
+                raise
+
+        return all_results
+
+    def _detect_language_from_extension(self, file_path: str) -> str:
+        """Detect programming language from file extension.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            The detected language name
+        """
+        ext = Path(file_path).suffix.lower()
+        return get_language_for_extension(ext)
+
+    async def _get_current_user(self, client: httpx.AsyncClient) -> GitLabUserEntity:
+        """Get current authenticated user information.
+
+        Args:
+            client: HTTP client
+
+        Returns:
+            User entity for the authenticated user
+        """
+        url = f"{self.BASE_URL}/user"
+        user_data = await self._get_with_auth(client, url)
+
+        return GitLabUserEntity(
+            entity_id=str(user_data["id"]),
+            breadcrumbs=[],
+            username=user_data["username"],
+            name=user_data["name"],
+            state=user_data["state"],
+            avatar_url=user_data.get("avatar_url"),
+            web_url=user_data["web_url"],
+            created_at=(
+                datetime.fromisoformat(user_data["created_at"].replace("Z", "+00:00"))
+                if user_data.get("created_at")
+                else None
+            ),
+            bio=user_data.get("bio"),
+            location=user_data.get("location"),
+            public_email=user_data.get("public_email"),
+            organization=user_data.get("organization"),
+            job_title=user_data.get("job_title"),
+            pronouns=user_data.get("pronouns"),
+        )
+
+    async def _get_project_info(
+        self, client: httpx.AsyncClient, project_id: str
+    ) -> GitLabProjectEntity:
+        """Get project information.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+
+        Returns:
+            Project entity
+        """
+        url = f"{self.BASE_URL}/projects/{project_id}"
+        project_data = await self._get_with_auth(client, url)
+
+        return GitLabProjectEntity(
+            entity_id=str(project_data["id"]),
+            breadcrumbs=[],
+            name=project_data["name"],
+            path=project_data["path"],
+            path_with_namespace=project_data["path_with_namespace"],
+            description=project_data.get("description"),
+            default_branch=project_data.get("default_branch"),
+            created_at=datetime.fromisoformat(project_data["created_at"].replace("Z", "+00:00")),
+            last_activity_at=(
+                datetime.fromisoformat(project_data["last_activity_at"].replace("Z", "+00:00"))
+                if project_data.get("last_activity_at")
+                else None
+            ),
+            visibility=project_data["visibility"],
+            topics=project_data.get("topics", []),
+            namespace=project_data.get("namespace", {}),
+            star_count=project_data.get("star_count", 0),
+            forks_count=project_data.get("forks_count", 0),
+            open_issues_count=project_data.get("open_issues_count", 0),
+            archived=project_data.get("archived", False),
+            empty_repo=project_data.get("empty_repo", False),
+            url=project_data["web_url"],
+        )
+
+    async def _get_project_issues(
+        self, client: httpx.AsyncClient, project_id: str, project_breadcrumbs: List[Breadcrumb]
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Get issues for a project.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+            project_breadcrumbs: Breadcrumbs for the project
+
+        Yields:
+            Issue entities
+        """
+        url = f"{self.BASE_URL}/projects/{project_id}/issues"
+        issues = await self._get_paginated_results(client, url)
+
+        for issue in issues:
+            yield GitLabIssueEntity(
+                entity_id=f"{project_id}/issues/{issue['iid']}",
+                breadcrumbs=project_breadcrumbs,
+                title=issue["title"],
+                description=issue.get("description"),
+                state=issue["state"],
+                created_at=datetime.fromisoformat(issue["created_at"].replace("Z", "+00:00")),
+                updated_at=datetime.fromisoformat(issue["updated_at"].replace("Z", "+00:00")),
+                closed_at=(
+                    datetime.fromisoformat(issue["closed_at"].replace("Z", "+00:00"))
+                    if issue.get("closed_at")
+                    else None
+                ),
+                labels=issue.get("labels", []),
+                author=issue.get("author", {}),
+                assignees=issue.get("assignees", []),
+                milestone=issue.get("milestone"),
+                project_id=str(project_id),
+                iid=issue["iid"],
+                web_url=issue["web_url"],
+                user_notes_count=issue.get("user_notes_count", 0),
+                upvotes=issue.get("upvotes", 0),
+                downvotes=issue.get("downvotes", 0),
+            )
+
+    async def _get_project_merge_requests(
+        self, client: httpx.AsyncClient, project_id: str, project_breadcrumbs: List[Breadcrumb]
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Get merge requests for a project.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+            project_breadcrumbs: Breadcrumbs for the project
+
+        Yields:
+            Merge request entities
+        """
+        url = f"{self.BASE_URL}/projects/{project_id}/merge_requests"
+        merge_requests = await self._get_paginated_results(client, url)
+
+        for mr in merge_requests:
+            yield GitLabMergeRequestEntity(
+                entity_id=f"{project_id}/merge_requests/{mr['iid']}",
+                breadcrumbs=project_breadcrumbs,
+                title=mr["title"],
+                description=mr.get("description"),
+                state=mr["state"],
+                created_at=datetime.fromisoformat(mr["created_at"].replace("Z", "+00:00")),
+                updated_at=datetime.fromisoformat(mr["updated_at"].replace("Z", "+00:00")),
+                merged_at=(
+                    datetime.fromisoformat(mr["merged_at"].replace("Z", "+00:00"))
+                    if mr.get("merged_at")
+                    else None
+                ),
+                closed_at=(
+                    datetime.fromisoformat(mr["closed_at"].replace("Z", "+00:00"))
+                    if mr.get("closed_at")
+                    else None
+                ),
+                labels=mr.get("labels", []),
+                author=mr.get("author", {}),
+                assignees=mr.get("assignees", []),
+                reviewers=mr.get("reviewers", []),
+                source_branch=mr["source_branch"],
+                target_branch=mr["target_branch"],
+                milestone=mr.get("milestone"),
+                project_id=str(project_id),
+                iid=mr["iid"],
+                web_url=mr["web_url"],
+                merge_status=mr.get("merge_status", "unchecked"),
+                draft=mr.get("draft", False),
+                work_in_progress=mr.get("work_in_progress", False),
+                upvotes=mr.get("upvotes", 0),
+                downvotes=mr.get("downvotes", 0),
+                user_notes_count=mr.get("user_notes_count", 0),
+            )
+
+    async def _traverse_repository(
+        self,
+        client: httpx.AsyncClient,
+        project_id: str,
+        project_path: str,
+        branch: str,
+        project_breadcrumbs: List[Breadcrumb],
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Traverse repository contents using DFS.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+            project_path: Project path with namespace
+            branch: Branch name
+            project_breadcrumbs: Breadcrumbs for the project
+
+        Yields:
+            Directory and file entities
+        """
+        # Track processed paths to avoid duplicates
+        processed_paths = set()
+
+        # Start DFS traversal from root
+        async for entity in self._traverse_directory(
+            client, project_id, project_path, "", branch, project_breadcrumbs, processed_paths
+        ):
+            yield entity
+
+    async def _traverse_directory(
+        self,
+        client: httpx.AsyncClient,
+        project_id: str,
+        project_path: str,
+        path: str,
+        branch: str,
+        breadcrumbs: List[Breadcrumb],
+        processed_paths: set,
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Recursively traverse a directory using DFS.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+            project_path: Project path with namespace
+            path: Current path to traverse
+            branch: Branch name
+            breadcrumbs: Current breadcrumb chain
+            processed_paths: Set of already processed paths
+
+        Yields:
+            Directory and file entities
+        """
+        if path in processed_paths:
+            return
+
+        processed_paths.add(path)
+
+        # Get contents of the current directory
+        url = f"{self.BASE_URL}/projects/{project_id}/repository/tree"
+        params = {"ref": branch, "path": path, "per_page": 100}
+
+        try:
+            contents = await self._get_paginated_results(client, url, params)
+
+            # Process each item in the directory
+            for item in contents:
+                item_path = item["path"]
+                item_type = item["type"]
+
+                if item_type == "tree":  # Directory
+                    # Create directory entity
+                    dir_entity = GitLabDirectoryEntity(
+                        entity_id=f"{project_id}/{item_path}",
+                        breadcrumbs=breadcrumbs.copy(),
+                        path=item_path,
+                        project_id=str(project_id),
+                        project_path=project_path,
+                        url=f"https://gitlab.com/{project_path}/-/tree/{branch}/{item_path}",
+                    )
+
+                    # Create breadcrumb for this directory
+                    dir_breadcrumb = Breadcrumb(
+                        entity_id=dir_entity.entity_id,
+                        name=Path(item_path).name,
+                        type="directory",
+                    )
+
+                    # Yield the directory entity
+                    yield dir_entity
+
+                    # Create updated breadcrumb chain for children
+                    dir_breadcrumbs = breadcrumbs.copy() + [dir_breadcrumb]
+
+                    # Recursively traverse this directory (DFS)
+                    async for child_entity in self._traverse_directory(
+                        client,
+                        project_id,
+                        project_path,
+                        item_path,
+                        branch,
+                        dir_breadcrumbs,
+                        processed_paths,
+                    ):
+                        yield child_entity
+
+                elif item_type == "blob":  # File
+                    # Process the file and yield entities
+                    async for file_entity in self._process_file(
+                        client, project_id, project_path, item_path, branch, breadcrumbs
+                    ):
+                        yield file_entity
+
+        except Exception as e:
+            self.logger.error(f"Error traversing path {path}: {str(e)}")
+
+    async def _process_file(
+        self,
+        client: httpx.AsyncClient,
+        project_id: str,
+        project_path: str,
+        file_path: str,
+        branch: str,
+        breadcrumbs: List[Breadcrumb],
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Process a file item and create file entities.
+
+        Args:
+            client: HTTP client
+            project_id: Project ID
+            project_path: Project path with namespace
+            file_path: Path to the file
+            branch: Branch name
+            breadcrumbs: Current breadcrumb chain
+
+        Yields:
+            File entities
+        """
+        try:
+            # Get file metadata first
+            encoded_path = file_path.replace("/", "%2F")
+            url = f"{self.BASE_URL}/projects/{project_id}/repository/files/{encoded_path}"
+            params = {"ref": branch}
+
+            file_data = await self._get_with_auth(client, url, params)
+            file_size = file_data.get("size", 0)
+
+            # Get content sample for text file detection
+            content_sample = None
+            content_text = None
+
+            if file_data.get("encoding") == "base64" and file_data.get("content"):
+                try:
+                    content_bytes = base64.b64decode(file_data["content"])
+                    content_sample = content_bytes[:1024]
+                    # Try to decode content as text for storage
+                    content_text = content_bytes.decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+
+            # Check if this is a text file
+            if is_text_file(file_path, file_size, content_sample):
+                # Detect language
+                language = self._detect_language_from_extension(file_path)
+
+                # Ensure we have a valid path
+                file_name = Path(file_path).name
+
+                # Set line count if we have content
+                line_count = 0
+                if content_text:
+                    try:
+                        line_count = content_text.count("\n") + 1
+                    except Exception as e:
+                        self.logger.error(f"Error counting lines for {file_path}: {str(e)}")
+
+                # Create file entity
+                file_entity = GitLabCodeFileEntity(
+                    entity_id=f"{project_id}/{file_path}",
+                    source_name="gitlab",
+                    file_id=file_data["blob_id"],
+                    name=file_name,
+                    mime_type=mimetypes.guess_type(file_path)[0] or "text/plain",
+                    size=file_size,
+                    path=file_path,
+                    project_id=str(project_id),
+                    project_path=project_path,
+                    blob_id=file_data["blob_id"],
+                    breadcrumbs=breadcrumbs.copy(),
+                    url=f"https://gitlab.com/{project_path}/-/blob/{branch}/{file_path}",
+                    language=language,
+                    line_count=line_count,
+                    path_in_repo=file_path,
+                    repo_name=project_path.split("/")[-1],
+                    repo_owner=project_path.split("/")[0],
+                    content=content_text,  # Store the content directly in the entity
+                    last_modified=None,  # GitLab API returns commit SHA, not timestamp
+                )
+
+                yield file_entity
+
+        except Exception as e:
+            self.logger.error(f"Error processing file {file_path}: {str(e)}")
+
+    async def _get_projects(self, client: httpx.AsyncClient) -> List[GitLabProjectEntity]:
+        """Get accessible projects based on configuration.
+
+        Args:
+            client: HTTP client
+
+        Returns:
+            List of project entities
+        """
+        if hasattr(self, "project_id") and self.project_id:
+            return [await self._get_project_info(client, self.project_id)]
+
+        # All accessible projects
+        url = f"{self.BASE_URL}/projects"
+        params = {"membership": True, "simple": False}
+        projects_data = await self._get_paginated_results(client, url, params)
+        projects = []
+        for proj_data in projects_data:
+            try:
+                project = await self._get_project_info(client, str(proj_data["id"]))
+                projects.append(project)
+            except Exception as e:
+                self.logger.warning(f"Failed to get project {proj_data.get('id')}: {e}")
+        return projects
+
+    async def _process_project(
+        self,
+        client: httpx.AsyncClient,
+        project: GitLabProjectEntity,
+        project_breadcrumbs: List[Breadcrumb],
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Process a single project and yield all its entities.
+
+        Args:
+            client: HTTP client
+            project: Project entity
+            project_breadcrumbs: Breadcrumbs for the project
+
+        Yields:
+            Directory, file, issue, and merge request entities
+        """
+        branch = (
+            self.branch
+            if hasattr(self, "branch") and self.branch
+            else project.default_branch or "main"
+        )
+
+        self.logger.info(f"Processing project {project.path_with_namespace} on branch {branch}")
+
+        # Traverse repository files if not empty
+        if not project.empty_repo:
+            try:
+                async for entity in self._traverse_repository(
+                    client,
+                    project.entity_id,
+                    project.path_with_namespace,
+                    branch,
+                    project_breadcrumbs,
+                ):
+                    yield entity
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to traverse repository for {project.path_with_namespace}: {e}"
+                )
+
+        # Get issues
+        try:
+            async for issue in self._get_project_issues(
+                client, project.entity_id, project_breadcrumbs
+            ):
+                yield issue
+        except Exception as e:
+            self.logger.warning(f"Failed to get issues for {project.path_with_namespace}: {e}")
+
+        # Get merge requests
+        try:
+            async for mr in self._get_project_merge_requests(
+                client, project.entity_id, project_breadcrumbs
+            ):
+                yield mr
+        except Exception as e:
+            self.logger.warning(f"Failed to get MRs for {project.path_with_namespace}: {e}")
+
+    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+        """Generate entities from GitLab.
+
+        Yields:
+            User, project, directory, file, issue, and merge request entities
+        """
+        async with self.http_client() as client:
+            # First, yield the current user entity
+            user_entity = await self._get_current_user(client)
+            yield user_entity
+
+            # Get accessible projects
+            projects = await self._get_projects(client)
+
+            # Process each project
+            for project in projects:
+                yield project
+
+                project_breadcrumb = Breadcrumb(
+                    entity_id=project.entity_id, name=project.name, type="project"
+                )
+                project_breadcrumbs = [project_breadcrumb]
+
+                # Process all entities within the project
+                async for entity in self._process_project(client, project, project_breadcrumbs):
+                    yield entity
+
+    async def validate(self) -> bool:
+        """Verify GitLab OAuth token by pinging the /user endpoint."""
+        return await self._validate_oauth2(
+            ping_url=f"{self.BASE_URL}/user",
+            headers={"Accept": "application/json"},
+            timeout=10.0,
+        )

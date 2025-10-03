@@ -92,7 +92,7 @@ export const CollectionCard = ({
           </p>
 
           {/* Status badge */}
-          <StatusBadge status={status} />
+          <StatusBadge status={status} showTooltip={true} tooltipContext="collection" />
         </div>
 
         {/* Card Footer */}

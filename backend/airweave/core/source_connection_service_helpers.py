@@ -1,8 +1,12 @@
 """Helper methods for source connection service v2."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from airweave.platform.auth.oauth1_service import OAuth1TokenResponse
+    from airweave.platform.auth.schemas import OAuth2TokenResponse
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -32,7 +36,9 @@ from airweave.models.integration_credential import IntegrationType
 from airweave.models.source_connection import SourceConnection
 from airweave.models.sync import Sync
 from airweave.models.sync_job import SyncJob
-from airweave.platform.auth.services import oauth2_service
+from airweave.platform.auth.oauth1_service import oauth1_service
+from airweave.platform.auth.oauth2_service import oauth2_service
+from airweave.platform.auth.schemas import OAuth1Settings
 from airweave.platform.configs._base import ConfigValues
 from airweave.platform.configs.auth import AuthConfig
 from airweave.platform.locator import resource_locator
@@ -266,13 +272,25 @@ class SourceConnectionHelpers:
         access_token: str,
         config_fields: Optional[ConfigValues],
         ctx: ApiContext,
+        credentials: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Validate OAuth access token."""
+        """Validate OAuth access token.
+
+        Args:
+            db: Database session
+            source: Source model
+            access_token: OAuth access token (for backward compatibility)
+            config_fields: Optional config fields
+            ctx: API context
+            credentials: Full OAuth credentials dict (includes access_token, instance_url, etc.)
+        """
         try:
             source_cls = resource_locator.get_source(source)
+
             source_instance = await source_cls.create(
                 access_token=access_token, config=config_fields
             )
+
             source_instance.set_logger(ctx.logger)
 
             if hasattr(source_instance, "validate"):
@@ -647,12 +665,8 @@ class SourceConnectionHelpers:
                     entities_inserted = getattr(job, "entities_inserted", 0) or 0
                     entities_updated = getattr(job, "entities_updated", 0) or 0
                     entities_deleted = getattr(job, "entities_deleted", 0) or 0
-                    entities_kept = getattr(job, "entities_kept", 0) or 0
                     entities_skipped = getattr(job, "entities_skipped", 0) or 0
 
-                    entities_processed = (
-                        entities_inserted + entities_updated + entities_deleted + entities_kept
-                    )
                     entities_failed = entities_skipped
 
                     last_job = schemas.SyncJobDetails(
@@ -661,7 +675,6 @@ class SourceConnectionHelpers:
                         started_at=getattr(job, "started_at", None),
                         completed_at=getattr(job, "completed_at", None),
                         duration_seconds=duration_seconds,
-                        entities_processed=entities_processed,
                         entities_inserted=entities_inserted,
                         entities_updated=entities_updated,
                         entities_deleted=entities_deleted,
@@ -901,7 +914,6 @@ class SourceConnectionHelpers:
                 if job.completed_at and job.started_at
                 else None
             ),
-            entities_processed=getattr(job, "entities_processed", 0),
             entities_inserted=getattr(job, "entities_inserted", 0),
             entities_updated=getattr(job, "entities_updated", 0),
             entities_deleted=getattr(job, "entities_deleted", 0),
@@ -917,6 +929,8 @@ class SourceConnectionHelpers:
         ctx: ApiContext,
         uow: Any,
         redirect_session_id: Optional[UUID] = None,
+        template_configs: Optional[dict] = None,
+        additional_overrides: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Create connection init session for OAuth flow.
 
@@ -927,6 +941,16 @@ class SourceConnectionHelpers:
           4) Platform default (no client overrides)
 
         For BYOC, both client_id and client_secret are REQUIRED; otherwise 422.
+
+        Args:
+            db: Database session
+            obj_in: Input schema
+            state: OAuth state token
+            ctx: API context
+            uow: Unit of work
+            redirect_session_id: Optional redirect session ID
+            template_configs: Optional pre-validated template configs (e.g., instance_url)
+            additional_overrides: Additional data to store in overrides (e.g., PKCE code_verifier)
         """
         # Handle both new and legacy schemas
         source_type = getattr(obj_in, "source_type", None) or getattr(obj_in, "short_name", None)
@@ -991,6 +1015,10 @@ class SourceConnectionHelpers:
                         oauth_client_mode = "byoc_top_level"
 
         # 4) Platform default: keep client_id/client_secret as None
+
+        # NOTE: template_configs is passed in pre-validated by caller (source_connection_service)
+        # No need to re-validate here - just use what was passed in
+
         overrides = {
             "client_id": client_id,
             "client_secret": client_secret,
@@ -999,7 +1027,13 @@ class SourceConnectionHelpers:
             "redirect_url": getattr(obj_in, "redirect_url", core_settings.app_url),
             # OAuth provider callback that this backend handles:
             "oauth_redirect_uri": f"{core_settings.api_url}/source-connections/callback",
+            # NEW: Store template configs for callback (pre-validated by caller)
+            "template_configs": template_configs,
         }
+
+        # Merge additional overrides (e.g., PKCE code_verifier) if provided
+        if additional_overrides:
+            overrides.update(additional_overrides)
 
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
@@ -1043,19 +1077,68 @@ class SourceConnectionHelpers:
         proxy_url = f"{core_settings.api_url}/source-connections/authorize/{code8}"
         return proxy_url, proxy_expires, redirect_sess.id
 
-    async def exchange_oauth_code(
+    async def exchange_oauth1_code(
         self,
-        db: AsyncSession,
+        short_name: str,
+        verifier: str,
+        overrides: Dict[str, Any],
+        oauth_settings: OAuth1Settings,
+        ctx: ApiContext,
+    ) -> "OAuth1TokenResponse":
+        """Exchange OAuth1 verifier for access token.
+
+        Args:
+            short_name: Integration short name
+            verifier: OAuth verifier from user authorization
+            overrides: Session overrides with request token credentials
+            oauth_settings: OAuth1 settings
+            ctx: API context
+
+        Returns:
+            OAuth1TokenResponse with access token credentials
+        """
+        ctx.logger.info(f"Exchanging OAuth1 verifier for access token: {short_name}")
+
+        return await oauth1_service.exchange_token(
+            access_token_url=oauth_settings.access_token_url,
+            consumer_key=oauth_settings.consumer_key,
+            consumer_secret=oauth_settings.consumer_secret,
+            oauth_token=overrides.get("oauth_token", ""),
+            oauth_token_secret=overrides.get("oauth_token_secret", ""),
+            oauth_verifier=verifier,
+            logger=ctx.logger,
+        )
+
+    async def exchange_oauth2_code(
+        self,
         short_name: str,
         code: str,
         overrides: Dict[str, Any],
         ctx: ApiContext,
-    ) -> Any:
-        """Exchange OAuth code for token."""
+    ) -> "OAuth2TokenResponse":
+        """Exchange OAuth2 authorization code for access token.
+
+        Supports PKCE for providers like Airtable.
+
+        Args:
+            short_name: Integration short name
+            code: Authorization code from OAuth provider
+            overrides: Session overrides with client credentials and PKCE data
+            ctx: API context
+
+        Returns:
+            OAuth2TokenResponse with access and refresh tokens
+        """
         redirect_uri = (
             overrides.get("oauth_redirect_uri")
             or f"{core_settings.api_url}/source-connections/callback"
         )
+
+        # Extract template configs from overrides
+        template_configs = overrides.get("template_configs")
+        # Retrieve PKCE code verifier if it was stored during authorization
+        code_verifier = overrides.get("code_verifier")
+
         return await oauth2_service.exchange_authorization_code_for_token_with_redirect(
             ctx=ctx,
             source_short_name=short_name,
@@ -1063,6 +1146,8 @@ class SourceConnectionHelpers:
             redirect_uri=redirect_uri,
             client_id=overrides.get("client_id"),
             client_secret=overrides.get("client_secret"),
+            template_configs=template_configs,
+            code_verifier=code_verifier,
         )
 
     async def _regenerate_oauth_url(
@@ -1101,7 +1186,7 @@ class SourceConnectionHelpers:
 
         # Generate new OAuth URL
 
-        from airweave.platform.auth.services import oauth2_service
+        from airweave.platform.auth.oauth2_service import oauth2_service
         from airweave.platform.auth.settings import integration_settings
 
         oauth_settings = await integration_settings.get_by_short_name(source.short_name)
@@ -1114,39 +1199,132 @@ class SourceConnectionHelpers:
             init_session.overrides.get("oauth_redirect_uri")
             or f"{core_settings.api_url}/source-connections/callback"
         )
-
-        provider_auth_url = await oauth2_service.generate_auth_url_with_redirect(
+        # Extract template configs from overrides
+        template_configs = init_session.overrides.get("template_configs")
+        provider_auth_url, code_verifier = await oauth2_service.generate_auth_url_with_redirect(
             oauth_settings,
             redirect_uri=api_callback,
             client_id=init_session.overrides.get("client_id"),
             state=state,
+            template_configs=template_configs,
         )
+
+        # Store code_verifier in init_session if PKCE is being used
+        if code_verifier:
+            init_session.overrides["code_verifier"] = code_verifier
+            await crud.source_connection_init_session.update(
+                db=db, db_obj=init_session, obj_in={"overrides": init_session.overrides}, ctx=ctx
+            )
 
         # Create new proxy URL
         proxy_url, proxy_expiry, _ = await self.create_proxy_url(db, provider_auth_url, ctx)
 
         return proxy_url, proxy_expiry
 
-    async def complete_oauth_connection(
+    async def complete_oauth1_connection(
         self,
         db: AsyncSession,
         source_conn_shell: schemas.SourceConnection,
         init_session: Any,
-        token_response: Any,
+        token_response: "OAuth1TokenResponse",
         ctx: ApiContext,
     ) -> Any:
-        """Complete OAuth connection after callback."""
+        """Complete OAuth1 connection after callback.
+
+        Builds OAuth1 credentials with oauth_token, oauth_token_secret,
+        and consumer credentials for API signing.
+
+        Detects BYOC by checking if consumer credentials differ from defaults.
+        """
         source = await crud.source.get_by_short_name(db, short_name=init_session.short_name)
         if not source:
             raise HTTPException(
                 status_code=404, detail=f"Source '{init_session.short_name}' not found"
             )
+
         init_session_id = init_session.id
         payload = init_session.payload or {}
         overrides = init_session.overrides or {}
 
-        # Build OAuth credentials from token response
+        # Build OAuth1 credentials
+        auth_fields = {
+            "oauth_token": token_response.oauth_token,
+            "oauth_token_secret": token_response.oauth_token_secret,
+        }
+
+        # Add consumer credentials for future API calls (needed for signing)
+        consumer_key = overrides.get("consumer_key")
+        consumer_secret = overrides.get("consumer_secret")
+
+        if consumer_key:
+            auth_fields["consumer_key"] = consumer_key
+        if consumer_secret:
+            auth_fields["consumer_secret"] = consumer_secret
+
+        # Determine if BYOC by checking if credentials differ from platform defaults
+        from airweave.platform.auth.settings import integration_settings
+
+        try:
+            platform_settings = await integration_settings.get_by_short_name(
+                init_session.short_name
+            )
+            from airweave.platform.auth.schemas import OAuth1Settings
+
+            if isinstance(platform_settings, OAuth1Settings):
+                # Check if user provided custom consumer_key (different from platform default)
+                is_byoc = (
+                    consumer_key is not None and consumer_key != platform_settings.consumer_key
+                )
+            else:
+                is_byoc = False
+        except Exception:
+            # If we can't determine, assume not BYOC
+            is_byoc = False
+
+        auth_method_to_save = (
+            AuthenticationMethod.OAUTH_BYOC if is_byoc else AuthenticationMethod.OAUTH_BROWSER
+        )
+
+        # Continue with common logic
+        return await self._complete_oauth_connection_common(
+            db,
+            source,
+            source_conn_shell,
+            init_session_id,
+            payload,
+            auth_fields,
+            auth_method_to_save,
+            is_oauth1=True,  # ✅ Explicit parameter
+            ctx=ctx,
+        )
+
+    async def complete_oauth2_connection(
+        self,
+        db: AsyncSession,
+        source_conn_shell: schemas.SourceConnection,
+        init_session: Any,
+        token_response: "OAuth2TokenResponse",
+        ctx: ApiContext,
+    ) -> Any:
+        """Complete OAuth2 connection after callback.
+
+        Builds OAuth2 credentials with access_token, refresh_token,
+        and optional BYOC client credentials.
+        """
+        source = await crud.source.get_by_short_name(db, short_name=init_session.short_name)
+        if not source:
+            raise HTTPException(
+                status_code=404, detail=f"Source '{init_session.short_name}' not found"
+            )
+
+        init_session_id = init_session.id
+        payload = init_session.payload or {}
+        overrides = init_session.overrides or {}
+
+        # Build OAuth2 credentials
         auth_fields = token_response.model_dump()
+
+        # Add BYOC client credentials if present
         if overrides.get("client_id"):
             auth_fields["client_id"] = overrides["client_id"]
         if overrides.get("client_secret"):
@@ -1159,18 +1337,60 @@ class SourceConnectionHelpers:
             else AuthenticationMethod.OAUTH_BROWSER
         )
 
+        # Continue with common logic
+        return await self._complete_oauth_connection_common(
+            db,
+            source,
+            source_conn_shell,
+            init_session_id,
+            payload,
+            auth_fields,
+            auth_method_to_save,
+            is_oauth1=False,  # ✅ Explicit parameter
+            ctx=ctx,
+        )
+
+    async def _complete_oauth_connection_common(
+        self,
+        db: AsyncSession,
+        source: Any,
+        source_conn_shell: schemas.SourceConnection,
+        init_session_id: UUID,
+        payload: Dict[str, Any],
+        auth_fields: Dict[str, Any],
+        auth_method_to_save: AuthenticationMethod,
+        is_oauth1: bool,
+        ctx: ApiContext,
+    ) -> Any:
+        """Common logic for completing OAuth connections (shared by OAuth1/OAuth2).
+
+        Args:
+            db: Database session
+            source: Source schema
+            source_conn_shell: Shell source connection to complete
+            init_session_id: Init session ID
+            payload: Request payload from init session
+            auth_fields: OAuth credentials (different structure for OAuth1 vs OAuth2)
+            auth_method_to_save: Authentication method to record
+            is_oauth1: True for OAuth1, False for OAuth2
+            ctx: API context
+        """
         # Validate config fields if provided (payload uses 'config')
         validated_config = await self.validate_config_fields(
-            db, init_session.short_name, payload.get("config"), ctx
+            db, source.short_name, payload.get("config"), ctx
         )
+
+        # Use explicit parameter instead of checking dictionary keys
+        auth_type_name = "OAuth1" if is_oauth1 else "OAuth2"
 
         async with UnitOfWork(db) as uow:
             # Create credential
             encrypted = credentials.encrypt(auth_fields)
+
             cred_in = schemas.IntegrationCredentialCreateEncrypted(
-                name=f"{source.name} OAuth2 Credential",
-                description=f"OAuth2 credentials for {source.name}",
-                integration_short_name=init_session.short_name,
+                name=f"{source.name} {auth_type_name} Credential",
+                description=f"{auth_type_name} credentials for {source.name}",
+                integration_short_name=source.short_name,
                 integration_type=IntegrationType.SOURCE,
                 authentication_method=auth_method_to_save,
                 oauth_type=getattr(source, "oauth_type", None),
@@ -1190,7 +1410,7 @@ class SourceConnectionHelpers:
                 integration_type=IntegrationType.SOURCE,
                 status=ConnectionStatus.ACTIVE,
                 integration_credential_id=credential.id,
-                short_name=init_session.short_name,
+                short_name=source.short_name,
             )
             connection = await crud.connection.create(uow.session, obj_in=conn_in, ctx=ctx, uow=uow)
 

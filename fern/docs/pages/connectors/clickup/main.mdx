@@ -7,33 +7,18 @@ description: "Clickup integration with Airweave"
 
 
 
-<div className="connector-header">
-  <img src="icon.svg" alt="Clickup logo" width="72" height="72" className="connector-icon" />
-  <div className="connector-info">
-    <h1>Clickup</h1>
-    <p>Connect your Clickup data to Airweave</p>
-  </div>
+<div className="connector-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+  <img src="icon.svg" alt="Clickup logo" width="48" height="48" className="connector-icon" />
+  <h1 style={{ margin: 0 }}>Clickup</h1>
 </div>
-
-## Overview
-
-The Clickup connector allows you to sync data from Clickup into Airweave, making it available for search and retrieval by your agents.
 
 ## Configuration
 
+ClickUp source connector integrates with the ClickUp API to extract and synchronize data.
 
-### ClickUpSource
+Connects to your ClickUp workspaces.
 
-ClickUp source implementation.
-
-This connector retrieves hierarchical data from ClickUp's REST API:
-    - Workspaces (Teams)
-    - Spaces (within each workspace)
-    - Folders (within each space)
-    - Lists (within each folder)
-    - Tasks (within each list)
-    - Comments (within each task)
-
+It supports syncing workspaces, spaces, folders, lists, tasks, and comments.
 
 <Card
   title="View Source Code"
@@ -45,46 +30,37 @@ This connector retrieves hierarchical data from ClickUp's REST API:
 
 ### Authentication
 
-This connector uses **OAuth 2.0 authentication flow**.
+This connector uses **OAuth 2.0 authentication**. You can connect through the Airweave UI or API using the OAuth flow.
 
-<Card
-  title="Authentication Configuration"
-  className="auth-config-card"
-  style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)', padding: '16px', marginBottom: '24px' }}
->
+**Supported authentication methods:**
+- OAuth Browser Flow (recommended for UI)
+- OAuth Token (for programmatic access)
+- Auth Provider (enterprise SSO)
 
-Clickup authentication credentials schema.
-<ParamField
-  path="access_token"
-  type="str"
-  required={true}
->
-  The access token for your Clickup app.
-</ParamField>
-</Card>
+### Configuration Options
 
+This connector does not have any additional configuration options.
 
-## Entities
+## Data Models
 
 The following data models are available for this connector:
 
 <Accordion title="ClickUpWorkspaceEntity">
 
-ClickUp workspace entity.
+Schema for ClickUp workspace entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| entity_id | str | Unique Entity ID |
 | workspace_id | str | Workspace ID |
 | name | str | Workspace name |
 | color | Optional[str] | Workspace color |
 | avatar | Optional[str] | Workspace avatar URL |
-| members | List[dict] | List of workspace members |
+| members | List[Dict[str, Any]] | List of workspace members |
 
 </Accordion>
 <Accordion title="ClickUpSpaceEntity">
 
-ClickUp space entity.
+Schema for ClickUp space entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -98,7 +74,7 @@ ClickUp space entity.
 </Accordion>
 <Accordion title="ClickUpFolderEntity">
 
-ClickUp folder entity.
+Schema for ClickUp folder entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -111,13 +87,13 @@ ClickUp folder entity.
 </Accordion>
 <Accordion title="ClickUpListEntity">
 
-ClickUp list entity.
+Schema for ClickUp list entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | list_id | str | List ID |
 | name | str | List name |
-| folder_id | str | Parent folder ID |
+| folder_id | Optional[str] | Parent folder ID (optional) |
 | space_id | str | Parent space ID |
 | content | Optional[str] | List content/description |
 | status | Optional[Dict[str, Any]] | List status configuration |
@@ -126,13 +102,13 @@ ClickUp list entity.
 | task_count | Optional[int] | Number of tasks in the list |
 | due_date | Optional[Any] | List due date |
 | start_date | Optional[Any] | List start date |
-| folder_name | str | Parent folder name |
+| folder_name | Optional[str] | Parent folder name |
 | space_name | str | Parent space name |
 
 </Accordion>
 <Accordion title="ClickUpTaskEntity">
 
-ClickUp task entity.
+Schema for ClickUp task entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -151,25 +127,83 @@ ClickUp task entity.
 | folder_id | str | Parent folder ID |
 | space_id | str | Parent space ID |
 | url | str | Task URL |
-| description | str | Task description |
+| description | Optional[str] | Task description |
 | parent | Optional[str] | Parent task ID if this is a subtask |
 
 </Accordion>
 <Accordion title="ClickUpCommentEntity">
 
-ClickUp comment entity.
+Schema for ClickUp comment entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | comment_id | str | Comment ID |
 | task_id | str | Parent task ID |
 | user | Dict[str, Any] | Comment author information |
-| text_content | str | Comment text content |
+| text_content | Optional[str] | Comment text content |
 | resolved | bool | Whether the comment is resolved |
 | assignee | Optional[Dict[str, Any]] | Comment assignee information |
 | assigned_by | Optional[Dict[str, Any]] | User who assigned the comment |
 | reactions | List[Dict[str, Any]] | List of reactions to the comment |
-| date | datetime | Comment creation date |
+| date | Optional[datetime] | Comment creation date |
+
+</Accordion>
+<Accordion title="ClickUpSubtaskEntity">
+
+Schema for ClickUp subtask entities.
+
+Supports nested subtasks where subtasks can have their own subtasks.
+The parent_task_id points to the immediate parent (task or subtask).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| subtask_id | str | Subtask ID |
+| name | str | Subtask name |
+| parent_task_id | str | Immediate parent task/subtask ID |
+| status | Dict[str, Any] | Subtask status configuration |
+| assignees | List[Dict[str, Any]] | List of subtask assignees |
+| due_date | Optional[datetime] | Subtask due date |
+| description | Optional[str] | Subtask description |
+| nesting_level | Optional[int] | Nesting level (1 = direct subtask, 2 = nested subtask, etc.) |
+
+</Accordion>
+<Accordion title="ClickUpFileEntity">
+
+Schema for ClickUp file attachments.
+
+Represents files attached to ClickUp tasks.
+Reference: https://api.clickup.com/api/v2/task/{task_id}
+
+| Field | Type | Description |
+|-------|------|-------------|
+| task_id | str | ID of the task this file is attached to |
+| task_name | str | Name of the task this file is attached to |
+| attachment_id | str | ClickUp attachment ID |
+| version | Optional[int] | Version number of the attachment |
+| date | Optional[datetime] | Date when the attachment was added |
+| title | Optional[str] | Original title/name of the attachment |
+| extension | Optional[str] | File extension |
+| hidden | bool | Whether the attachment is hidden |
+| parent | Optional[str] | Parent attachment ID if applicable |
+| thumbnail_small | Optional[str] | URL for small thumbnail |
+| thumbnail_medium | Optional[str] | URL for medium thumbnail |
+| thumbnail_large | Optional[str] | URL for large thumbnail |
+| is_folder | Optional[bool] | Whether this is a folder attachment |
+| mimetype | Optional[str] | MIME type of the file |
+| total_comments | Optional[int] | Number of comments on this attachment |
+| url | Optional[str] | Direct URL to download the attachment |
+| url_w_query | Optional[str] | URL with query parameters |
+| url_w_host | Optional[str] | URL with host parameters |
+| email_data | Optional[Dict[str, Any]] | Email data if attachment is from email |
+| user | Optional[Dict[str, Any]] | User who uploaded the attachment |
+| resolved | Optional[bool] | Whether the attachment is resolved |
+| resolved_comments | Optional[int] | Number of resolved comments |
+| source | Optional[int] | Source type of the attachment (numeric) |
+| attachment_type | Optional[int] | Type of the attachment (numeric) |
+| orientation | Optional[str] | Image orientation if applicable |
+| parent_id | Optional[str] | Parent task ID |
+| deleted | Optional[bool] | Whether the attachment is deleted |
+| workspace_id | Optional[str] | Workspace ID |
 
 </Accordion>
 

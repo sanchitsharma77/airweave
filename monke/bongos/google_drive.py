@@ -56,18 +56,27 @@ class GoogleDriveBongo(BaseBongo):
         # Create files based on configuration
         from monke.generation.google_drive import generate_google_drive_artifact
 
+        # Prepare all generation parameters
+        gen_params = []
         for i in range(self.entity_count):
             file_type = self.file_types[i % len(self.file_types)]
-            # Short unique token used in filename and content for verification
             token = str(uuid.uuid4())[:8]
+            gen_params.append((file_type, token))
 
+        async def generate_file_content(file_type: str, token: str):
             title, content, mime_type = await generate_google_drive_artifact(
                 file_type, self.openai_model, token
             )
-
             filename = self._filename_with_extension(f"{title}-{token}", file_type)
+            return file_type, token, filename, content, mime_type
 
-            # Create file
+        # Generate all content in parallel
+        gen_results = await asyncio.gather(
+            *[generate_file_content(ft, tok) for ft, tok in gen_params]
+        )
+
+        # Create files sequentially to respect API rate limits
+        for file_type, token, filename, content, mime_type in gen_results:
             file_data = await self._create_test_file(
                 self.test_folder_id, filename, content, mime_type
             )

@@ -129,6 +129,9 @@ jobs:
           TEST_NOTION_TOKEN: ${{ secrets.TEST_NOTION_TOKEN }}
           TEST_GOOGLE_CLIENT_ID: ${{ secrets.TEST_GOOGLE_CLIENT_ID }}
           TEST_GOOGLE_CLIENT_SECRET: ${{ secrets.TEST_GOOGLE_CLIENT_SECRET }}
+          # OAuth1 (Trello) credentials
+          TEST_TRELLO_CONSUMER_KEY: ${{ secrets.TEST_TRELLO_CONSUMER_KEY }}
+          TEST_TRELLO_CONSUMER_SECRET: ${{ secrets.TEST_TRELLO_CONSUMER_SECRET }}
           TEST_AUTH_PROVIDER_NAME: composio
           TEST_COMPOSIO_API_KEY: ${{ secrets.TEST_COMPOSIO_API_KEY }}
           # Composio service-specific configurations

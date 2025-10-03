@@ -1,5 +1,7 @@
-import asyncio, time, uuid, json
-from typing import Any, Dict, List, Optional
+import asyncio
+import time
+import uuid
+from typing import Any, Dict, List
 
 import httpx
 from monke.bongos.base_bongo import BaseBongo
@@ -107,10 +109,77 @@ class LinearBongo(BaseBongo):
         return deleted
 
     async def cleanup(self):
+        """Comprehensive cleanup of all test Linear issues."""
+        self.logger.info("🧹 Starting comprehensive Linear cleanup")
+
+        cleanup_stats = {"issues_deleted": 0, "errors": 0}
+
         try:
-            await self.delete_specific_entities(self._issues)
-        except Exception:
-            pass
+            # First, delete current session issues
+            if self._issues:
+                self.logger.info(f"🗑️ Cleaning up {len(self._issues)} current session issues")
+                deleted = await self.delete_specific_entities(self._issues)
+                cleanup_stats["issues_deleted"] += len(deleted)
+                self._issues.clear()
+
+            # Search for any remaining monke test issues
+            await self._cleanup_orphaned_test_issues(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['issues_deleted']} issues deleted, "
+                f"{cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_issues(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test issues from previous runs."""
+        try:
+            async with httpx.AsyncClient(base_url="https://api.linear.app", timeout=30) as client:
+                # Search for issues with test patterns in title
+                query = """query {
+                    issues(filter: {
+                        or: [
+                            { title: { contains: "Test" } },
+                            { title: { contains: "monke" } },
+                            { title: { contains: "Demo" } }
+                        ]
+                    }, first: 100) {
+                        nodes { id title }
+                    }
+                }"""
+
+                resp = await self._gql(client, query, {})
+                issues = ((resp.get("data") or {}).get("issues") or {}).get("nodes") or []
+
+                # Filter for actual test issues
+                test_issues = [
+                    issue
+                    for issue in issues
+                    if any(
+                        pattern in issue.get("title", "").lower()
+                        for pattern in ["test", "monke", "demo", "sample"]
+                    )
+                ]
+
+                if test_issues:
+                    self.logger.info(f"🔍 Found {len(test_issues)} potential test issues to clean")
+                    for issue in test_issues:
+                        try:
+                            await self._pace()
+                            mutation = "mutation($id: String!) { issueDelete(id: $id) { success } }"
+                            result = await self._gql(client, mutation, {"id": issue["id"]})
+
+                            if result.get("data", {}).get("issueDelete", {}).get("success"):
+                                stats["issues_deleted"] += 1
+                                self.logger.info(f"✅ Deleted orphaned issue: {issue.get('title')}")
+                            else:
+                                stats["errors"] += 1
+                        except Exception as e:
+                            stats["errors"] += 1
+                            self.logger.warning(f"⚠️ Failed to delete issue {issue['id']}: {e}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned issues: {e}")
 
     async def _first_team_id(self, client: httpx.AsyncClient) -> str:
         q = "query { teams(first: 1) { nodes { id name key } } }"

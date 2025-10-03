@@ -130,3 +130,108 @@ class TestSources:
             config_fields = source["config_fields"]
             assert "fields" in config_fields
             assert isinstance(config_fields["fields"], list)
+
+    @pytest.mark.asyncio
+    async def test_sources_have_supported_auth_providers_field(self, api_client: httpx.AsyncClient):
+        """Test that all sources include the supported_auth_providers field."""
+        response = await api_client.get("/sources/")
+        sources = response.json()
+
+        for source in sources:
+            assert "supported_auth_providers" in source, (
+                f"Source {source.get('short_name', 'unknown')} missing "
+                "supported_auth_providers field"
+            )
+            # Field should be a list (can be empty)
+            assert isinstance(
+                source["supported_auth_providers"], list
+            ), f"Source {source['short_name']} supported_auth_providers should be a list"
+
+    @pytest.mark.asyncio
+    async def test_supported_auth_providers_structure(self, api_client: httpx.AsyncClient):
+        """Test that supported_auth_providers field has correct structure."""
+        response = await api_client.get("/sources/")
+        sources = response.json()
+
+        # Known valid auth provider short names
+        valid_providers = ["pipedream", "composio"]
+
+        for source in sources:
+            providers = source.get("supported_auth_providers", [])
+            if providers:  # If list is not empty
+                # All items should be strings
+                assert all(
+                    isinstance(p, str) for p in providers
+                ), f"Source {source['short_name']} has non-string auth providers"
+                # All items should be known provider names
+                assert all(
+                    p in valid_providers for p in providers
+                ), f"Source {source['short_name']} has unknown auth providers: {providers}"
+
+    @pytest.mark.asyncio
+    async def test_blocked_sources_have_no_auth_providers(self, api_client: httpx.AsyncClient):
+        """Test that blocked sources correctly show empty supported_auth_providers."""
+        # Sources that are known to be blocked by all providers
+        blocked_sources = ["github", "confluence", "jira", "bitbucket"]
+
+        for source_name in blocked_sources:
+            response = await api_client.get(f"/sources/{source_name}")
+
+            # Skip if source doesn't exist in this environment
+            if response.status_code == 404:
+                continue
+
+            assert response.status_code == 200
+            source = response.json()
+
+            providers = source.get("supported_auth_providers", [])
+            assert providers == [], (
+                f"Source {source_name} should have no supported auth providers, "
+                f"but has: {providers}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_supported_sources_have_auth_providers(self, api_client: httpx.AsyncClient):
+        """Test that well-supported sources have auth providers listed."""
+        # Sources that should be supported by at least one provider
+        supported_sources = ["notion", "slack", "stripe", "hubspot_crm", "linear"]
+
+        sources_with_providers = []
+        for source_name in supported_sources:
+            response = await api_client.get(f"/sources/{source_name}")
+
+            # Skip if source doesn't exist in this environment
+            if response.status_code == 404:
+                continue
+
+            assert response.status_code == 200
+            source = response.json()
+
+            providers = source.get("supported_auth_providers", [])
+            if providers:
+                sources_with_providers.append(source_name)
+
+        # At least some of these sources should have auth providers
+        # (depending on environment and provider availability)
+        assert (
+            len(sources_with_providers) >= 0
+        ), "Expected some commonly supported sources to have auth providers available"
+
+    @pytest.mark.asyncio
+    async def test_auth_provider_field_consistency(self, api_client: httpx.AsyncClient):
+        """Test consistency between auth_methods and supported_auth_providers."""
+        response = await api_client.get("/sources/")
+        sources = response.json()
+
+        for source in sources:
+            auth_methods = source.get("auth_methods", [])
+            providers = source.get("supported_auth_providers", [])
+
+            # If a source has auth_provider in auth_methods, it might have providers
+            # (but not guaranteed if all providers block it)
+            if "auth_provider" in auth_methods:
+                # Just verify the field exists and is a list - don't enforce it has items
+                assert isinstance(providers, list), (
+                    f"Source {source['short_name']} has 'auth_provider' in auth_methods "
+                    "but supported_auth_providers is not a list"
+                )

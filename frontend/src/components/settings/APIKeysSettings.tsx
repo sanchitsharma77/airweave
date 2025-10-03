@@ -286,7 +286,7 @@ export function APIKeysSettings() {
                                 </code>
                               </div>
                               <div className="flex items-center gap-2">
-                                <StatusBadge status={status} />
+                                <StatusBadge status={status} showTooltip={true} tooltipContext="apiKey" />
                                 <Button
                                   variant="ghost"
                                   size="icon"

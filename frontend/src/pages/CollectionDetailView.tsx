@@ -835,7 +835,7 @@ const Collections = () => {
                                             <Pencil className={DESIGN_SYSTEM.icons.inline} />
                                         </Button>
                                         {collection?.status && (
-                                            <StatusBadge status={collection.status} />
+                                            <StatusBadge status={collection.status} showTooltip={true} tooltipContext="collection" />
                                         )}
                                     </div>
                                 )}

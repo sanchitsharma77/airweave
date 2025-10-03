@@ -127,7 +127,6 @@ class LLMReranking(SearchOperation):
                 top_n=min(config.limit, len(yaml_docs)),
                 max_tokens_per_doc=self.max_tokens_per_doc,
             )
-            logger.debug(f"\n\n{response}\n\n")
 
             # Map reranked indices (relative to yaml_docs) back to original results indices
             rankings_list: List[Dict[str, Any]] = []

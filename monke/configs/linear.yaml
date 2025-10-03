@@ -11,7 +11,7 @@ connector:
     openai_model: "gpt-4.1-mini"
     rate_limit_delay_ms: 500
 test_flow:
-  steps: [create, sync, verify, update, sync, verify, partial_delete, sync, verify_partial_deletion, verify_remaining_entities, complete_delete, sync, verify_complete_deletion]
+  steps: [cleanup, create, sync, verify, update, sync, verify, partial_delete, sync, verify_partial_deletion, verify_remaining_entities, complete_delete, sync, verify_complete_deletion, cleanup]
 entity_count: 3
 deletion:
   partial_delete_count: 1

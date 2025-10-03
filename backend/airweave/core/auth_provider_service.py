@@ -21,6 +21,40 @@ auth_provider_logger = logger.with_prefix("Auth Provider Service: ").with_contex
 class AuthProviderService:
     """Service for managing auth provider operations."""
 
+    def get_supported_providers_for_source(self, source_short_name: str) -> List[str]:
+        """Get auth providers that support the given source.
+
+        Args:
+            source_short_name: The short name of the source
+
+        Returns:
+            List of auth provider short names that support this source
+        """
+        supported = []
+
+        # Get all available auth provider classes from the resource locator
+        auth_provider_classes = resource_locator.get_available_auth_provider_classes()
+
+        # Check each available provider
+        for auth_provider_class in auth_provider_classes:
+            short_name = auth_provider_class._short_name
+
+            # Check if source is blocked
+            blocked_sources = getattr(auth_provider_class, "BLOCKED_SOURCES", [])
+            if source_short_name in blocked_sources:
+                auth_provider_logger.debug(
+                    f"Source '{source_short_name}' is blocked by auth provider '{short_name}'"
+                )
+                continue
+
+            # If not blocked, it's supported
+            auth_provider_logger.debug(
+                f"Source '{source_short_name}' is supported by auth provider '{short_name}'"
+            )
+            supported.append(short_name)
+
+        return supported
+
     async def get_runtime_auth_fields_for_source(
         self, db: AsyncSession, source_short_name: str
     ) -> List[str]:

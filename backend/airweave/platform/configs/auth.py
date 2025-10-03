@@ -156,10 +156,25 @@ class Neo4jAuthConfig(AuthConfig):
 # AUTH CONFIGS FOR ALL SOURCES
 
 
+class AirtableAuthConfig(OAuth2WithRefreshAuthConfig):
+    """Airtable authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
 class AsanaAuthConfig(OAuth2WithRefreshAuthConfig):
     """Asana authentication credentials schema."""
 
     # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
+class AttioAuthConfig(APIKeyAuthConfig):
+    """Attio authentication credentials schema."""
+
+    api_key: str = Field(
+        title="API Key",
+        description="The API key for Attio. Generate one in Workspace Settings > Developers.",
+    )
 
 
 class BitbucketAuthConfig(AuthConfig):
@@ -183,7 +198,7 @@ class BitbucketAuthConfig(AuthConfig):
     username: Optional[str] = Field(
         default=None,
         title="Username",
-        description="Your Bitbucket username (deprecated when using API token)",
+        description="Your Bitbucket username (email when using API token)",
     )
     app_password: Optional[str] = Field(
         default=None,
@@ -202,6 +217,12 @@ class BitbucketAuthConfig(AuthConfig):
         description="Specific repository to sync (e.g., 'my-repo'). "
         "If empty, syncs all repositories in the workspace.",
     )
+
+
+class BoxAuthConfig(OAuth2WithRefreshAuthConfig):
+    """Box authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
 
 
 class ClickUpAuthConfig(OAuth2AuthConfig):
@@ -281,6 +302,12 @@ class GoogleDriveAuthConfig(OAuth2BYOCAuthConfig):
     # Inherits client_id, client_secret, refresh_token and access_token from OAuth2BYOCAuthConfig
 
 
+class GitLabAuthConfig(OAuth2WithRefreshAuthConfig):
+    """GitLab authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
 class HubspotAuthConfig(OAuth2WithRefreshAuthConfig):
     """Hubspot authentication credentials schema."""
 
@@ -291,6 +318,13 @@ class IntercomAuthConfig(OAuth2AuthConfig):
     """Intercom authentication credentials schema."""
 
     # Inherits access_token from OAuth2AuthConfig
+
+
+class SalesforceAuthConfig(OAuth2BYOCAuthConfig):
+    """Salesforce authentication credentials schema."""
+
+    # instance_url is now in SalesforceConfig as a template field
+    # Inherits client_id, client_secret, refresh_token and access_token from OAuth2BYOCAuthConfig
 
 
 class JiraAuthConfig(OAuth2WithRefreshAuthConfig):
@@ -358,6 +392,12 @@ class PostgreSQLAuthConfig(BaseDatabaseAuthConfig):
     """PostgreSQL authentication configuration."""
 
 
+class SharePointAuthConfig(OAuth2WithRefreshAuthConfig):
+    """SharePoint authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
 class SlackAuthConfig(OAuth2AuthConfig):
     """Slack authentication credentials schema."""
 
@@ -387,6 +427,24 @@ class TodoistAuthConfig(OAuth2AuthConfig):
     """Todoist authentication credentials schema."""
 
     # Inherits access_token from OAuth2AuthConfig
+
+
+class TeamsAuthConfig(OAuth2WithRefreshAuthConfig):
+    """Microsoft Teams authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
+class TrelloAuthConfig(AuthConfig):
+    """Trello authentication credentials schema.
+
+    Trello uses OAuth1, which requires both a token and token secret.
+    """
+
+    oauth_token: str = Field(title="OAuth Token", description="The OAuth1 access token for Trello")
+    oauth_token_secret: str = Field(
+        title="OAuth Token Secret", description="The OAuth1 access token secret for Trello"
+    )
 
 
 # AUTH PROVIDER AUTHENTICATION CONFIGS

@@ -56,7 +56,9 @@ class ComposioBroker(BaseAuthBroker):
         if not self.api_key:
             raise ValueError("Missing Composio API key (MONKE_COMPOSIO_API_KEY)")
 
-    async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _get(
+        self, path: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"{self.BASE_URL}{path}",
@@ -70,10 +72,23 @@ class ComposioBroker(BaseAuthBroker):
     async def get_credentials(
         self, source_short_name: str, required_fields: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        # Default mapping: slug == short_name. If exceptions arise, we can internalize a mapping here.
+        # Mapping of Airweave source short names to Composio toolkit slugs
+        # This should match the SLUG_NAME_MAPPING in platform/auth_providers/composio.py
+        SLUG_MAPPING = {
+            "google_drive": "googledrive",
+            "google_calendar": "googlecalendar",
+            "outlook_mail": "outlook",
+            "outlook_calendar": "outlook",
+            "onedrive": "one_drive",
+            "sharepoint": "one_drive",  # this is not a bug, we are using the one drive token for sharepoint given overlapping scopes
+            "teams": "microsoft_teams",
+        }
 
-        # composio removes _ , eg. google_drive becomes googledrive
-        if "_" in source_short_name:
+        # Check if we have an explicit mapping
+        if source_short_name in SLUG_MAPPING:
+            slug = SLUG_MAPPING[source_short_name]
+        # Otherwise, use default logic: composio removes underscores
+        elif "_" in source_short_name:
             slug = "".join(source_short_name.split("_"))
         else:
             slug = source_short_name
@@ -108,7 +123,10 @@ class ComposioBroker(BaseAuthBroker):
         sensitive_fields = [
             k
             for k in creds.keys()
-            if any(sensitive in k.lower() for sensitive in ["token", "key", "secret", "password"])
+            if any(
+                sensitive in k.lower()
+                for sensitive in ["token", "key", "secret", "password"]
+            )
         ]
         non_sensitive_fields = [k for k in creds.keys() if k not in sensitive_fields]
 

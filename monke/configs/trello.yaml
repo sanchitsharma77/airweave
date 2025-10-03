@@ -1,0 +1,56 @@
+name: trello_test
+description: End-to-end test for Trello source using Monke (OAuth1)
+
+connector:
+  name: Trello
+  type: trello
+  auth_mode: composio
+  composio_config:
+    account_id: ca_LrmCrRcDeDdi
+    auth_config_id: ac_r8g0h__3n7RC
+  config_fields:
+    openai_model: "gpt-4.1-mini"
+    max_concurrency: 3
+    # OAuth1 consumer credentials (app-level, not user-level)
+    # Composio provides user tokens, but these are needed to sign API requests
+    consumer_key: ${MONKE_TRELLO_CONSUMER_KEY}
+    consumer_secret: ${MONKE_TRELLO_CONSUMER_SECRET}
+
+test_flow:
+  steps:
+    - cleanup
+    - create
+    - sync
+    - verify
+    - update
+    - sync
+    - verify
+    - partial_delete
+    - sync
+    - verify_partial_deletion
+    - verify_remaining_entities
+    - complete_delete
+    - sync
+    - verify_complete_deletion
+    - cleanup
+    - collection_cleanup
+
+deletion:
+  partial_delete_count: 1
+  verify_partial_deletion: true
+  verify_remaining_entities: true  # Bongo now tracks cascade deletions
+  verify_complete_deletion: true
+
+entity_count: 3
+
+collection:
+  name: Trello Test Collection
+
+verification:
+  retry_attempts: 5
+  retry_delay_seconds: 10
+  score_threshold: 0.0
+  expected_fields:
+    - name
+    - desc
+    - trello_id

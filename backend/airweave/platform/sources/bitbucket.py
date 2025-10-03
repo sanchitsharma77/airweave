@@ -561,36 +561,40 @@ class BitbucketSource(BaseSource):
     async def validate(self) -> bool:
         """Verify Bitbucket Basic Auth and (if provided) workspace access."""
         # Ensure credentials are present
-        if not getattr(self, "username", None) or not getattr(self, "app_password", None):
-            self.logger.error("Bitbucket validation failed: missing username or app password.")
-            return False
-
         try:
             async with self.http_client(timeout=10.0) as client:
-                # Build Basic auth header
-                creds = f"{self.username}:{self.app_password}"
-                encoded = base64.b64encode(creds.encode()).decode()
-                headers = {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
-
-                # 1) Auth check
-                resp = await client.get(f"{self.BASE_URL}/user", headers=headers)
-                if not (200 <= resp.status_code < 300):
-                    self.logger.warning(
-                        f"Bitbucket /user ping failed: {resp.status_code} - {resp.text[:200]}"
-                    )
+                # 1) Auth check - _get_with_auth returns JSON data, not response object
+                try:
+                    user_data = await self._get_with_auth(client, f"{self.BASE_URL}/user")
+                    # If we get here, auth is successful (would have raised on error)
+                    if user_data and "uuid" in user_data:
+                        self.logger.info(
+                            "Bitbucket auth validated for user: "
+                            f" {user_data.get('username', 'Unknown')}"
+                        )
+                    else:
+                        self.logger.warning("Bitbucket auth returned unexpected data format")
+                        return False
+                except httpx.HTTPStatusError as e:
+                    self.logger.warning(f"Bitbucket /user auth failed: {e}")
                     return False
 
                 # 2) Workspace reachability (optional but recommended for this connector)
                 if getattr(self, "workspace", None):
-                    ws = await client.get(
-                        f"{self.BASE_URL}/workspaces/{self.workspace}", headers=headers
-                    )
-                    if not (200 <= ws.status_code < 300):
-                        self.logger.warning(
-                            (
-                                f"Bitbucket workspace '{self.workspace}' check "
-                                f"failed: {ws.status_code} - {ws.text[:200]}"
+                    try:
+                        ws_data = await self._get_with_auth(
+                            client, f"{self.BASE_URL}/workspaces/{self.workspace}"
+                        )
+                        if ws_data and "uuid" in ws_data:
+                            self.logger.info(f"Bitbucket workspace '{self.workspace}' verified")
+                        else:
+                            self.logger.warning(
+                                f"Bitbucket workspace '{self.workspace}' returned unexpected data"
                             )
+                            return False
+                    except httpx.HTTPStatusError as e:
+                        self.logger.warning(
+                            f"Bitbucket workspace '{self.workspace}' check failed: {e}"
                         )
                         return False
 

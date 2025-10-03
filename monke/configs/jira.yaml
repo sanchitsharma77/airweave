@@ -17,6 +17,7 @@ connector:
 
 test_flow:
   steps:
+    - cleanup
     - create
     - sync
     - verify
@@ -30,6 +31,7 @@ test_flow:
     - complete_delete
     - sync
     - verify_complete_deletion
+    - cleanup
 
 # Entity configuration
 entity_count: 3  # Number of entities to create for testing

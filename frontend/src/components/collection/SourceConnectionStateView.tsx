@@ -33,7 +33,6 @@ interface LastSyncJob {
   started_at?: string;
   completed_at?: string;
   duration_seconds?: number;
-  entities_processed?: number;
   entities_inserted?: number;
   entities_updated?: number;
   entities_deleted?: number;
@@ -372,10 +371,10 @@ const SourceConnectionStateView: React.FC<Props> = ({
       // 2. Job reaches a final state
       // 3. Status is not a running state (means job ended or never started)
       if (syncStatus === 'cancelling' ||
-          syncStatus === 'cancelled' ||
-          syncStatus === 'completed' ||
-          syncStatus === 'failed' ||
-          (!syncStatus || (syncStatus !== 'running' && syncStatus !== 'in_progress' && syncStatus !== 'pending' && syncStatus !== 'created'))) {
+        syncStatus === 'cancelled' ||
+        syncStatus === 'completed' ||
+        syncStatus === 'failed' ||
+        (!syncStatus || (syncStatus !== 'running' && syncStatus !== 'in_progress' && syncStatus !== 'pending' && syncStatus !== 'created'))) {
         console.log('Clearing isLocalCancelling due to status:', syncStatus);
         setIsLocalCancelling(false);
         if (cancelTimeoutRef.current) {

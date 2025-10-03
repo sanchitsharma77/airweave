@@ -140,7 +140,6 @@ YAML files that define test parameters:
 ```yaml
 name: github
 connector_type: github
-auth_provider: direct  # or 'composio'
 
 config_fields:
   entity_count: 5          # How many test entities to create
@@ -169,48 +168,34 @@ The generator:
 
 ### Authentication Flow with Composio
 
-When tests run, the authentication flow works as follows:
+All authentication is handled through Composio:
 
 ```
 Test Start
     │
     ▼
-┌──────────────────┐
-│ Check for        │
-│ DM_AUTH_PROVIDER │
-└──────────────────┘
+┌─────────────────────┐
+│ Connect to Composio │
+│ using API key       │
+└─────────────────────┘
     │
-    ├─── "composio" ────────────────────┐
-    │                                   ▼
-    │                        ┌─────────────────────┐
-    │                        │ Connect to Composio │
-    │                        │ using API key       │
-    │                        └─────────────────────┘
-    │                                   │
-    │                                   ▼
-    │                        ┌─────────────────────┐
-    │                        │ Get Auth Provider ID│
-    │                        │ Store in env var    │
-    │                        └─────────────────────┘
-    │                                   │
-    │                                   ▼
-    │                        ┌─────────────────────┐
-    │                        │ Use Composio for    │
-    │                        │ all API calls       │
-    │                        └─────────────────────┘
+    ▼
+┌─────────────────────┐
+│ Get Auth Provider ID│
+│ Store in env var    │
+└─────────────────────┘
     │
-    └─── "direct" or unset ─────────────┐
-                                        ▼
-                             ┌─────────────────────┐
-                             │ Use direct tokens   │
-                             │ from environment    │
-                             └─────────────────────┘
+    ▼
+┌─────────────────────┐
+│ Use Composio for    │
+│ all API calls       │
+└─────────────────────┘
 ```
 
 This means:
-- **Local dev**: Can use either Composio or direct tokens
-- **CI/CD**: Always uses Composio for security
-- **Production**: Will use Composio with service accounts
+- **All environments**: Use Composio for authentication
+- **CI/CD**: Uses Composio with configured account/auth config IDs
+- **Production**: Uses Composio with service accounts
 
 ### Test Verification Strategy
 
@@ -227,11 +212,6 @@ Token: "xyz789"                  and indexes                  Query: "xyz789"
                                  Vector stored                Score ≥ 0.8
                                  in Qdrant                    (high relevance)
 ```
-
-**Scoring thresholds:**
-- `≥ 0.8` = Entity exists (creation/update successful)
-- `< 0.3` = Entity deleted (deletion successful)
-- Between = Uncertain state (test fails)
 
 ## Project Structure
 
@@ -305,60 +285,64 @@ cp monke/.env.example monke/.env
 
 #### 2. Configure authentication
 
-**For Local Development (with Composio):**
+**Option 1: Composio (Recommended):**
 ```bash
 # Core settings
 AIRWEAVE_API_URL=http://localhost:8001
 OPENAI_API_KEY=sk-...
 
-# Composio configuration
-DM_AUTH_PROVIDER=composio
-DM_AUTH_PROVIDER_API_KEY=your_composio_api_key
-
-# Per-connector Composio configs
-GITHUB_AUTH_PROVIDER_ACCOUNT_ID=ca_xxx
-GITHUB_AUTH_PROVIDER_AUTH_CONFIG_ID=ac_xxx
-NOTION_AUTH_PROVIDER_ACCOUNT_ID=ca_xxx
-NOTION_AUTH_PROVIDER_AUTH_CONFIG_ID=ac_xxx
+# Composio API key for monke tests
+MONKE_COMPOSIO_API_KEY=your_composio_api_key
 ```
 
-__Gmail Composio config__
-To be able to delete entities from the source, explicitly add this scope to the scope: `https://mail.google.com/`.
+After setting up Composio:
+1. Connect your apps at https://app.composio.dev
+2. Get the `account_id` and `auth_config_id` for each connector
+3. Add them to the connector's YAML config file (e.g., `configs/github.yaml`)
 
-**For Direct Credentials (simpler but less secure):**
+**Gmail Composio config note:**
+To delete entities from Gmail, add this scope in Composio: `https://mail.google.com/`
+
+**Option 2: Direct Credentials (for local dev):**
 ```bash
-# If not using Composio, provide tokens directly
-GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
-GITHUB_REPO_NAME=owner/repo
-NOTION_ACCESS_TOKEN=secret_...
-ASANA_PERSONAL_ACCESS_TOKEN=1/...
+# Core settings
+AIRWEAVE_API_URL=http://localhost:8001
+OPENAI_API_KEY=sk-...
+
+# Connector-specific tokens (all use MONKE_ prefix)
+MONKE_GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+MONKE_GITHUB_REPO_NAME=owner/repo
+MONKE_NOTION_ACCESS_TOKEN=secret_...
+MONKE_ASANA_PERSONAL_ACCESS_TOKEN=1/...
+MONKE_STRIPE_API_KEY=sk_test_...
+# ... see .env.example for more
 ```
 
 ### CI/CD Environment
 
-In GitHub Actions, Composio credentials are injected as secrets:
+In GitHub Actions, credentials are injected as secrets:
 
 ```yaml
 # .github/workflows/monke.yml
 env:
-  # Composio auth provider
-  DM_AUTH_PROVIDER: composio
-  DM_AUTH_PROVIDER_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+  # Core dependencies
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-  # Connector-specific Composio configs
-  GITHUB_AUTH_PROVIDER_ACCOUNT_ID: ${{ secrets.GITHUB_AUTH_PROVIDER_ACCOUNT_ID }}
-  GITHUB_AUTH_PROVIDER_AUTH_CONFIG_ID: ${{ secrets.GITHUB_AUTH_PROVIDER_AUTH_CONFIG_ID }}
-
-  # Other connectors...
-  GMAIL_AUTH_PROVIDER_ACCOUNT_ID: ${{ secrets.GMAIL_AUTH_PROVIDER_ACCOUNT_ID }}
-  GOOGLE_DRIVE_AUTH_PROVIDER_ACCOUNT_ID: ${{ secrets.GOOGLE_DRIVE_AUTH_PROVIDER_ACCOUNT_ID }}
+  # Monke test authentication
+  MONKE_COMPOSIO_API_KEY: ${{ secrets.MONKE_COMPOSIO_API_KEY }}
 ```
 
-The runner automatically:
-1. Detects Composio configuration
-2. Connects to Composio API
-3. Retrieves auth provider ID
-4. Uses it for all subsequent API calls
+How it works:
+1. The runner uses `MONKE_COMPOSIO_API_KEY` to authenticate with Composio
+2. Each connector's YAML config (e.g., `configs/github.yaml`) specifies:
+   ```yaml
+   auth_mode: composio
+   composio_config:
+     account_id: ca_xxx
+     auth_config_id: ac_xxx
+   ```
+3. The runner fetches credentials from Composio using these IDs
+4. Tests run with the fetched credentials
 
 ## Writing a New Connector
 
@@ -423,14 +407,16 @@ async def generate_myapp_content(token: str):
 ```yaml
 name: myapp
 connector_type: myapp
-auth_provider: direct
 
-auth_fields:
-  - api_key
-
-config_fields:
-  entity_count: 5
-  rate_limit_delay_ms: 500
+connector:
+  type: myapp
+  auth_mode: composio
+  composio_config:
+    account_id: ${MONKE_MYAPP_COMPOSIO_ACCOUNT_ID}
+    auth_config_id: ${MONKE_MYAPP_COMPOSIO_AUTH_CONFIG_ID}
+  config_fields:
+    entity_count: 5
+    rate_limit_delay_ms: 500
 ```
 
 ### Step 4: Test
@@ -492,17 +478,13 @@ for collection in client.collections.list():
         client.collections.delete(collection.id)
 ```
 
-## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AIRWEAVE_API_URL` | Backend URL | `http://localhost:8001` |
-| `MONKE_MAX_PARALLEL` | Max concurrent tests | `5` |
-| `MONKE_ENV_FILE` | Environment file | `monke/.env` |
-| `MONKE_NO_VENV` | Skip venv setup | `false` |
-| `MONKE_VERBOSE` | Verbose output | `false` |
-| `CI` | CI mode (simple output) | Auto-detected |
+**Examples of connector credentials:**
+- `MONKE_GITHUB_PERSONAL_ACCESS_TOKEN`, `MONKE_GITHUB_REPO_NAME`
+- `MONKE_BITBUCKET_USERNAME`, `MONKE_BITBUCKET_API_TOKEN`, `MONKE_BITBUCKET_WORKSPACE`
+- `MONKE_STRIPE_API_KEY`, `MONKE_NOTION_ACCESS_TOKEN`, etc.
 
----
+See `.env.example` for the complete list.
+
 
 **Happy Testing! 🐒🥁✨**

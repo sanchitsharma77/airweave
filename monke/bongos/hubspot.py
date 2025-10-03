@@ -29,11 +29,21 @@ class HubSpotBongo(BaseBongo):
     async def create_entities(self) -> List[Dict[str, Any]]:
         self.logger.info(f"🥁 Creating {self.entity_count} HubSpot contacts")
         out: List[Dict[str, Any]] = []
+
+        # Generate all contacts in parallel
+        tokens = [str(uuid.uuid4())[:8] for _ in range(self.entity_count)]
+
+        async def generate_contact_data(token: str):
+            c = await generate_hubspot_contact(self.openai_model, token)
+            return token, c
+
+        # Generate all content in parallel
+        gen_results = await asyncio.gather(*[generate_contact_data(token) for token in tokens])
+
+        # Create contacts sequentially to respect API rate limits
         async with httpx.AsyncClient(base_url=HUBSPOT_API, timeout=30) as client:
-            for _ in range(self.entity_count):
+            for token, c in gen_results:
                 await self._pace()
-                token = str(uuid.uuid4())[:8]
-                c = await generate_hubspot_contact(self.openai_model, token)
                 payload = {
                     "properties": {
                         "email": c.email,
@@ -110,10 +120,83 @@ class HubSpotBongo(BaseBongo):
         return deleted
 
     async def cleanup(self):
+        """Comprehensive cleanup of all test HubSpot contacts."""
+        self.logger.info("🧹 Starting comprehensive HubSpot cleanup")
+
+        cleanup_stats = {"contacts_deleted": 0, "errors": 0}
+
         try:
-            await self.delete_specific_entities(self._contacts)
-        except Exception:
-            pass
+            # First, delete current session contacts
+            if self._contacts:
+                self.logger.info(f"🗑️ Cleaning up {len(self._contacts)} current session contacts")
+                deleted = await self.delete_specific_entities(self._contacts)
+                cleanup_stats["contacts_deleted"] += len(deleted)
+                self._contacts.clear()
+
+            # Search for any remaining monke test contacts
+            await self._cleanup_orphaned_test_contacts(cleanup_stats)
+
+            self.logger.info(
+                f"🧹 Cleanup completed: {cleanup_stats['contacts_deleted']} contacts deleted, "
+                f"{cleanup_stats['errors']} errors"
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Error during comprehensive cleanup: {e}")
+
+    async def _cleanup_orphaned_test_contacts(self, stats: Dict[str, Any]):
+        """Find and delete orphaned test contacts from previous runs."""
+        try:
+            async with httpx.AsyncClient(base_url=HUBSPOT_API, timeout=30) as client:
+                # Search for contacts with test patterns in name or email
+                r = await client.get(
+                    "/crm/v3/objects/contacts", headers=self._hdrs(), params={"limit": 100}
+                )
+
+                if r.status_code == 200:
+                    contacts = r.json().get("results", [])
+                    test_contacts = []
+
+                    for contact in contacts:
+                        props = contact.get("properties", {})
+                        email = props.get("email", "").lower()
+                        firstname = props.get("firstname", "").lower()
+                        lastname = props.get("lastname", "").lower()
+
+                        # Check if this looks like a test contact
+                        if (
+                            any(pattern in email for pattern in ["test", "monke", "example.com"])
+                            or any(pattern in firstname for pattern in ["test", "monke", "demo"])
+                            or any(pattern in lastname for pattern in ["test", "monke", "demo"])
+                        ):
+                            test_contacts.append(contact)
+
+                    if test_contacts:
+                        self.logger.info(
+                            f"🔍 Found {len(test_contacts)} potential test contacts to clean"
+                        )
+                        for contact in test_contacts:
+                            try:
+                                await self._pace()
+                                del_r = await client.delete(
+                                    f"/crm/v3/objects/contacts/{contact['id']}",
+                                    headers=self._hdrs(),
+                                )
+                                if del_r.status_code in (204, 202):
+                                    stats["contacts_deleted"] += 1
+                                    props = contact.get("properties", {})
+                                    self.logger.info(
+                                        f"✅ Deleted orphaned contact: "
+                                        f"{props.get('email', 'unknown')}"
+                                    )
+                                else:
+                                    stats["errors"] += 1
+                            except Exception as e:
+                                stats["errors"] += 1
+                                self.logger.warning(
+                                    f"⚠️ Failed to delete contact {contact['id']}: {e}"
+                                )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not search for orphaned contacts: {e}")
 
     def _hdrs(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}

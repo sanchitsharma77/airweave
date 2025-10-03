@@ -15,6 +15,7 @@ connector:
 
 test_flow:
   steps:
+    - cleanup
     - create
     - sync
     - verify
@@ -28,6 +29,7 @@ test_flow:
     - complete_delete
     - sync
     - verify_complete_deletion
+    - cleanup
 
 deletion:
   partial_delete_count: 1

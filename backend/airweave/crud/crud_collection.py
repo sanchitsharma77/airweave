@@ -26,11 +26,9 @@ class CRUDCollection(CRUDBaseOrganization[Collection, CollectionCreate, Collecti
         """Compute the ephemeral status of a collection based on its source connections.
 
         Logic:
-        - If no source connections: NEEDS_SOURCE
-        - If all source connections are failing: ERROR
-        - If some source connections are failing: PARTIAL_ERROR
-        - If any source connection is in progress: ACTIVE (this is considered an OK state)
-        - Otherwise: ACTIVE
+        - If no authenticated source connections or no syncs completed yet: NEEDS_SOURCE
+        - If at least one connection has completed or is running: ACTIVE
+        - If all connections have failed: ERROR
 
         Args:
             db: The database session
@@ -57,38 +55,35 @@ class CRUDCollection(CRUDBaseOrganization[Collection, CollectionCreate, Collecti
         if not active_connections:
             return CollectionStatus.NEEDS_SOURCE
 
-        # Count the number of failing/in-progress connections among the active ones
-        failing_count = 0
-        in_progress_count = 0
+        # Count connections by their sync status
+        working_count = 0  # Connections with completed or in-progress syncs
+        failing_count = 0  # Connections with failed syncs
 
         for conn in active_connections:
             # Get last job status to compute connection status
             last_job = conn.get("last_job", {})
             last_job_status = last_job.get("status") if last_job else None
 
-            # Determine connection status based on last job
-            if last_job_status == "failed":
-                failing_count += 1
+            # Only count connections that have completed or are actively syncing
+            if last_job_status == "completed":
+                working_count += 1
             elif last_job_status in ("running", "cancelling"):
-                in_progress_count += 1
-            else:
-                # Active, completed, or no jobs yet
-                in_progress_count += 1
+                working_count += 1
+            elif last_job_status == "failed":
+                failing_count += 1
+            # Connections with no jobs, pending, created, or cancelled are not counted
 
-        # If any active connections are in progress, the collection is active
-        if in_progress_count > 0:
+        # If at least one connection has successfully synced or is syncing, collection is active
+        if working_count > 0:
             return CollectionStatus.ACTIVE
 
-        # If all active connections are failing, the collection is in error
+        # If all active connections have failed, the collection is in error
         if failing_count == len(active_connections):
             return CollectionStatus.ERROR
 
-        # If some but not all are failing, the collection is in partial error
-        if failing_count > 0:
-            return CollectionStatus.PARTIAL_ERROR
-
-        # Otherwise, the collection is active
-        return CollectionStatus.ACTIVE
+        # No working connections and not all failed - treat as needing source
+        # (connections exist but haven't successfully synced yet)
+        return CollectionStatus.NEEDS_SOURCE
 
     async def _attach_ephemeral_status(
         self, db: AsyncSession, collections: List[Collection], ctx: ApiContext

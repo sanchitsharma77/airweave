@@ -19,7 +19,6 @@ export interface LastSyncJob {
   duration_seconds?: number;
 
   // Entity metrics
-  entities_processed: number;
   entities_inserted: number;
   entities_updated: number;
   entities_deleted: number;
@@ -69,7 +68,6 @@ export interface SyncProgressUpdate {
   type: 'sync_progress';
   source_connection_id: string;
   job_id: string;
-  entities_processed: number;
   entities_inserted: number;
   entities_updated: number;
   entities_deleted: number;
@@ -84,7 +82,6 @@ export interface SyncCompleteUpdate {
   status: SyncJobStatus;
   duration_seconds: number;
   final_counts: {
-    entities_processed: number;
     entities_inserted: number;
     entities_updated: number;
     entities_deleted: number;
@@ -109,7 +106,6 @@ interface EntityStateStore {
   // Getters
   getConnection: (connectionId: string) => SourceConnectionState | undefined;
   getLastSyncJob: (connectionId: string) => LastSyncJob | undefined;
-  getTotalEntities: (connectionId: string) => number;
   isJobActive: (jobId: string) => boolean;
   getActiveJobsCount: () => number;
 }
@@ -155,7 +151,6 @@ export const useEntityStateStore = create<EntityStateStore>()(
               last_sync_job: {
                 id: update.job_id,
                 status: 'in_progress',
-                entities_processed: update.entities_processed,
                 entities_inserted: update.entities_inserted,
                 entities_updated: update.entities_updated,
                 entities_deleted: update.entities_deleted,
@@ -172,7 +167,6 @@ export const useEntityStateStore = create<EntityStateStore>()(
                 ...existing.last_sync_job,
                 id: update.job_id,
                 status: 'in_progress',
-                entities_processed: update.entities_processed,
                 entities_inserted: update.entities_inserted,
                 entities_updated: update.entities_updated,
                 entities_deleted: update.entities_deleted,
@@ -209,7 +203,6 @@ export const useEntityStateStore = create<EntityStateStore>()(
                 id: update.job_id,
                 status: update.status,
                 duration_seconds: update.duration_seconds,
-                entities_processed: update.final_counts.entities_processed,
                 entities_inserted: update.final_counts.entities_inserted,
                 entities_updated: update.final_counts.entities_updated,
                 entities_deleted: update.final_counts.entities_deleted,
@@ -258,12 +251,6 @@ export const useEntityStateStore = create<EntityStateStore>()(
 
       getLastSyncJob: (connectionId) => {
         return get().sourceConnections.get(connectionId)?.last_sync_job;
-      },
-
-      getTotalEntities: (connectionId) => {
-        const connection = get().sourceConnections.get(connectionId);
-        if (!connection?.last_sync_job) return 0;
-        return connection.last_sync_job.entities_processed || 0;
       },
 
       isJobActive: (jobId) => {

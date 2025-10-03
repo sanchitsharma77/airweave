@@ -96,9 +96,9 @@
         "tags": [
           "sources"
         ],
-        "summary": "Read",
+        "summary": "Get",
         "description": "Get detailed information about a specific data source connector.",
-        "operationId": "read_sources__short_name__get",
+        "operationId": "get_sources__short_name__get",
         "parameters": [
           {
             "name": "short_name",
@@ -2054,7 +2054,7 @@
           },
           "status": {
             "$ref": "#/components/schemas/CollectionStatus",
-            "description": "Current operational status of the collection:<br/>\u2022 **NEEDS_SOURCE**: Collection exists but has no source connections configured yet<br/>\u2022 **ACTIVE**: All source connections are healthy and data is being synced successfully<br/>\u2022 **PARTIAL_ERROR**: Some source connections are failing but others are working<br/>\u2022 **ERROR**: All source connections are failing or in error state",
+            "description": "Current operational status of the collection:<br/>\u2022 **NEEDS_SOURCE**: Collection has no authenticated connections, or connections exist but haven't synced yet<br/>\u2022 **ACTIVE**: At least one connection has completed a sync or is currently syncing<br/>\u2022 **ERROR**: All connections have failed their last sync",
             "default": "NEEDS SOURCE"
           }
         },
@@ -2136,7 +2136,6 @@
         "type": "string",
         "enum": [
           "ACTIVE",
-          "PARTIAL ERROR",
           "NEEDS SOURCE",
           "ERROR"
         ],
@@ -4485,7 +4484,7 @@
               }
             ],
             "title": "Client Id",
-            "description": "OAuth client ID (for custom apps)"
+            "description": "OAuth2 client ID (for custom apps)"
           },
           "client_secret": {
             "anyOf": [
@@ -4497,12 +4496,36 @@
               }
             ],
             "title": "Client Secret",
-            "description": "OAuth client secret (for custom apps)"
+            "description": "OAuth2 client secret (for custom apps)"
+          },
+          "consumer_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumer Key",
+            "description": "OAuth1 consumer key (for custom apps)"
+          },
+          "consumer_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consumer Secret",
+            "description": "OAuth1 consumer secret (for custom apps)"
           }
         },
         "type": "object",
         "title": "OAuthBrowserAuthentication",
-        "description": "OAuth authentication via browser flow."
+        "description": "OAuth authentication via browser flow.\n\nSupports both OAuth2 and OAuth1 BYOC (Bring Your Own Client):\n- OAuth2 BYOC: Provide client_id + client_secret\n- OAuth1 BYOC: Provide consumer_key + consumer_secret"
       },
       "OAuthTokenAuthentication": {
         "properties": {
@@ -4547,6 +4570,7 @@
       "OAuthType": {
         "type": "string",
         "enum": [
+          "oauth1",
           "access_only",
           "with_refresh",
           "with_rotating_refresh"
@@ -5451,6 +5475,21 @@
           "config_fields": {
             "$ref": "#/components/schemas/Fields",
             "description": "Schema definition for configuration fields required to customize this source. Describes field types, validation rules, and user interface hints."
+          },
+          "supported_auth_providers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Auth Providers",
+            "description": "List of auth provider short names that support this source (e.g., ['composio', 'pipedream']). Computed dynamically for API responses. This field is not stored in the database."
           }
         },
         "type": "object",
@@ -5512,7 +5551,8 @@
               "def12345-6789-abcd-ef01-234567890abc",
               "def67890-abcd-ef01-2345-67890abcdef1"
             ],
-            "short_name": "github"
+            "short_name": "github",
+            "supported_auth_providers": []
           },
           {
             "auth_methods": [
@@ -5547,7 +5587,11 @@
               "abc12345-6789-abcd-ef01-234567890abc",
               "abc67890-abcd-ef01-2345-67890abcdef1"
             ],
-            "short_name": "gmail"
+            "short_name": "gmail",
+            "supported_auth_providers": [
+              "pipedream",
+              "composio"
+            ]
           }
         ]
       },

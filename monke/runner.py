@@ -354,11 +354,11 @@ Examples:
         sys.exit(1)
 
     # Handle Composio auth if API key is provided
-    if os.getenv("COMPOSIO_API_KEY"):
+    if os.getenv("MONKE_COMPOSIO_API_KEY"):
         from monke.utils.composio_polyfill import connect_composio_provider_polyfill
 
-        response = await connect_composio_provider_polyfill(os.getenv("COMPOSIO_API_KEY"))
-        os.environ["COMPOSIO_PROVIDER_ID"] = response["readable_id"]
+        response = await connect_composio_provider_polyfill(os.getenv("MONKE_COMPOSIO_API_KEY"))
+        os.environ["MONKE_COMPOSIO_PROVIDER_ID"] = response["readable_id"]
 
     # Build run states
     runs = {}

@@ -165,7 +165,7 @@ class TestFlowConfig(BaseModel):
 class TestConfig(BaseModel):
     """Main test configuration with full validation."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     name: str = Field(..., description="Test name")
     description: str = Field(..., description="Test description")

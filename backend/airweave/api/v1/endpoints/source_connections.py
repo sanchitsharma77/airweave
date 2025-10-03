@@ -23,20 +23,47 @@ router = TrailingSlashRouter()
 async def oauth_callback(
     *,
     db: AsyncSession = Depends(get_db),
-    state: str = Query(..., description="OAuth state parameter"),
-    code: str = Query(..., description="OAuth authorization code"),
+    # OAuth2 parameters
+    state: Optional[str] = Query(None, description="OAuth2 state parameter"),
+    code: Optional[str] = Query(None, description="OAuth2 authorization code"),
+    # OAuth1 parameters
+    oauth_token: Optional[str] = Query(None, description="OAuth1 token parameter"),
+    oauth_verifier: Optional[str] = Query(None, description="OAuth1 verifier"),
 ) -> Response:
     """Handle OAuth callback from user after they have authenticated with an OAuth provider.
+
+    Supports both OAuth1 and OAuth2 callbacks:
+    - OAuth2: Uses state + code parameters
+    - OAuth1: Uses oauth_token + oauth_verifier parameters
 
     Completes the OAuth flow and redirects to the configured URL.
     This endpoint does not require authentication as it's accessed by users
     who are connecting their source.
     """
-    source_conn = await source_connection_service.complete_oauth_callback(
-        db,
-        state=state,
-        code=code,
-    )
+    # Determine OAuth1 vs OAuth2 based on parameters
+    if oauth_token and oauth_verifier:
+        # OAuth1 callback
+        source_conn = await source_connection_service.complete_oauth1_callback(
+            db,
+            oauth_token=oauth_token,
+            oauth_verifier=oauth_verifier,
+        )
+    elif state and code:
+        # OAuth2 callback
+        source_conn = await source_connection_service.complete_oauth2_callback(
+            db,
+            state=state,
+            code=code,
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid OAuth callback: missing required parameters. "
+                "Expected either (state + code) for OAuth2 or "
+                "(oauth_token + oauth_verifier) for OAuth1"
+            ),
+        )
 
     # Redirect to the app with success
     redirect_url = source_conn.auth.redirect_url

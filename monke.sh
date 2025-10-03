@@ -138,9 +138,10 @@ list_connectors() {
     done
 }
 
-# Detect changed connectors (vs main branch)
+# Detect changed connectors (vs base branch)
 detect_changed_connectors() {
-    local base_branch="${1:-main}"
+    # Use environment variable if set, otherwise default to main
+    local base_branch="${BASE_BRANCH:-${1:-main}}"
     local changed_files
     local changed_connectors=()
 
@@ -152,7 +153,7 @@ detect_changed_connectors() {
         return 1
     fi
 
-    changed_files=$(git diff --name-only "${base_branch}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/entities/|backend/airweave/sources/)" || true)
+    changed_files=$(git diff --name-only "${base_branch}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/platform/sources/|backend/airweave/platform/entities/)" || true)
 
     if [[ -z "$changed_files" ]]; then
         log_info "No connector-related changes detected"
@@ -165,7 +166,7 @@ detect_changed_connectors() {
 
         if [[ "$file" =~ monke/(bongos|configs|generation)/([^/]+)\.(py|yaml) ]]; then
             connector="${BASH_REMATCH[2]}"
-        elif [[ "$file" =~ backend/airweave/(entities|sources)/([^/]+)\.(py|yaml) ]]; then
+        elif [[ "$file" =~ backend/airweave/platform/(entities|sources)/([^/]+)\.(py|yaml) ]]; then
             connector="${BASH_REMATCH[2]}"
         fi
 

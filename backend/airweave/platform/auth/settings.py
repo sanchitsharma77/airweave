@@ -12,6 +12,7 @@ from airweave.platform.auth.schemas import (
     APIKeyAuthSettings,
     BaseAuthSettings,
     ConfigClassAuthSettings,
+    OAuth1Settings,
     OAuth2Settings,
     OAuth2WithRefreshRotatingSettings,
     OAuth2WithRefreshSettings,
@@ -57,14 +58,19 @@ class IntegrationSettings:
         if config is None:
             config = {}
 
-        # New model: oauth_type determines if it's OAuth, absence means direct auth
+        # Check oauth_type for all OAuth integrations (OAuth1 and OAuth2)
         oauth_type_str = config.get("oauth_type", "")
 
         # Set integration short name
         config["integration_short_name"] = name
 
-        if oauth_type_str:
-            # It's an OAuth integration
+        # Handle OAuth1
+        if oauth_type_str == "oauth1":
+            config["authentication_method"] = AuthenticationMethod.OAUTH_BROWSER.value
+            model = OAuth1Settings
+        # Handle OAuth2 (access_only, with_refresh, with_rotating_refresh)
+        elif oauth_type_str:
+            # It's an OAuth2 integration
             config["authentication_method"] = AuthenticationMethod.OAUTH_BROWSER.value
 
             # Determine the OAuth settings model based on oauth_type
@@ -110,15 +116,49 @@ class IntegrationSettings:
     async def _get_client_secret(self, settings: BaseAuthSettings) -> str:
         """Retrieves the client secret for a specific integration.
 
+        For OAuth1: Uses consumer_secret field
+        For OAuth2: Uses client_secret field
+        For Direct Auth: No secret needed
+
         Args:
         ----
             settings (BaseAuthSettings): The settings for the integration.
+
+        Returns:
+            The decrypted secret from Key Vault (prod) or raw value (dev)
+
+        Raises:
+            ValueError: If settings type has no secret field
         """
+        # Explicit type checking for clarity
+        secret_field = None
+
+        if isinstance(settings, OAuth1Settings):
+            # OAuth1 uses consumer_secret
+            secret_field = settings.consumer_secret
+        elif isinstance(settings, OAuth2Settings):
+            # OAuth2 (and all variants) use client_secret
+            # This catches OAuth2Settings, OAuth2WithRefreshSettings,
+            # OAuth2WithRefreshRotatingSettings
+            secret_field = settings.client_secret
+        else:
+            # Direct auth integrations don't have secrets in settings
+            raise ValueError(
+                f"Settings type {type(settings).__name__} does not have a client/consumer secret"
+            )
+
+        if not secret_field:
+            raise ValueError(
+                f"No client/consumer secret found for {settings.integration_short_name}"
+            )
+
+        # In production, fetch from Azure Key Vault
+        # In dev/local, use the raw value from YAML
         if core_settings.ENVIRONMENT == "prd":
-            secret = await secret_client.get_secret(settings.client_secret)
+            secret = await secret_client.get_secret(secret_field)
             return secret.value
         else:
-            return settings.client_secret
+            return secret_field
 
     async def get_by_short_name(self, short_name: str) -> BaseAuthSettings:
         """Retrieves settings for a specific integration by its short name.
@@ -140,26 +180,23 @@ class IntegrationSettings:
         if not settings:
             raise KeyError(f"Integration settings not found for {short_name}")
 
-        # Enrich with client secret for PRD - create a copy to avoid mutating the original
-        # Check if this is an OAuth integration that needs client secret
-        is_oauth = False
-
-        if hasattr(settings, "oauth_type") and settings.oauth_type:
-            # If oauth_type is set, it's OAuth
-            is_oauth = True
-        elif hasattr(settings, "authentication_method"):
-            # Check authentication method
-            is_oauth = settings.authentication_method in [
-                AuthenticationMethod.OAUTH_BROWSER.value,
-                AuthenticationMethod.OAUTH_TOKEN.value,
-            ]
+        # Enrich with client/consumer secret for PRD - create a copy to avoid mutating the original
+        # Explicit type checking: only OAuth1 and OAuth2 integrations need secret enrichment
+        is_oauth = isinstance(settings, (OAuth1Settings, OAuth2Settings))
 
         if is_oauth:
             # Create a copy of the settings object
             settings_dict = settings.model_dump()
-            settings_dict["client_secret"] = await self._get_client_secret(settings)
+
+            # Get the secret and set appropriate field
+            secret = await self._get_client_secret(settings)
+            if isinstance(settings, OAuth1Settings):
+                settings_dict["consumer_secret"] = secret
+            else:
+                settings_dict["client_secret"] = secret
+
             try:
-                # Return a new instance with the enriched client secret
+                # Return a new instance with the enriched secret
                 return type(settings)(**settings_dict)
             except Exception as e:
                 # If there's an error, log it and return the original settings
