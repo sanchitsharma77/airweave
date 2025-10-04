@@ -24,7 +24,7 @@ class TestCleanup:
         conn_id = source_connection_fast["id"]
 
         # Delete without data
-        response = await api_client.delete(f"/source-connections/{conn_id}?delete_data=false")
+        response = await api_client.delete(f"/source-connections/{conn_id}")
 
         assert response.status_code == 200
         deleted = response.json()
@@ -41,7 +41,7 @@ class TestCleanup:
         conn_id = source_connection_fast["id"]
 
         # Delete with data
-        response = await api_client.delete(f"/source-connections/{conn_id}?delete_data=true")
+        response = await api_client.delete(f"/source-connections/{conn_id}")
 
         assert response.status_code == 200
         deleted = response.json()
@@ -56,7 +56,7 @@ class TestCleanup:
         collection_id = collection["readable_id"]
 
         # Delete without data
-        response = await api_client.delete(f"/collections/{collection_id}?delete_data=false")
+        response = await api_client.delete(f"/collections/{collection_id}")
 
         # Could be 200 or 404 if already deleted by cascade
         assert response.status_code in [200, 404]
@@ -76,7 +76,7 @@ class TestCleanup:
         collection_id = collection["readable_id"]
 
         # Delete with data
-        response = await api_client.delete(f"/collections/{collection_id}?delete_data=true")
+        response = await api_client.delete(f"/collections/{collection_id}")
 
         # Could be 200 or 404 if already deleted
         assert response.status_code in [200, 404]
@@ -127,7 +127,7 @@ class TestCleanup:
 
         # Delete the collection
         response = await api_client.delete(
-            f"/collections/{collection['readable_id']}?delete_data=true"
+            f"/collections/{collection['readable_id']}"
         )
 
         # Should succeed or return 404 if cascade handled it
@@ -193,12 +193,12 @@ class TestCleanup:
 
         # Delete connections first
         for conn in connections:
-            response = await api_client.delete(f"/source-connections/{conn['id']}?delete_data=true")
+            response = await api_client.delete(f"/source-connections/{conn['id']}")
             assert response.status_code == 200
 
         # Then delete collection
         response = await api_client.delete(
-            f"/collections/{collection['readable_id']}?delete_data=true"
+            f"/collections/{collection['readable_id']}"
         )
         assert response.status_code in [200, 204]
 

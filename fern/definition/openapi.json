@@ -5853,11 +5853,6 @@
             ],
             "title": "Duration Seconds"
           },
-          "entities_processed": {
-            "type": "integer",
-            "title": "Entities Processed",
-            "default": 0
-          },
           "entities_inserted": {
             "type": "integer",
             "title": "Entities Inserted",
@@ -7082,11 +7077,6 @@
               }
             ],
             "title": "Duration Seconds"
-          },
-          "entities_processed": {
-            "type": "integer",
-            "title": "Entities Processed",
-            "default": 0
           },
           "entities_inserted": {
             "type": "integer",

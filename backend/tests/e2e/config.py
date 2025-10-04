@@ -43,18 +43,14 @@ class TestSettings(BaseSettings):
 
     TEST_GOOGLE_CLIENT_SECRET: str = Field(description="Google OAuth client secret for BYOC")
 
-    # OAuth1 test credentials
-    TEST_TRELLO_CONSUMER_KEY: str = Field(
-        description="Trello OAuth1 consumer key (API key) for BYOC"
-    )
-
-    TEST_TRELLO_CONSUMER_SECRET: str = Field(description="Trello OAuth1 consumer secret for BYOC")
-
     TEST_PIPEDREAM_PROJECT_ID: str = Field(description="Pipedream project ID for BYOC")
     TEST_PIPEDREAM_ACCOUNT_ID: str = Field(description="Pipedream account ID for BYOC")
     TEST_PIPEDREAM_EXTERNAL_USER_ID: str = Field(description="Pipedream external user ID for BYOC")
     TEST_PIPEDREAM_CLIENT_ID: str = Field(description="Pipedream client ID for BYOC")
     TEST_PIPEDREAM_CLIENT_SECRET: str = Field(description="Pipedream client secret for BYOC")
+
+    TEST_TRELLO_CONSUMER_KEY: str = Field(description="Trello consumer key for BYOC")
+    TEST_TRELLO_CONSUMER_SECRET: str = Field(description="Trello consumer secret for BYOC")
 
     # Auth provider configuration
     TEST_AUTH_PROVIDER_NAME: Literal["composio"] = Field(
@@ -144,6 +140,11 @@ class TestSettings(BaseSettings):
     def is_local(self) -> bool:
         """Check if running in local environment."""
         return self.TEST_ENV == "local"
+
+    @property
+    def qdrant_url(self) -> str:
+        """Get Qdrant URL for local testing only."""
+        return "http://localhost:6333"
 
     @property
     def api_headers(self) -> dict:

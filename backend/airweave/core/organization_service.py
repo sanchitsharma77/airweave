@@ -519,6 +519,133 @@ class OrganizationService:
         logger.info(f"Successfully sent Auth0 invitation to {email} for organization {org.name}")
         return invitation
 
+    async def _delete_from_auth0(self, org: Organization) -> None:
+        """Delete organization from Auth0.
+
+        Args:
+            org: Organization to delete from Auth0
+
+        Note:
+            Continues execution even if Auth0 deletion fails to prevent partial deletion states.
+        """
+        if org.auth0_org_id and auth0_management_client:
+            try:
+                await auth0_management_client.delete_organization(org.auth0_org_id)
+                logger.info(f"Successfully deleted Auth0 organization: {org.auth0_org_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete Auth0 organization {org.auth0_org_id}: {e}")
+
+    async def _delete_billing_subscription(
+        self, db: AsyncSession, organization_id: UUID, org_name: str
+    ) -> None:
+        """Delete billing subscription for organization.
+
+        Args:
+            db: Database session
+            organization_id: ID of the organization
+            org_name: Name of the organization (for logging)
+
+        Note:
+            Continues execution even if billing deletion fails.
+        """
+        if not settings.STRIPE_ENABLED:
+            return
+
+        try:
+            org_billing = await crud.organization_billing.get_by_organization(
+                db, organization_id=organization_id
+            )
+            if not org_billing:
+                logger.warning(f"No billing record found for organization {org_name}")
+            else:
+                await stripe_client.cancel_subscription(
+                    subscription_id=org_billing.stripe_subscription_id,
+                    cancel_at_period_end=False,
+                )
+            logger.info(f"Successfully deleted billing record for organization: {org_name}")
+        except Exception as e:
+            logger.warning(f"Failed to delete billing record for organization {org_name}: {e}")
+
+    async def _delete_user_organization_relationships(
+        self, db: AsyncSession, organization_id: UUID, org_name: str
+    ) -> None:
+        """Delete all user-organization relationships.
+
+        Args:
+            db: Database session
+            organization_id: ID of the organization
+            org_name: Name of the organization (for logging)
+        """
+        from sqlalchemy import delete
+
+        delete_user_org_stmt = delete(UserOrganization).where(
+            UserOrganization.organization_id == organization_id
+        )
+        await db.execute(delete_user_org_stmt)
+        logger.info(f"Deleted user-organization relationships for organization {org_name}")
+
+    async def _delete_qdrant_collections(
+        self, db: AsyncSession, organization_id: UUID, org_name: str
+    ) -> tuple[int, int]:
+        """Delete all Qdrant collections for organization.
+
+        Args:
+            db: Database session
+            organization_id: ID of the organization
+            org_name: Name of the organization (for logging)
+
+        Returns:
+            Tuple of (deleted_count, failed_count)
+        """
+        from sqlalchemy import select
+
+        from airweave.models.collection import Collection
+        from airweave.platform.destinations.qdrant import QdrantDestination
+
+        collections_stmt = select(Collection).where(Collection.organization_id == organization_id)
+        collections_result = await db.execute(collections_stmt)
+        collections = collections_result.scalars().all()
+
+        logger.info(f"Deleting {len(collections)} Qdrant collections for organization {org_name}")
+        deleted_count = 0
+        failed_count = 0
+
+        for collection in collections:
+            try:
+                destination = await QdrantDestination.create(collection_id=collection.id)
+                if destination.client:
+                    await destination.client.delete_collection(collection_name=str(collection.id))
+                    deleted_count += 1
+                    logger.info(f"Deleted Qdrant collection {collection.id} ({collection.name})")
+            except Exception as e:
+                failed_count += 1
+                logger.error(
+                    f"Error deleting Qdrant collection {collection.id} ({collection.name}): {e}"
+                )
+
+        logger.info(f"Qdrant cleanup complete: {deleted_count} deleted, {failed_count} failed")
+        return deleted_count, failed_count
+
+    async def _delete_organization_from_db(
+        self, db: AsyncSession, organization_id: UUID, org_name: str
+    ) -> None:
+        """Delete organization from local database.
+
+        Args:
+            db: Database session
+            organization_id: ID of the organization
+            org_name: Name of the organization (for logging)
+
+        Note:
+            CASCADE will delete related collections from SQL.
+        """
+        from sqlalchemy import delete
+
+        delete_org_stmt = delete(Organization).where(Organization.id == organization_id)
+        await db.execute(delete_org_stmt)
+        await db.commit()
+        logger.info(f"Successfully deleted local organization: {org_name}")
+
     async def delete_organization_with_auth0(
         self, db: AsyncSession, organization_id: UUID, deleting_user: User
     ) -> bool:
@@ -549,57 +676,26 @@ class OrganizationService:
 
         try:
             # Delete from Auth0 first if it has an Auth0 org ID
-            if org.auth0_org_id and auth0_management_client:
-                try:
-                    await auth0_management_client.delete_organization(org.auth0_org_id)
-                    logger.info(f"Successfully deleted Auth0 organization: {org.auth0_org_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete Auth0 organization {org.auth0_org_id}: {e}")
-                    # Continue with local deletion even if Auth0 deletion fails
-                    # This prevents the organization from being stuck in a partially deleted state
+            await self._delete_from_auth0(org)
 
-            # Delete billing record if Stripe is enabled
-            if settings.STRIPE_ENABLED:
-                try:
-                    org_billing = await crud.organization_billing.get_by_organization(
-                        db, organization_id=organization_id
-                    )
-                    if not org_billing:
-                        logger.warning(f"No billing record found for organization {org.name}")
-                    else:
-                        await stripe_client.cancel_subscription(
-                            subscription_id=org_billing.stripe_subscription_id,
-                            cancel_at_period_end=False,
-                        )
-                    logger.info(f"Successfully deleted billing record for organization: {org.name}")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to delete billing record for organization {org.name}: {e}"
-                    )
-                    # Continue with deletion even if billing cleanup fails
+            # Delete billing subscription if Stripe is enabled
+            await self._delete_billing_subscription(db, organization_id, org.name)
 
-            # Delete from local database - need to clean up foreign key references first
-            from sqlalchemy import delete
+            # Delete user-organization relationships
+            await self._delete_user_organization_relationships(db, organization_id, org.name)
 
-            # First, delete all user_organization relationships
-            delete_user_org_stmt = delete(UserOrganization).where(
-                UserOrganization.organization_id == organization_id
-            )
-            await db.execute(delete_user_org_stmt)
-            logger.info(f"Deleted user-organization relationships for organization {org.name}")
+            # Delete all Qdrant collections for this organization before SQL cascade
+            await self._delete_qdrant_collections(db, organization_id, org.name)
 
-            # Then delete the organization itself
-            delete_org_stmt = delete(Organization).where(Organization.id == organization_id)
-            await db.execute(delete_org_stmt)
-            await db.commit()
+            # Delete the organization from database (CASCADE will delete collections from SQL)
+            await self._delete_organization_from_db(db, organization_id, org.name)
 
-            logger.info(f"Successfully deleted local organization: {org.name}")
+            logger.info(f"Successfully deleted organization: {org.name}")
             return True
 
         except Exception as e:
             logger.error(f"Failed to delete organization {org.name}: {e}")
-            # If we deleted from Auth0 but failed locally, we should log this as a critical issue
-            # In a production system, you might want to implement a cleanup/retry mechanism
+            # If we deleted from Auth0 but failed locally, log this as a critical issue
             if org.auth0_org_id:
                 logger.critical(
                     f"Organization {org.name} was deleted from Auth0 but failed to delete locally. "

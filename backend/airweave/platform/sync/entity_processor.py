@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import DefaultDict, Dict, List, Optional, Set, Tuple
 
 from fastembed import SparseTextEmbedding
+from sqlalchemy.exc import DBAPIError
 
 from airweave import crud, models, schemas
 from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
@@ -27,6 +28,61 @@ class EntityProcessor:
     def __init__(self):
         """Initialize the entity processor with empty tracking dictionary."""
         self._entity_ids_encountered_by_type: Dict[str, Set[str]] = {}
+
+    @staticmethod
+    async def _retry_on_deadlock(coro_func, *args, max_retries: int = 3, **kwargs):
+        """Retry a coroutine function on deadlock errors with exponential backoff.
+
+        Handles both DeadlockDetectedError (concurrent transactions) and
+        CardinalityViolationError (duplicate entities in batch). Uses exponential
+        backoff to give conflicting transactions time to complete.
+
+        Args:
+            coro_func: The coroutine function to retry
+            *args: Positional arguments for the function
+            max_retries: Maximum number of retry attempts (default: 3)
+            **kwargs: Keyword arguments for the function
+
+        Returns:
+            The result of the coroutine function
+
+        Raises:
+            DBAPIError: If all retry attempts are exhausted
+            asyncio.CancelledError: Immediately on cancellation (no retry)
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                return await coro_func(*args, **kwargs)
+            except DBAPIError as e:
+                # Check if it's a retryable database error
+                error_msg = str(e).lower()
+                is_deadlock = "deadlock detected" in error_msg
+                is_cardinality = "cannot affect row a second time" in error_msg
+
+                if (is_deadlock or is_cardinality) and attempt < max_retries:
+                    # Exponential backoff: 0.1s, 0.2s, 0.4s
+                    wait_time = 0.1 * (2**attempt)
+
+                    # Log retry attempt if logger is available
+                    if "sync_context" in kwargs and hasattr(kwargs["sync_context"], "logger"):
+                        logger = kwargs["sync_context"].logger
+                        error_type = "Deadlock" if is_deadlock else "Cardinality violation"
+                        logger.warning(
+                            f"🔄 {error_type} detected, retrying in {wait_time}s "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                # Not a retryable error or out of retries, re-raise
+                raise
+            except asyncio.CancelledError:
+                # Don't retry on cancellation - propagate immediately
+                raise
+
+        # Should never reach here, but just in case
+        raise RuntimeError("Retry logic failed unexpectedly")
 
     def initialize_tracking(self, sync_context: SyncContext) -> None:
         """Initialize entity tracking with entity types from the DAG."""
@@ -632,12 +688,33 @@ class EntityProcessor:
         children_by_parent: Dict[str, List[BaseEntity]],
         sync_context: SyncContext,
     ) -> Dict[str, List[BaseEntity]]:
+        """Persist a batch of entities with automatic retry on database conflicts."""
+        return await self._retry_on_deadlock(
+            self._persist_batch_impl,
+            partitions=partitions,
+            existing_map=existing_map,
+            parent_hashes=parent_hashes,
+            children_by_parent=children_by_parent,
+            sync_context=sync_context,
+        )
+
+    async def _persist_batch_impl(
+        self,
+        *,
+        partitions: Dict[str, List[BaseEntity]],
+        existing_map: Dict[str, models.Entity],
+        parent_hashes: Dict[str, str],
+        children_by_parent: Dict[str, List[BaseEntity]],
+        sync_context: SyncContext,
+    ) -> Dict[str, List[BaseEntity]]:
+        """Internal implementation of batch persistence with retry support."""
         inserts, updates, deletes = (
             partitions["inserts"],
             partitions["updates"],
             partitions["deletes"],
         )
 
+        # Persist to database in a transaction
         async with get_db_context() as db:
             async with db.begin():
                 await self._batch_persist_db_inserts(
@@ -689,9 +766,15 @@ class EntityProcessor:
             inserts.clear()
 
         if create_objs:
-            await self._execute_bulk_insert(
+            # Deduplicate both DB payload AND the inserts list to keep them in sync
+            deduped_objs, kept_parent_ids = await self._execute_bulk_insert(
                 db, create_objs, inserts, children_by_parent, sync_context
             )
+
+            # Remove duplicate parents from inserts to match deduplicated DB payload
+            # This ensures downstream consumers (destinations, metrics) see consistent data
+            inserts[:] = [p for p in inserts if p.entity_id in kept_parent_ids]
+
             await self._update_state_tracker_for_inserts(inserts, sync_context)
 
     async def _prepare_insert_objects(
@@ -752,6 +835,46 @@ class EntityProcessor:
 
         return None
 
+    def _deduplicate_entity_creates(
+        self,
+        create_objs: List[schemas.EntityCreate],
+        sync_context: SyncContext,
+    ) -> Tuple[List[schemas.EntityCreate], Set[str]]:
+        """Deduplicate entities by entity_id, keeping only the last occurrence.
+
+        This prevents CardinalityViolationError when the same entity_id appears
+        multiple times in a batch (e.g., shared calendars referenced by multiple parents).
+
+        Args:
+            create_objs: List of entity create objects to deduplicate
+            sync_context: Sync context for logging
+
+        Returns:
+            Tuple of (deduplicated objects, set of kept entity_ids)
+        """
+        seen_entity_ids: Dict[str, int] = {}
+        deduped_objs: List[schemas.EntityCreate] = []
+
+        for obj in create_objs:
+            if obj.entity_id in seen_entity_ids:
+                # Replace previous occurrence with this one (keep latest)
+                deduped_objs[seen_entity_ids[obj.entity_id]] = obj
+            else:
+                seen_entity_ids[obj.entity_id] = len(deduped_objs)
+                deduped_objs.append(obj)
+
+        # Log deduplication activity for observability
+        if len(deduped_objs) < len(create_objs):
+            removed_count = len(create_objs) - len(deduped_objs)
+            sync_context.logger.info(
+                f"🔧 Deduplicated {len(create_objs)} entities → {len(deduped_objs)} "
+                f"(removed {removed_count} duplicates - shared resources in batch)"
+            )
+
+        # Return both deduplicated objects and the set of kept entity_ids
+        kept_entity_ids = {obj.entity_id for obj in deduped_objs}
+        return deduped_objs, kept_entity_ids
+
     async def _execute_bulk_insert(
         self,
         db,
@@ -759,18 +882,39 @@ class EntityProcessor:
         inserts: List[BaseEntity],
         children_by_parent: Dict[str, List[BaseEntity]],
         sync_context: SyncContext,
-    ) -> None:
-        created_rows = await crud.entity.bulk_create(db=db, objs=create_objs, ctx=sync_context.ctx)
+    ) -> Tuple[List[schemas.EntityCreate], Set[str]]:
+        """Execute bulk insert with deduplication and metadata assignment.
+
+        Returns:
+            Tuple of (deduplicated objects, set of kept entity_ids)
+        """
+        # Deduplicate entities to prevent CardinalityViolationError
+        deduped_objs, kept_entity_ids = self._deduplicate_entity_creates(create_objs, sync_context)
+
+        # Bulk insert to database
+        created_rows = await crud.entity.bulk_create(db=db, objs=deduped_objs, ctx=sync_context.ctx)
+
+        # Map database IDs back to entities
         created_map = {row.entity_id: row.id for row in created_rows}
-        for p in inserts:
-            db_id = created_map.get(p.entity_id)
-            if db_id and p.airweave_system_metadata:
-                p.airweave_system_metadata.db_entity_id = db_id
-        for p in inserts:
-            db_id = created_map.get(p.entity_id)
-            for c in children_by_parent.get(p.entity_id, []):
-                if c.airweave_system_metadata and db_id:
-                    c.airweave_system_metadata.db_entity_id = db_id
+
+        # Assign database IDs to parent entities (only those that were kept)
+        for parent in inserts:
+            if parent.entity_id not in kept_entity_ids:
+                continue
+            db_id = created_map.get(parent.entity_id)
+            if db_id and parent.airweave_system_metadata:
+                parent.airweave_system_metadata.db_entity_id = db_id
+
+        # Assign database IDs to child entities (only for kept parents)
+        for parent in inserts:
+            if parent.entity_id not in kept_entity_ids:
+                continue
+            db_id = created_map.get(parent.entity_id)
+            for child in children_by_parent.get(parent.entity_id, []):
+                if child.airweave_system_metadata and db_id:
+                    child.airweave_system_metadata.db_entity_id = db_id
+
+        return deduped_objs, kept_entity_ids
 
     async def _batch_persist_db_updates(
         self,
