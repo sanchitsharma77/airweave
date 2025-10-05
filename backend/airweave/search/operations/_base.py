@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Any, List
 
 from airweave.search.context import SearchContext
 
@@ -7,13 +7,12 @@ from airweave.search.context import SearchContext
 class SearchOperation(ABC):
     """Base class for all search operations."""
 
-    @classmethod
     @abstractmethod
-    def depends_on(cls) -> List[str]:
+    def depends_on(self) -> List[str]:
         """List of operation names this operation depends on."""
         pass
 
     @abstractmethod
-    def execute(self, context: SearchContext) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
         """Execute the operation."""
         pass

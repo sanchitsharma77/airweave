@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from airweave.schemas.search import RetrievalStrategy
 from airweave.search.operations import (
     EmbedQuery,
     GenerateAnswer,
@@ -26,9 +25,6 @@ class SearchContext(BaseModel):
     stream: bool = Field()
 
     query: str = Field()
-    retrieval_strategy: RetrievalStrategy = Field()
-    offset: int = Field()
-    limit: int = Field()
 
     query_expansion: Optional[QueryExpansion] = Field()
     query_interpretation: Optional[QueryInterpretation] = Field()
