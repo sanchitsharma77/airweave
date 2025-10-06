@@ -103,6 +103,8 @@ class GitHubConfig(SourceConfig):
     repo_name: str = Field(
         title="Repository Name",
         description="Repository to sync in owner/repo format (e.g., 'airweave-ai/airweave')",
+        min_length=3,
+        pattern=r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$",
     )
     branch: str = Field(
         default="",
@@ -112,6 +114,27 @@ class GitHubConfig(SourceConfig):
             "If empty, uses the default branch."
         ),
     )
+
+    @field_validator("repo_name")
+    @classmethod
+    def validate_repo_name(cls, v: str) -> str:
+        """Validate repository name is in owner/repo format."""
+        if not v or not v.strip():
+            raise ValueError("Repository name is required")
+        v = v.strip()
+        if "/" not in v:
+            raise ValueError(
+                "Repository must be in 'owner/repo' format (e.g., 'airweave-ai/airweave')"
+            )
+        parts = v.split("/")
+        if len(parts) != 2:
+            raise ValueError(
+                "Repository must be in 'owner/repo' format (e.g., 'airweave-ai/airweave')"
+            )
+        owner, repo = parts
+        if not owner or not repo:
+            raise ValueError("Both owner and repository name must be non-empty")
+        return v
 
 
 class GitLabConfig(SourceConfig):
