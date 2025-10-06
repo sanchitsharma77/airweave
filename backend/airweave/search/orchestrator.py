@@ -4,6 +4,7 @@ The orchestrator is responsible for:
 1. Extracting enabled operations from the search context
 2. Determining execution order based on dependencies
 3. Executing operations sequentially, passing state between them
+4. Managing event emission for streaming updates
 """
 
 from typing import Any, List, Set
@@ -11,6 +12,7 @@ from typing import Any, List, Set
 from airweave.api.context import ApiContext
 from airweave.schemas.search import SearchResponse
 from airweave.search.context import SearchContext
+from airweave.search.emitter import EventEmitter
 from airweave.search.operations._base import SearchOperation
 
 
@@ -23,11 +25,51 @@ class SearchOrchestrator:
 
     async def run(self, ctx: ApiContext, context: SearchContext) -> SearchResponse:
         """Execute search operations and return response."""
+        # Create event emitter for this search
+        emitter = EventEmitter(request_id=context.request_id, stream=context.stream)
+
+        # Emit initial start event
+        await emitter.emit(
+            "start",
+            {
+                "request_id": context.request_id,
+                "query": context.query,
+                "collection_id": str(context.collection_id),
+            },
+        )
+
+        # Initialize shared state
         state: dict[str, Any] = {}
 
+        # Resolve execution order
         execution_order = self._resolve_execution_order(context, ctx)
+
+        # Execute operations in order
         for operation in execution_order:
-            await operation.execute(context, state, ctx)
+            op_name = operation.__class__.__name__
+
+            # Emit operator_start
+            await emitter.emit("operator_start", {"name": op_name}, op_name=op_name)
+
+            try:
+                # Execute operation
+                await operation.execute(context, state, ctx, emitter)
+
+                # Emit operator_end
+                await emitter.emit("operator_end", {"name": op_name}, op_name=op_name)
+
+            except Exception as e:
+                # Emit error event
+                await emitter.emit(
+                    "error", {"operation": op_name, "message": str(e)}, op_name=op_name
+                )
+                raise
+
+        # Emit results event
+        await emitter.emit("results", {"results": state.get("results", [])})
+
+        # Emit done event
+        await emitter.emit("done", {"request_id": context.request_id})
 
         return SearchResponse(results=state.get("results"), completion=state.get("completion"))
 

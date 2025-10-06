@@ -6,7 +6,7 @@ ranking that respects the dataset's time distribution.
 """
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from pydantic import BaseModel
 from qdrant_client.http import models as rest
@@ -16,6 +16,9 @@ from airweave.platform.destinations.qdrant import QdrantDestination
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class DecayConfig(BaseModel):
@@ -48,10 +51,23 @@ class TemporalRelevance(SearchOperation):
         """Depends on filter operations."""
         return ["QueryInterpretation", "UserFilter"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Compute decay configuration from collection timestamps."""
         ctx.logger.debug(
             "[TemporalRelevance] Computing decay configuration from collection timestamps"
+        )
+
+        # Emit recency start
+        await emitter.emit(
+            "recency_start",
+            {"requested_weight": self.weight},
+            op_name=self.__class__.__name__,
         )
 
         # Get filter from state if available (respects filtered timespan)
@@ -71,12 +87,22 @@ class TemporalRelevance(SearchOperation):
         ctx.logger.debug(f"[TemporalRelevance] Newest timestamp: {newest}")
 
         if not oldest or not newest:
+            await emitter.emit(
+                "recency_skipped",
+                {"reason": "no_timestamps"},
+                op_name=self.__class__.__name__,
+            )
             raise ValueError(
                 "Could not determine time range for temporal relevance. "
                 "Collection might be empty or have no valid timestamps."
             )
 
         if newest <= oldest:
+            await emitter.emit(
+                "recency_skipped",
+                {"reason": "invalid_range"},
+                op_name=self.__class__.__name__,
+            )
             raise ValueError(
                 f"Invalid time range: newest ({newest}) <= oldest ({oldest}). "
                 "Cannot compute temporal decay."
@@ -86,7 +112,24 @@ class TemporalRelevance(SearchOperation):
         scale_seconds = (newest - oldest).total_seconds()
 
         if scale_seconds <= 0:
+            await emitter.emit(
+                "recency_skipped",
+                {"reason": "zero_span"},
+                op_name=self.__class__.__name__,
+            )
             raise ValueError(f"Time span is zero or negative: {scale_seconds} seconds")
+
+        # Emit time span details
+        await emitter.emit(
+            "recency_span",
+            {
+                "field": self.DATETIME_FIELD,
+                "oldest": oldest.isoformat(),
+                "newest": newest.isoformat(),
+                "span_seconds": scale_seconds,
+            },
+            op_name=self.__class__.__name__,
+        )
 
         # Build decay config
         decay_config = DecayConfig(

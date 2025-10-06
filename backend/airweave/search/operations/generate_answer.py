@@ -5,7 +5,7 @@ Synthesizes information from multiple results into a coherent response
 with inline citations.
 """
 
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
@@ -13,6 +13,9 @@ from airweave.search.prompts import GENERATE_ANSWER_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class GenerateAnswer(SearchOperation):
@@ -29,7 +32,13 @@ class GenerateAnswer(SearchOperation):
         """Depends on retrieval and reranking to have results."""
         return ["Retrieval", "Reranking"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Generate natural language answer from results."""
         ctx.logger.debug("[GenerateAnswer] Generating natural language answer from results")
 
@@ -45,6 +54,13 @@ class GenerateAnswer(SearchOperation):
         if not isinstance(results, list):
             raise ValueError(f"Expected 'results' to be a list, got {type(results)}")
 
+        # Emit completion start
+        await emitter.emit(
+            "completion_start",
+            {"model": self.provider.model_spec.llm_model.name},
+            op_name=self.__class__.__name__,
+        )
+
         formatted_context, chosen_count = self._budget_and_format_results(results, context.query)
         ctx.logger.debug(
             f"[GenerateAnswer] number of results that fit in context window: {chosen_count}"
@@ -57,7 +73,6 @@ class GenerateAnswer(SearchOperation):
             {"role": "user", "content": context.query},
         ]
 
-        # Generate answer using provider
         try:
             completion = await self.provider.generate(messages)
         except Exception as e:
@@ -67,6 +82,13 @@ class GenerateAnswer(SearchOperation):
             raise RuntimeError("Provider returned empty completion")
 
         state["completion"] = completion
+
+        # Emit completion done
+        await emitter.emit(
+            "completion_done",
+            {"text": completion},
+            op_name=self.__class__.__name__,
+        )
 
     def _budget_and_format_results(self, results: List[Dict], query: str) -> tuple[str, int]:
         """Format results while respecting token budget."""

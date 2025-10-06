@@ -5,7 +5,7 @@ filters, and optional temporal decay. This is the core search operation that
 queries the vector database.
 """
 
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from airweave.api.context import ApiContext
 from airweave.platform.destinations.qdrant import QdrantDestination
@@ -13,6 +13,9 @@ from airweave.schemas.search import RetrievalStrategy
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class Retrieval(SearchOperation):
@@ -30,7 +33,13 @@ class Retrieval(SearchOperation):
         """Depends on operations that provide embeddings, filter, and decay config."""
         return ["QueryInterpretation", "EmbedQuery", "UserFilter", "TemporalRelevance"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Execute vector search against Qdrant."""
         ctx.logger.debug("[Retrieval] Executing search against Qdrant")
 
@@ -42,6 +51,19 @@ class Retrieval(SearchOperation):
 
         # Determine search method from strategy
         search_method = self._get_search_method()
+
+        # Emit vector search start
+        num_embeddings = len(dense_embeddings or sparse_embeddings or [])
+        await emitter.emit(
+            "vector_search_start",
+            {
+                "method": search_method,
+                "embeddings": num_embeddings,
+                "has_filter": bool(filter_dict),
+                "decay_weight": decay_config.weight if decay_config else None,
+            },
+            op_name=self.__class__.__name__,
+        )
 
         # Connect to Qdrant
         destination = await QdrantDestination.create(
@@ -76,14 +98,27 @@ class Retrieval(SearchOperation):
                 ctx,
             )
 
+        paginated_results = self._apply_pagination(raw_results)
+        final_count = len(paginated_results)
         if not has_reranking:
-            final_results = self._apply_pagination(raw_results)
+            final_results = paginated_results
         else:
             final_results = raw_results  # Pass all to reranking
 
         # Write to state
-        ctx.logger.debug(f"[Retrieval] results: {len(final_results)}")
+        ctx.logger.debug(f"[Retrieval] results: {final_count}")
         state["results"] = final_results
+
+        # Emit vector search done with stats
+        top_scores = [r.get("score", 0) for r in final_results[:3] if isinstance(r, dict)]
+        await emitter.emit(
+            "vector_search_done",
+            {
+                "final_count": final_count,
+                "top_scores": top_scores,
+            },
+            op_name=self.__class__.__name__,
+        )
 
     def _get_search_method(self) -> str:
         """Map RetrievalStrategy to Qdrant search method."""

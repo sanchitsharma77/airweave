@@ -103,7 +103,7 @@ async def stream_search_collection_advanced(  # noqa: C901 - streaming orchestra
             async with AsyncSessionLocal() as search_db:
                 await service.search(
                     request_id=request_id,
-                    readable_id=readable_id,
+                    readable_collection_id=readable_id,
                     search_request=search_request,
                     stream=True,
                     db=search_db,

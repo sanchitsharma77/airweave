@@ -4,7 +4,7 @@ Uses LLM to interpret natural language queries and extract structured Qdrant fil
 Enables users to filter results using natural language without knowing filter syntax.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,9 @@ from airweave.search.prompts import QUERY_INTERPRETATION_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class FilterCondition(BaseModel):
@@ -56,12 +59,29 @@ class QueryInterpretation(SearchOperation):
         """Depends on query expansion to get all query variations."""
         return ["QueryExpansion"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Extract filters from query using LLM."""
         ctx.logger.debug("[QueryInterpretation] Extracting filters from query")
 
         query = context.query
         expanded_queries = state.get("expanded_queries", [])
+
+        # Emit interpretation start
+        await emitter.emit(
+            "interpretation_start",
+            {
+                "model": self.provider.model_spec.llm_model.name
+                if self.provider.model_spec.llm_model
+                else None
+            },
+            op_name=self.__class__.__name__,
+        )
 
         # Discover available fields for this collection
         available_fields = await self._discover_fields(context.readable_collection_id, ctx)
@@ -86,6 +106,15 @@ class QueryInterpretation(SearchOperation):
         ctx.logger.debug(f"[QueryInterpretation] Confidence: {result.confidence}")
         if result.confidence < self.CONFIDENCE_THRESHOLD:
             # Low confidence - don't apply filters
+            await emitter.emit(
+                "interpretation_skipped",
+                {
+                    "reason": "confidence_below_threshold",
+                    "confidence": result.confidence,
+                    "threshold": self.CONFIDENCE_THRESHOLD,
+                },
+                op_name=self.__class__.__name__,
+            )
             return
 
         # Validate and map filter conditions
@@ -94,6 +123,14 @@ class QueryInterpretation(SearchOperation):
 
         if not validated_filters:
             # No valid filters to apply
+            await emitter.emit(
+                "interpretation_skipped",
+                {
+                    "reason": "no_valid_filters",
+                    "confidence": result.confidence,
+                },
+                op_name=self.__class__.__name__,
+            )
             return
 
         # Build Qdrant filter dict
@@ -102,6 +139,13 @@ class QueryInterpretation(SearchOperation):
 
         # Write to state (UserFilter will merge with this if it runs)
         state["filter"] = filter_dict
+
+        # Emit filter applied
+        await emitter.emit(
+            "filter_applied",
+            {"filter": filter_dict},
+            op_name=self.__class__.__name__,
+        )
 
     async def _discover_fields(
         self, collection_id: str, ctx: ApiContext

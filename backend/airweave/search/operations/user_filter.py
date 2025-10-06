@@ -5,7 +5,7 @@ from query interpretation. Responsible for creating the final filter that
 will be passed to the retrieval operation.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from qdrant_client.http.models import Filter as QdrantFilter
 
@@ -13,6 +13,9 @@ from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class UserFilter(SearchOperation):
@@ -35,7 +38,13 @@ class UserFilter(SearchOperation):
         """Depends on query interpretation (reads state["filter"] if it ran)."""
         return ["QueryInterpretation"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Merge user filter with extracted filter."""
         ctx.logger.debug("[UserFilter] Applying user filter")
 
@@ -51,8 +60,28 @@ class UserFilter(SearchOperation):
         merged_filter = self._merge_filters(user_filter_dict, existing_filter)
         ctx.logger.debug(f"[UserFilter] Merged filter: {merged_filter}")
 
+        # Emit filter merge event if both filters present
+        if existing_filter and user_filter_dict:
+            await emitter.emit(
+                "filter_merge",
+                {
+                    "existing": existing_filter,
+                    "user": user_filter_dict,
+                    "merged": merged_filter,
+                },
+                op_name=self.__class__.__name__,
+            )
+
         # Write final filter to state (overwrites QueryInterpretation's filter if present)
         state["filter"] = merged_filter
+
+        # Emit filter applied
+        if merged_filter:
+            await emitter.emit(
+                "filter_applied",
+                {"filter": merged_filter},
+                op_name=self.__class__.__name__,
+            )
 
     def _normalize_user_filter(self) -> Optional[Dict[str, Any]]:
         """Normalize user filter and map field names to Qdrant paths."""

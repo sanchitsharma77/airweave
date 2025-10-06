@@ -212,6 +212,11 @@ export interface RerankingDeltaEvent extends BaseEvent {
     rankings_snapshot: Array<{ index: number; relevance_score: number }>;
 }
 
+export interface RankingsEvent extends BaseEvent {
+    type: 'rankings';
+    rankings: Array<{ index: number; relevance_score: number }>;
+}
+
 export interface RerankingDoneEvent extends BaseEvent {
     type: 'reranking_done';
     rankings: Array<{ index: number; relevance_score: number }>;
@@ -268,6 +273,7 @@ export type SearchEvent =
     | RerankingStartEvent
     | RerankingReasonDeltaEvent
     | RerankingDeltaEvent
+    | RankingsEvent
     | RerankingDoneEvent
     | CompletionStartEvent
     | CompletionDeltaEvent

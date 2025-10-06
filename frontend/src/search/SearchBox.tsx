@@ -266,18 +266,15 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                     : `Toggle OFF, sending 0 (not null to avoid default 0.3)`
             });
 
-            // Build request body with all parameters
+            // Build request body with all parameters (matching new backend schema)
             const requestBody: any = {
                 query: query,
-                search_method: searchMethod,
-                expansion_strategy: toggles.queryExpansion ? "auto" : "no_expansion",
-                enable_query_interpretation: toggles.queryInterpretation,
-                recency_bias: recencyBiasToSend,  // Always a number, never null
-                enable_reranking: toggles.reRanking,
-                response_type: currentResponseType,
-                score_threshold: null,
-                limit: 100,
-                offset: 0
+                retrieval_strategy: searchMethod,  // Changed from search_method
+                expand_query: toggles.queryExpansion,  // Changed from expansion_strategy
+                interpret_filters: toggles.queryInterpretation,  // Changed from enable_query_interpretation
+                temporal_relevance: recencyBiasToSend,  // Changed from recency_bias
+                rerank: toggles.reRanking,  // Changed from enable_reranking
+                generate_answer: toggles.answer,  // Changed from response_type
             };
 
             // Add filter only if it's valid
@@ -372,14 +369,13 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                         case 'error': {
                             const endTime = performance.now();
                             const responseTime = Math.round(endTime - startTime);
-                            onSearch({ error: event.message || 'Streaming error', status: 0 }, currentResponseType, responseTime);
+                            onSearch({ error: event.message || 'Streaming error' }, currentResponseType, responseTime);
                             throw new Error(event.message || 'Streaming error');
                         }
                         case 'done': {
                             const endTime = performance.now();
                             const responseTime = Math.round(endTime - startTime);
                             const finalResponse = {
-                                status: 'success',
                                 completion: aggregatedCompletion || null,
                                 results: latestResults || [],
                                 responseTime,
@@ -409,8 +405,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                 const responseTime = Math.round(endTime - startTime);
                 console.error("Search stream failed:", error);
                 onSearch({
-                    error: error instanceof Error ? error.message : "An unexpected error occurred",
-                    status: 0
+                    error: error instanceof Error ? error.message : "An unexpected error occurred"
                 }, currentResponseType, responseTime);
             }
         } finally {

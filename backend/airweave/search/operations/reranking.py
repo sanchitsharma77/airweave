@@ -11,13 +11,16 @@ This operation:
   - Writes reordered list back to `state["results"]`
 """
 
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
 from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
+
+if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
 
 
 class Reranking(SearchOperation):
@@ -35,7 +38,13 @@ class Reranking(SearchOperation):
         """Depends on retrieval to have results to rerank."""
         return ["Retrieval"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+        emitter: "EventEmitter",
+    ) -> None:
         """Rerank results using the configured provider."""
         ctx.logger.debug("[Reranking] Reranking results")
 
@@ -61,11 +70,30 @@ class Reranking(SearchOperation):
                 "This indicates a bug in document extraction logic."
             )
 
+        # Emit reranking start
+        await emitter.emit(
+            "reranking_start",
+            {
+                "k": top_n,
+                "model": self.provider.model_spec.rerank_model.name
+                if self.provider.model_spec.rerank_model
+                else None,
+            },
+            op_name=self.__class__.__name__,
+        )
+
         rankings = await self.provider.rerank(context.query, documents, top_n)
         ctx.logger.debug(f"[Reranking] Rankings: {rankings}")
 
         if not isinstance(rankings, list) or not rankings:
             raise RuntimeError("Provider returned empty or invalid rankings")
+
+        # Emit rankings snapshot
+        await emitter.emit(
+            "rankings",
+            {"rankings": rankings},
+            op_name=self.__class__.__name__,
+        )
 
         # Apply rankings, then apply offset and limit to the reranked results
         reranked = self._apply_rankings(results, rankings, top_n)
@@ -78,6 +106,16 @@ class Reranking(SearchOperation):
         )
 
         state["results"] = paginated
+
+        # Emit reranking done
+        await emitter.emit(
+            "reranking_done",
+            {
+                "rankings": rankings,
+                "applied": bool(rankings),
+            },
+            op_name=self.__class__.__name__,
+        )
 
     def _prepare_inputs(
         self, context: SearchContext, results: List[dict], ctx: ApiContext
