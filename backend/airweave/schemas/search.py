@@ -79,8 +79,7 @@ class SearchResponse(BaseModel):
     )
     completion: Optional[str] = Field(
         description=(
-            "AI-generated natural language answer when response_type is 'completion'. This "
-            "provides natural language answers to your query based on the content found "
-            "across your connected data sources."
+            "This provides natural language answers to your query based on the content found "
+            "across your connected data sources when generate_answer is true."
         ),
     )
