@@ -4699,6 +4699,157 @@
         "title": "OrganizationCreate",
         "description": "Organization creation schema."
       },
+      "OrganizationMetrics": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id",
+            "description": "Organization ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Organization name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Organization description"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When organization was created"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Modified At",
+            "description": "Last modification time"
+          },
+          "auth0_org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth0 Org Id",
+            "description": "Auth0 organization ID"
+          },
+          "billing_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Plan",
+            "description": "Current billing plan (trial, starter, pro, enterprise)"
+          },
+          "billing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Status",
+            "description": "Billing status (active, cancelled, past_due, etc.)"
+          },
+          "stripe_customer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stripe Customer Id",
+            "description": "Stripe customer ID"
+          },
+          "trial_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Ends At",
+            "description": "When trial ends"
+          },
+          "user_count": {
+            "type": "integer",
+            "title": "User Count",
+            "description": "Number of users in organization",
+            "default": 0
+          },
+          "source_connection_count": {
+            "type": "integer",
+            "title": "Source Connection Count",
+            "description": "Number of source connections (from Usage.source_connections)",
+            "default": 0
+          },
+          "entity_count": {
+            "type": "integer",
+            "title": "Entity Count",
+            "description": "Total number of entities (from Usage.entities)",
+            "default": 0
+          },
+          "query_count": {
+            "type": "integer",
+            "title": "Query Count",
+            "description": "Total number of queries (from Usage.queries)",
+            "default": 0
+          },
+          "is_member": {
+            "type": "boolean",
+            "title": "Is Member",
+            "description": "Whether the current admin user is already a member",
+            "default": false
+          },
+          "member_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Role",
+            "description": "Admin's role in this organization (if member)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "modified_at"
+        ],
+        "title": "OrganizationMetrics",
+        "description": "Comprehensive organization metrics for admin dashboard.\n\nCombines organization info with billing and usage metrics from the Usage model."
+      },
       "OrganizationWithRole": {
         "properties": {
           "id": {
@@ -7884,6 +8035,11 @@
             },
             "type": "array",
             "title": "User Organizations"
+          },
+          "is_admin": {
+            "type": "boolean",
+            "title": "Is Admin",
+            "default": false
           }
         },
         "type": "object",
