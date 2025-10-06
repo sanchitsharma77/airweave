@@ -27,6 +27,7 @@ class SearchContext(BaseModel):
 
     request_id: str = Field()
     collection_id: UUID = Field()
+    readable_collection_id: str = Field()
     stream: bool = Field()
 
     query: str = Field()

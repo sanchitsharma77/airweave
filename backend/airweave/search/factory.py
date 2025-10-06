@@ -47,6 +47,7 @@ class SearchFactory:
         self,
         request_id: str,
         collection_id: UUID,
+        readable_collection_id: str,
         search_request: SearchRequest,
         stream: bool,
         ctx: ApiContext,
@@ -109,6 +110,7 @@ class SearchFactory:
             # Metadata
             request_id=request_id,
             collection_id=collection_id,
+            readable_collection_id=readable_collection_id,
             stream=stream,
             # Shared static data
             query=search_request.query,

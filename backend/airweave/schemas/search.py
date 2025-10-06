@@ -21,35 +21,37 @@ class SearchRequest(BaseModel):
     query: str = Field(description="The search query text")
 
     retrieval_strategy: Optional[RetrievalStrategy] = Field(
-        description="The retrieval strategy to use"
+        default=None, description="The retrieval strategy to use"
     )
     filter: Optional[QdrantFilter] = Field(
-        description="Qdrant native filter for metadata-based filtering"
+        default=None, description="Qdrant native filter for metadata-based filtering"
     )
-    offset: Optional[int] = Field(description="Number of results to skip")
-    limit: Optional[int] = Field(description="Maximum number of results to return")
+    offset: Optional[int] = Field(default=None, description="Number of results to skip")
+    limit: Optional[int] = Field(default=None, description="Maximum number of results to return")
 
     temporal_relevance: Optional[float] = Field(
+        default=None,
         description=(
             "Weight recent content higher than older content; "
             "0 = no recency effect, 1 = only recent items matter"
-        )
+        ),
     )
 
     expand_query: Optional[bool] = Field(
-        description="Generate a few query variations to improve recall"
+        default=None, description="Generate a few query variations to improve recall"
     )
     interpret_filters: Optional[bool] = Field(
-        description="Extract structured filters from natural-language query"
+        default=None, description="Extract structured filters from natural-language query"
     )
     rerank: Optional[bool] = Field(
+        default=None,
         description=(
             "Reorder the top candidate results for improved relevance. "
             "Max number of results that can be reranked is capped to around 1000."
-        )
+        ),
     )
     generate_answer: Optional[bool] = Field(
-        description="Generate a natural-language answer to the query"
+        default=None, description="Generate a natural-language answer to the query"
     )
 
 
@@ -80,5 +82,5 @@ class SearchResponse(BaseModel):
             "AI-generated natural language answer when response_type is 'completion'. This "
             "provides natural language answers to your query based on the content found "
             "across your connected data sources."
-        )
+        ),
     )

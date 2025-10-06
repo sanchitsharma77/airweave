@@ -50,8 +50,7 @@ class QueryExpansion(SearchOperation):
         query = context.query
 
         # Validate query length before sending to LLM
-        self._validate_query_length(query)
-        ctx.logger.debug(f"[QueryExpansion] Query length validated: {len(query)} tokens")
+        self._validate_query_length(query, ctx)
 
         # Build prompts
         system_prompt = QUERY_EXPANSION_SYSTEM_PROMPT.format(max_expansions=self.MAX_EXPANSIONS)
@@ -81,7 +80,7 @@ class QueryExpansion(SearchOperation):
         # Write alternatives to state (original query remains in context.query)
         state["expanded_queries"] = valid_alternatives
 
-    def _validate_query_length(self, query: str) -> None:
+    def _validate_query_length(self, query: str, ctx: ApiContext) -> None:
         """Validate query fits in provider's context window."""
         # Get LLM tokenizer from provider
         tokenizer = getattr(self.provider, "llm_tokenizer", None)
@@ -93,6 +92,7 @@ class QueryExpansion(SearchOperation):
             )
 
         token_count = self.provider.count_tokens(query, tokenizer)
+        ctx.logger.debug(f"[QueryExpansion] Token count: {token_count}")
 
         # Estimate prompt overhead: system prompt ~500 tokens, structured output ~500 tokens
         prompt_overhead = 1000

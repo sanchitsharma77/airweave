@@ -28,6 +28,10 @@ class DecayConfig(BaseModel):
     midpoint: float
     weight: float
 
+    def get_scale_seconds(self) -> float:
+        """Get scale in seconds for decay calculation."""
+        return self.scale_seconds
+
 
 class TemporalRelevance(SearchOperation):
     """Compute dynamic temporal decay configuration for recency-aware search."""

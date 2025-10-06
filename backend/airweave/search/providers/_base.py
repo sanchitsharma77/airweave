@@ -36,7 +36,6 @@ class BaseProvider(ABC):
         if text is None:
             return 0
         token_count = len(tokenizer.encode(text))
-        self.ctx.logger.debug(f"[BaseProvider] Text: {text}")
         self.ctx.logger.debug(f"[BaseProvider] Token count: {token_count}")
         return token_count
 

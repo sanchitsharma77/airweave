@@ -49,7 +49,11 @@ class Reranking(SearchOperation):
             state["results"] = []
             return
 
-        documents, top_n = self._prepare_inputs(context, results)
+        # Get offset and limit from retrieval operation
+        offset = context.retrieval.offset
+        limit = context.retrieval.limit
+
+        documents, top_n = self._prepare_inputs(context, results, ctx)
 
         if not documents:
             raise RuntimeError(
@@ -63,9 +67,21 @@ class Reranking(SearchOperation):
         if not isinstance(rankings, list) or not rankings:
             raise RuntimeError("Provider returned empty or invalid rankings")
 
-        state["results"] = self._apply_rankings(results, rankings, top_n)
+        # Apply rankings, then apply offset and limit to the reranked results
+        reranked = self._apply_rankings(results, rankings, top_n)
 
-    def _prepare_inputs(self, context: SearchContext, results: List[dict]) -> tuple[List[str], int]:
+        # Apply pagination after reranking to ensure consistent offset behavior
+        paginated = self._apply_pagination(reranked, offset, limit)
+        ctx.logger.debug(
+            f"[Reranking] Reranked {len(results)} -> {len(reranked)} -> "
+            f"{len(paginated)} after offset={offset}, limit={limit}"
+        )
+
+        state["results"] = paginated
+
+    def _prepare_inputs(
+        self, context: SearchContext, results: List[dict], ctx: ApiContext
+    ) -> tuple[List[str], int]:
         """Prepare documents for reranking."""
         if not results:
             return [], 0
@@ -82,10 +98,15 @@ class Reranking(SearchOperation):
             results_to_rerank = results
 
         documents = self._prepare_documents(results_to_rerank)
-        limit = getattr(context.retrieval, "limit", len(results))
-        top_n = min(len(documents), limit)
+
+        offset = context.retrieval.offset
+        limit = context.retrieval.limit
+        top_n = min(len(documents), offset + limit)
+
         if top_n < 1:
             raise ValueError("Computed top_n < 1 for reranking")
+
+        ctx.logger.debug(f"[Reranking] top_n={top_n} (offset={offset}, limit={limit})")
         return documents, top_n
 
     def _prepare_documents(self, results: List[dict]) -> List[str]:
@@ -155,3 +176,15 @@ class Reranking(SearchOperation):
                 raise IndexError("Ranking index out of bounds")
             indices.append(idx)
         return indices
+
+    def _apply_pagination(self, results: List[dict], offset: int, limit: int) -> List[dict]:
+        """Apply offset and limit to reranked results."""
+        # Apply offset
+        if offset > 0:
+            results = results[offset:] if offset < len(results) else []
+
+        # Apply limit
+        if len(results) > limit:
+            results = results[:limit]
+
+        return results

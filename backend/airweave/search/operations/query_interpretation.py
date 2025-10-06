@@ -64,12 +64,10 @@ class QueryInterpretation(SearchOperation):
         expanded_queries = state.get("expanded_queries", [])
 
         # Discover available fields for this collection
-        available_fields = await self._discover_fields(context.collection_id)
-        ctx.logger.debug(f"[QueryInterpretation] Available fields: {available_fields}")
+        available_fields = await self._discover_fields(context.readable_collection_id, ctx)
 
         # Build prompts
         system_prompt = self._build_system_prompt(available_fields)
-        ctx.logger.debug(f"[QueryInterpretation] System prompt: {system_prompt}")
         user_prompt = self._build_user_prompt(query, expanded_queries)
 
         # Validate prompt length
@@ -85,8 +83,8 @@ class QueryInterpretation(SearchOperation):
         )
 
         # Check confidence threshold
+        ctx.logger.debug(f"[QueryInterpretation] Confidence: {result.confidence}")
         if result.confidence < self.CONFIDENCE_THRESHOLD:
-            ctx.logger.debug(f"[QueryInterpretation] Low confidence: {result.confidence}")
             # Low confidence - don't apply filters
             return
 
@@ -105,7 +103,9 @@ class QueryInterpretation(SearchOperation):
         # Write to state (UserFilter will merge with this if it runs)
         state["filter"] = filter_dict
 
-    async def _discover_fields(self, collection_id: str) -> Dict[str, Dict[str, str]]:
+    async def _discover_fields(
+        self, collection_id: str, ctx: ApiContext
+    ) -> Dict[str, Dict[str, str]]:
         """Discover available fields from collection's entity definitions."""
         from airweave import schemas
         from airweave.platform.locator import resource_locator
@@ -114,20 +114,23 @@ class QueryInterpretation(SearchOperation):
 
         async with get_db_context() as db:
             # Get source connections for this collection
-            source_connections = await crud.source_connection.get_multi_by_collection(
-                db, collection_id=collection_id
+            source_connections = await crud.source_connection.get_for_collection(
+                db, readable_collection_id=collection_id, ctx=ctx
             )
 
             if not source_connections:
                 raise ValueError(f"No source connections found for collection {collection_id}")
 
-            # Get fields for each source
-            for conn in source_connections:
+            # Get unique short_names to avoid duplicate field discovery
+            unique_short_names = {conn.short_name for conn in source_connections}
+
+            # Get fields for each unique source
+            for short_name in unique_short_names:
                 # Skip PostgreSQL - doesn't support query interpretation
-                if conn.short_name == "postgresql":
+                if short_name == "postgresql":
                     continue
 
-                source = await crud.source.get_by_short_name(db, short_name=conn.short_name)
+                source = await crud.source.get_by_short_name(db, short_name=short_name)
                 if not source:
                     continue
 
@@ -135,12 +138,12 @@ class QueryInterpretation(SearchOperation):
 
                 if not source_fields:
                     raise ValueError(
-                        f"No fields discovered for source '{source.name}'. "
+                        f"No fields discovered for source '{short_name}'. "
                         f"Cannot perform query interpretation."
                     )
 
-                fields[source.name] = source_fields
-                fields[source.short_name] = {}  # Allow both name formats
+                # Store as "short_name (Display Name)" so LLM uses short_name in filter values
+                fields[f"{short_name} ({source.name})"] = source_fields
 
         if not fields:
             raise ValueError(

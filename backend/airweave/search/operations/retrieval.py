@@ -48,37 +48,38 @@ class Retrieval(SearchOperation):
             collection_id=context.collection_id, logger=None
         )
 
-        # Execute search (single vs bulk have different pagination strategies)
+        has_reranking = context.reranking is not None
         is_bulk = len(dense_embeddings or sparse_embeddings) > 1
 
         if is_bulk:
             ctx.logger.debug("[Retrieval] Executing bulk search")
-            # Multiple queries - deduplicate then paginate
-            results = await self._execute_bulk_search(
+            raw_results = await self._execute_bulk_search(
                 destination,
                 dense_embeddings,
                 sparse_embeddings,
                 filter_dict,
                 decay_config,
                 search_method,
-                context,
+                has_reranking,
                 ctx,
             )
-            # Apply offset and limit after deduplication
-            final_results = self._apply_pagination(results)
         else:
             ctx.logger.debug("[Retrieval] Executing single search")
-            # Single query - Qdrant handles offset, we just fetch limit
-            final_results = await self._execute_single_search(
+            raw_results = await self._execute_single_search(
                 destination,
                 dense_embeddings,
                 sparse_embeddings,
                 filter_dict,
                 decay_config,
                 search_method,
-                context,
+                has_reranking,
                 ctx,
             )
+
+        if not has_reranking:
+            final_results = self._apply_pagination(raw_results)
+        else:
+            final_results = raw_results  # Pass all to reranking
 
         # Write to state
         ctx.logger.debug(f"[Retrieval] results: {len(final_results)}")
@@ -113,25 +114,22 @@ class Retrieval(SearchOperation):
         filter_dict: dict,
         decay_config: Any,
         search_method: str,
-        context: SearchContext,
+        has_reranking: bool,
         ctx: ApiContext,
     ) -> List[Dict]:
-        """Execute single query search - Qdrant handles offset."""
+        """Execute single query search - always fetch from offset 0."""
         query_vector = dense_embeddings[0] if dense_embeddings else None
         sparse_vector = sparse_embeddings[0] if sparse_embeddings else None
 
-        # Calculate limit (Qdrant handles offset, so don't include it)
-        fetch_limit = self._calculate_fetch_limit(
-            has_reranking=context.reranking is not None,
-            include_offset=False,
-        )
+        # Calculate fetch limit (include offset+limit to get all needed candidates)
+        fetch_limit = self._calculate_fetch_limit(has_reranking, include_offset=True)
 
         ctx.logger.debug(f"[Retrieval] Fetch limit: {fetch_limit}")
 
         results = await destination.search(
             query_vector=query_vector,
             limit=fetch_limit,
-            offset=self.offset,  # Qdrant handles offset efficiently
+            offset=0,  # Always fetch from beginning
             with_payload=True,
             filter=filter_dict,
             sparse_vector=sparse_vector,
@@ -141,10 +139,6 @@ class Retrieval(SearchOperation):
 
         if not isinstance(results, list):
             raise RuntimeError(f"Expected list of results, got {type(results)}")
-
-        # If reranking, apply limit (Qdrant gave us extra candidates)
-        if context.reranking is not None and len(results) > self.limit:
-            results = results[: self.limit]
 
         return results
 
@@ -156,15 +150,12 @@ class Retrieval(SearchOperation):
         filter_dict: dict,
         decay_config: Any,
         search_method: str,
-        context: SearchContext,
+        has_reranking: bool,
         ctx: ApiContext,
     ) -> List[Dict]:
-        """Execute bulk search - offset applied after deduplication."""
-        # Calculate limit (include offset since we apply it manually)
-        fetch_limit = self._calculate_fetch_limit(
-            has_reranking=context.reranking is not None,
-            include_offset=True,
-        )
+        """Execute bulk search - returns deduplicated results."""
+        # Calculate limit (include offset since we apply it after deduplication)
+        fetch_limit = self._calculate_fetch_limit(has_reranking, include_offset=True)
         ctx.logger.debug(f"[Retrieval] Fetch limit: {fetch_limit}")
 
         num_queries = len(dense_embeddings or sparse_embeddings)
@@ -183,7 +174,7 @@ class Retrieval(SearchOperation):
         if not isinstance(results, list):
             raise RuntimeError(f"Expected list of results, got {type(results)}")
 
-        # Deduplicate results
+        # Deduplicate results (bulk search returns overlapping results from multiple queries)
         deduplicated = self._deduplicate_results(results)
 
         return deduplicated

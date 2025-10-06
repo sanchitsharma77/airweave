@@ -40,7 +40,9 @@ class SearchService:
             raise NotFoundException(detail=f"Collection '{readable_collection_id}' not found")
 
         ctx.logger.debug("Building search context")
-        search_context = factory.build(request_id, collection.id, search_request, stream, ctx)
+        search_context = factory.build(
+            request_id, collection.id, readable_collection_id, search_request, stream, ctx
+        )
 
         ctx.logger.debug("Executing search")
         response = await orchestrator.run(ctx, search_context)
