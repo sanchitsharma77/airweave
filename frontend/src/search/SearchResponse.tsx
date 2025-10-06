@@ -32,6 +32,7 @@ import { CollapsibleCard } from '@/components/ui/CollapsibleCard';
 import { FiLayers, FiFilter, FiSliders, FiList, FiClock, FiGitMerge, FiType } from "react-icons/fi";
 import { ChartScatter } from 'lucide-react';
 import type { SearchEvent } from '@/search/types';
+import { EntityResultCard } from './EntityResultCard';
 
 interface SearchResponseProps {
     searchResponse: any;
@@ -1679,33 +1680,18 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                         </div>
                                     ) : (
                                         <div className={cn(
-                                            DESIGN_SYSTEM.spacing.padding.compact,
+                                            "px-4 py-3 space-y-4",
                                             DESIGN_SYSTEM.typography.sizes.label
-                                        )} ref={jsonViewerRef}>
-                                            <JsonViewer
-                                                value={results}
-                                                theme={isDark ? "dark" : "light"}
-                                                style={{
-                                                    fontSize: '0.62rem',
-                                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-                                                }}
-                                                rootName={false}
-                                                displayDataTypes={false}
-                                                enableClipboard={false}
-                                                quotesOnKeys={false}
-                                                indentWidth={2}
-                                                collapseStringsAfterLength={100}
-                                                groupArraysAfterLength={100}
-                                                defaultInspectDepth={10}
-                                                defaultInspectControl={(path, value) => {
-                                                    // Collapse airweave_system_metadata by default
-                                                    if (path.includes('airweave_system_metadata')) {
-                                                        return false;
-                                                    }
-                                                    // Expand all other nodes by default for better entity visibility
-                                                    return true;
-                                                }}
-                                            />
+                                        )}>
+                                            {results.map((result: any, index: number) => (
+                                                <EntityResultCard
+                                                    key={result.payload?.entity_id || result.id || index}
+                                                    result={result}
+                                                    index={index}
+                                                    isDark={isDark}
+                                                    onEntityIdClick={handleEntityClick}
+                                                />
+                                            ))}
                                         </div>
                                     )}
                                 </div>
