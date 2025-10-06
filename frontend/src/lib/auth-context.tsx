@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import authConfig from '../config/auth';
+import { apiClient } from './api';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -33,6 +34,8 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(null);
   const [tokenInitialized, setTokenInitialized] = useState(false);
+  const [enrichedUser, setEnrichedUser] = useState<any>(null);
+  const [userProfileLoading, setUserProfileLoading] = useState(false);
 
   // Use Auth0 hooks if enabled, otherwise simulate with local state
   const {
@@ -46,8 +49,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Default to Auth0 values, but override if auth is disabled
   const isAuthenticated = authConfig.authEnabled ? auth0IsAuthenticated : true;
-  const isLoading = authConfig.authEnabled ? (auth0IsLoading || !tokenInitialized) : false;
-  const user = authConfig.authEnabled ? auth0User : { name: 'Developer', email: 'dev@example.com' };
+  const isLoading = authConfig.authEnabled ? (auth0IsLoading || !tokenInitialized || userProfileLoading) : false;
+  const user = authConfig.authEnabled ? (enrichedUser || auth0User) : { name: 'Developer', email: 'dev@example.com', is_admin: false };
 
   // Get the token when authenticated
   useEffect(() => {
@@ -84,6 +87,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     getAccessToken();
   }, [auth0IsAuthenticated, auth0IsLoading, getAccessTokenSilently]);
 
+  // Fetch user profile from backend after auth is complete
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (authConfig.authEnabled && auth0IsAuthenticated && tokenInitialized && auth0User && !enrichedUser) {
+        try {
+          setUserProfileLoading(true);
+          const response = await apiClient.get('/users/');
+
+          if (response.ok) {
+            const backendUser = await response.json();
+            // Merge Auth0 user with backend user data
+            setEnrichedUser({
+              ...auth0User,
+              is_admin: backendUser.is_admin || false,
+              id: backendUser.id,
+              // Add any other backend fields you want to include
+            });
+            console.log('User profile enriched with backend data', { is_admin: backendUser.is_admin });
+          } else {
+            console.error('Failed to fetch user profile from backend:', response.status);
+            // Fallback to Auth0 user without backend data
+            setEnrichedUser({
+              ...auth0User,
+              is_admin: false,
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching user profile:', error);
+          // Fallback to Auth0 user without backend data
+          setEnrichedUser({
+            ...auth0User,
+            is_admin: false,
+          });
+        } finally {
+          setUserProfileLoading(false);
+        }
+      } else if (!authConfig.authEnabled) {
+        // For dev mode, set a mock user with admin rights
+        setEnrichedUser({ name: 'Developer', email: 'dev@example.com', is_admin: true });
+      }
+    };
+
+    fetchUserProfile();
+  }, [auth0IsAuthenticated, tokenInitialized, auth0User, enrichedUser]);
+
   // Login function
   const login = () => {
     if (authConfig.authEnabled) {
@@ -93,8 +141,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Logout function
   const logout = () => {
-    // Clear the token when logging out
+    // Clear the token and enriched user when logging out
     setToken(null);
+    setEnrichedUser(null);
 
     if (authConfig.authEnabled) {
       auth0Logout({

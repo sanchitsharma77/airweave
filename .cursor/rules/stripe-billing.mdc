@@ -1,4 +1,5 @@
-globs: **/billing/**,**/integrations/stripe_client.py,**/api/**/endpoints/billing.py,**/schemas/**billing*.py,**/schemas/billing_period.py,**/schemas/usage.py,**/models/**billing*.py,**/frontend/src/pages/Onboarding.tsx,**/frontend/src/components/**/Billing*.tsx
+---
+globs: **/billing/**
 alwaysApply: false
 ---
 ## Airweave Stripe Billing Rules

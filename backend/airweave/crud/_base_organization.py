@@ -317,6 +317,10 @@ class CRUDBaseOrganization(Generic[ModelType, CreateSchemaType, UpdateSchemaType
             PermissionException: If auth context does not have access to organization.
         """
         if ctx.has_user_context:
+            # Admin users bypass organization access validation
+            if ctx.user.is_admin:
+                return
+
             if organization_id not in [org.organization.id for org in ctx.user.user_organizations]:
                 raise PermissionException("User does not have access to organization")
         else:

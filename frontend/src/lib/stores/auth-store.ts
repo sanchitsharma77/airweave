@@ -7,6 +7,7 @@ interface User {
   name: string;
   picture?: string;
   auth0_id: string;
+  is_admin?: boolean;
 }
 
 interface AuthState {
