@@ -58,6 +58,7 @@ class SearchFactory:
 
         offset = search_request.offset if search_request.offset is not None else defaults.offset
         limit = search_request.limit if search_request.limit is not None else defaults.limit
+
         # Validate numeric ranges
         if offset < 0:
             raise HTTPException(status_code=422, detail="offset must be >= 0")

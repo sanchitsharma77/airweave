@@ -5,60 +5,158 @@ time range of the (optionally filtered) collection. This enables recency-aware
 ranking that respects the dataset's time distribution.
 """
 
-from typing import Any, List
+from datetime import datetime
+from typing import Any, List, Optional
 
+from pydantic import BaseModel
+from qdrant_client.http import models as rest
+
+from airweave.platform.destinations.qdrant import QdrantDestination
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
 
 
+class DecayConfig(BaseModel):
+    """Configuration for time-based decay in Qdrant queries."""
+
+    decay_type: str  # "linear", "exponential", "gaussian"
+    datetime_field: str
+    target_datetime: datetime
+    scale_seconds: float
+    midpoint: float
+    weight: float
+
+
 class TemporalRelevance(SearchOperation):
-    """Compute dynamic temporal decay configuration for recency-aware search.
+    """Compute dynamic temporal decay configuration for recency-aware search."""
 
-    Configuration (from init):
-        - weight: float - Recency bias weight (0-1)
-
-    Input (from state):
-        - filter: dict - Final merged filter from UserFilter (to respect filtered timespan)
-
-    Output (to state):
-        - decay_config: dict - Decay configuration for Qdrant formula queries
-                        Contains: datetime_field, target_datetime, scale_seconds, weight, decay_type
-    """
+    DATETIME_FIELD = "airweave_system_metadata.airweave_updated_at"
+    DECAY_TYPE = "linear"
+    MIDPOINT = 0.5
 
     def __init__(self, weight: float) -> None:
-        """Initialize with temporal relevance weight.
-
-        Args:
-            weight: Weight for recency bias (0-1), where 0 = no recency effect,
-                1 = only recent items matter
-        """
+        """Initialize with temporal relevance weight."""
         self.weight = weight
 
     def depends_on(self) -> List[str]:
-        """Depends on filter operations (reads from UserFilter or QueryInterpretation)."""
+        """Depends on filter operations."""
         return ["QueryInterpretation", "UserFilter"]
 
     async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
-        """Compute decay configuration from collection timestamps.
+        """Compute decay configuration from collection timestamps."""
+        # Get filter from state if available (respects filtered timespan)
+        filter_dict = state.get("filter")
+        qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
 
-        Args:
-            context: Search context with collection_id
-            state: State dictionary to read filter and write decay_config
+        # Connect to Qdrant
+        destination = await QdrantDestination.create(
+            collection_id=context.collection_id, logger=None
+        )
 
-        Process:
-            1. Read final filter from state (if any)
-            2. Connect to Qdrant destination for collection
-            3. Query oldest/newest timestamps using ordered scrolls (respecting filter)
-            4. Compute scale_seconds from observed time span
-            5. Build decay config with linear decay from newest to oldest
-            6. Write decay_config dict to state for Retrieval to use
-        """
-        # TODO: Implement dynamic decay computation
-        # - Create QdrantDestination for collection
-        # - Use airweave_system_metadata.airweave_updated_at as datetime field
-        # - Fetch min/max timestamps with scroll + order_by
-        # - Calculate scale_seconds as full span (oldest to newest)
-        # - Use newest item time as decay target (not current time)
-        # - Create decay config dict with all parameters
-        state["decay_config"] = None  # Placeholder until implemented
+        # Get oldest and newest timestamps
+        oldest, newest = await self._get_min_max_timestamps(
+            destination, str(context.collection_id), qdrant_filter
+        )
+
+        if not oldest or not newest:
+            raise ValueError(
+                "Could not determine time range for temporal relevance. "
+                "Collection might be empty or have no valid timestamps."
+            )
+
+        if newest <= oldest:
+            raise ValueError(
+                f"Invalid time range: newest ({newest}) <= oldest ({oldest}). "
+                "Cannot compute temporal decay."
+            )
+
+        # Calculate scale as full time span for linear decay
+        scale_seconds = (newest - oldest).total_seconds()
+
+        if scale_seconds <= 0:
+            raise ValueError(f"Time span is zero or negative: {scale_seconds} seconds")
+
+        # Build decay config
+        decay_config = DecayConfig(
+            decay_type=self.DECAY_TYPE,
+            datetime_field=self.DATETIME_FIELD,
+            target_datetime=newest,  # Use newest item time, not current time
+            scale_seconds=scale_seconds,
+            midpoint=self.MIDPOINT,
+            weight=self.weight,
+        )
+
+        # Write to state
+        state["decay_config"] = decay_config
+
+    def _convert_to_qdrant_filter(self, filter_dict: Optional[dict]) -> Optional[rest.Filter]:
+        """Convert filter dict to Qdrant Filter object."""
+        if not filter_dict:
+            return None
+
+        try:
+            return rest.Filter.model_validate(filter_dict)
+        except Exception as e:
+            raise ValueError(f"Invalid filter format for Qdrant: {e}") from e
+
+    async def _get_min_max_timestamps(
+        self,
+        destination: QdrantDestination,
+        collection_id: str,
+        qdrant_filter: Optional[rest.Filter],
+    ) -> tuple[Optional[datetime], Optional[datetime]]:
+        """Fetch oldest and newest timestamps using ordered scrolls."""
+        # Get oldest
+        oldest_points = await destination.client.scroll(
+            collection_name=collection_id,
+            limit=1,
+            with_payload=[self.DATETIME_FIELD],
+            order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="asc"),
+            scroll_filter=qdrant_filter,
+        )
+
+        # Get newest
+        newest_points = await destination.client.scroll(
+            collection_name=collection_id,
+            limit=1,
+            with_payload=[self.DATETIME_FIELD],
+            order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="desc"),
+            scroll_filter=qdrant_filter,
+        )
+
+        oldest = self._extract_datetime(oldest_points)
+        newest = self._extract_datetime(newest_points)
+
+        return oldest, newest
+
+    def _extract_datetime(self, scroll_result: tuple) -> Optional[datetime]:
+        """Extract datetime from Qdrant scroll result."""
+        if not scroll_result or not scroll_result[0]:
+            return None
+
+        point = scroll_result[0][0]
+        if not point or not hasattr(point, "payload"):
+            return None
+
+        # Navigate nested path: airweave_system_metadata.airweave_updated_at
+        payload = point.payload
+        parts = self.DATETIME_FIELD.split(".")
+
+        value = payload
+        for part in parts:
+            if isinstance(value, dict):
+                value = value.get(part)
+            else:
+                return None
+
+        # Parse datetime
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        elif isinstance(value, datetime):
+            return value
+
+        return None

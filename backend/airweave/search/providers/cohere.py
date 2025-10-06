@@ -4,7 +4,7 @@ Supports reranking using Cohere's specialized rerank API.
 Does not support text generation, structured output, or embeddings.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     import cohere
@@ -12,6 +12,7 @@ except ImportError:
     cohere = None
 
 from pydantic import BaseModel
+from tiktoken import Encoding
 
 from ._base import BaseProvider
 from .schemas import ProviderModelSpec
@@ -32,10 +33,12 @@ class CohereProvider(BaseProvider):
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Cohere client: {e}") from e
 
-    def count_tokens(self, text: str, model_type: str = "llm") -> int:
-        """Estimate token count (approximate for Cohere models)."""
-        # Cohere doesn't expose tokenizer, use approximation: 4 chars ≈ 1 token
-        raise NotImplementedError("Cohere does not support token counting")
+        self.rerank_tokenizer: Optional[Encoding] = None
+
+        if model_spec.rerank_model and model_spec.rerank_model.tokenizer:
+            self.rerank_tokenizer = self._load_tokenizer(
+                model_spec.rerank_model.tokenizer, "rerank"
+            )
 
     async def generate(self, messages: List[Dict[str, str]]) -> str:
         """Not supported by Cohere."""
@@ -51,7 +54,7 @@ class CohereProvider(BaseProvider):
         """Not supported by Cohere."""
         raise NotImplementedError("Cohere does not support embeddings")
 
-    async def rerank(self, query: str, documents: List[str], top_n: int) -> List[Dict[str, Any]]:
+    async def rerank(self, query: str, documents: List[str], top_n: int) -> List[Dict[str, Any]]:  # noqa: C901
         """Rerank documents using Cohere Rerank API."""
         if not self.model_spec.rerank_model:
             raise RuntimeError("Rerank model not configured for Cohere provider")
@@ -74,7 +77,7 @@ class CohereProvider(BaseProvider):
 
         # Validate document token counts before sending
         for i, doc in enumerate(documents):
-            token_count = self.count_tokens(doc)
+            token_count = self.count_tokens(doc, self.rerank_tokenizer)
             if token_count > max_tokens_per_doc:
                 raise ValueError(
                     f"Document at index {i} has ~{token_count} tokens, "
@@ -83,13 +86,18 @@ class CohereProvider(BaseProvider):
                 )
 
         # Limit documents to API maximum
-        documents_to_send = documents[:max_documents]
+        if len(documents) > max_documents:
+            raise ValueError(
+                f"Document list has {len(documents)} documents, "
+                f"exceeds Cohere limit of {max_documents}. "
+                f"Reduce candidates before calling rerank."
+            )
 
         try:
             response = await self.client.rerank(
                 model=self.model_spec.rerank_model.name,
                 query=query,
-                documents=documents_to_send,
+                documents=documents,
                 top_n=top_n,
                 max_tokens_per_doc=max_tokens_per_doc,
             )

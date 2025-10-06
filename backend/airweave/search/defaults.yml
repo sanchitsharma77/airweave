@@ -53,7 +53,8 @@ provider_models:
     embedding: null
     rerank:
       name: "rerank-v3.5"
-      max_tokens_per_doc: 4096
+      tokenizer: "cl100k_base"
+      max_tokens_per_doc: 8191
       max_documents: 1000
 
 # Operation preferences - which provider and which models to use

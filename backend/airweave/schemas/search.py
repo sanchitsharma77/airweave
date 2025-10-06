@@ -40,7 +40,10 @@ class SearchRequest(BaseModel):
         description="Generate a few query variations to improve recall"
     )
     rerank: Optional[bool] = Field(
-        description="Reorder the top candidate results for improved relevance"
+        description=(
+            "Reorder the top candidate results for improved relevance. "
+            "Max number of results that can be reranked is capped to around 1000."
+        )
     )
     interpret_filters: Optional[bool] = Field(
         description="Extract structured filters from natural-language query"
