@@ -16,58 +16,72 @@ interface EntityResultCardProps {
 }
 
 /**
- * Parse embeddable text to extract structured information
- * Looks for patterns like "* type: Page", "* Context: ...", etc.
+ * Format embeddable text for nice Markdown display
+ * Extracts metadata fields and preserves content markdown structure
  */
-const parseEmbeddableText = (text: string) => {
-    const lines = text.split('\n');
-    const structured: Record<string, string> = {};
-    const remainingContent: string[] = [];
-    let inContentSection = false;
+const formatEmbeddableText = (text: string): string => {
+    if (!text) return '';
+
+    // Detect if single-line format (multiple " * " on same line)
+    const hasNewlines = text.includes('\n');
+    const asteriskCount = (text.match(/\s\*\s/g) || []).length;
+
+    let normalized = text;
+
+    // Convert single-line to multi-line for easier parsing
+    if (asteriskCount > 2 && (!hasNewlines || text.split('\n').length < 3)) {
+        normalized = text.replace(/\s\*\s/g, '\n* ');
+    }
+
+    const lines = normalized.split('\n');
+    const fields: { key: string; value: string }[] = [];
+    const contentLines: string[] = [];
+    let inContent = false;
 
     for (const line of lines) {
         const trimmed = line.trim();
+        if (!trimmed) continue;
 
-        // Match patterns like "* key: value" or "* key value"
-        const match = trimmed.match(/^\*\s+([^:]+):\s*(.+)$/);
-        if (match && !inContentSection) {
-            const [, key, value] = match;
-            const normalizedKey = key.toLowerCase().trim();
+        // Match metadata fields: "* field_name: value"
+        const fieldMatch = trimmed.match(/^\*\s+([a-zA-Z_\s]+):\s*(.+)$/);
 
-            // Store structured fields
-            if (['type', 'source', 'context', 'title', 'name'].includes(normalizedKey)) {
-                structured[normalizedKey] = value.trim();
-            } else {
-                // Once we hit non-standard fields, consider it content
-                inContentSection = true;
-                remainingContent.push(line);
-            }
-        } else if (trimmed.startsWith('* ') && !inContentSection) {
-            // Handle "* name value" format (without colon)
-            const parts = trimmed.substring(2).split(/\s+/);
-            if (parts.length >= 2) {
-                const key = parts[0].toLowerCase();
-                const value = parts.slice(1).join(' ');
-                if (['type', 'source', 'context', 'title', 'name'].includes(key)) {
-                    structured[key] = value;
-                } else {
-                    inContentSection = true;
-                    remainingContent.push(line);
+        if (fieldMatch && !inContent) {
+            const [, key, value] = fieldMatch;
+            const lowerKey = key.toLowerCase().trim();
+
+            // Check if this is a "content" field - everything after is actual content
+            if (lowerKey === 'content') {
+                inContent = true;
+                // The value after "content:" is the start of actual content
+                if (value.trim()) {
+                    contentLines.push(value.trim());
                 }
+            } else {
+                // Regular metadata field
+                fields.push({ key, value: value.trim() });
             }
-        } else {
-            // Regular content
-            inContentSection = true;
-            if (trimmed) {
-                remainingContent.push(line);
-            }
+        } else if (inContent) {
+            // We're in the content section - preserve everything as-is
+            contentLines.push(trimmed);
         }
     }
 
-    return {
-        structured,
-        content: remainingContent.join('\n').trim()
-    };
+    // Format the metadata fields
+    let result = '';
+    for (const { key, value } of fields) {
+        const formattedKey = key.trim()
+            .split(/[\s_]+/)
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+        result += `**${formattedKey}:** ${value}\n\n`;
+    }
+
+    // Add the content section if present
+    if (contentLines.length > 0) {
+        result += contentLines.join('\n');
+    }
+
+    return result.trim();
 };
 
 /**
@@ -79,6 +93,8 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
     isDark,
     onEntityIdClick
 }) => {
+    const [isPropertiesExpanded, setIsPropertiesExpanded] = useState(false);
+    const [isPreviewExpanded, setIsPreviewExpanded] = useState(true); // Expanded by default
     const [isMetadataExpanded, setIsMetadataExpanded] = useState(false);
     const [isContentExpanded, setIsContentExpanded] = useState(false);
     const [isRawExpanded, setIsRawExpanded] = useState(false);
@@ -123,17 +139,33 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
     const url = payload.url;
     const mdContent = payload.md_content;
 
-    // Parse embeddable text for structured information
-    const { structured, content } = useMemo(() => parseEmbeddableText(embeddableText), [embeddableText]);
+    // Format embeddable text for display
+    // Prefer actual content field (with proper formatting) over embeddable_text content
+    const formattedContent = useMemo(() => {
+        const formatted = formatEmbeddableText(embeddableText);
 
-    // Extract title from structured data or fallback
-    const title = structured.title || structured.name || payload.md_title || payload.title || payload.name || 'Untitled';
-    const entityType = structured.type || 'Document';
-    const context = structured.context || (breadcrumbs.length > 0 ? breadcrumbs.map((b: any) =>
+        // If we have a separate content field with better formatting, use it instead of extracted content
+        if (payload.content && payload.content.trim()) {
+            // Extract just the metadata fields from formatted embeddable text
+            const metadataLines = formatted.split('\n').filter(line => line.startsWith('**') && line.includes(':'));
+
+            // Combine metadata with the properly formatted content
+            if (metadataLines.length > 0) {
+                return metadataLines.join('\n') + '\n\n' + payload.content;
+            }
+        }
+
+        return formatted;
+    }, [embeddableText, payload.content]);
+
+    // Extract title and metadata from payload (not from embeddable_text)
+    const title = payload.md_title || payload.title || payload.name || 'Untitled';
+    const entityType = payload.airweave_system_metadata?.entity_type?.replace('Entity', '').replace(/([A-Z])/g, ' $1').trim() || 'Document';
+    const context = breadcrumbs.length > 0 ? breadcrumbs.map((b: any) =>
         typeof b === 'string' ? b : b.name || b.title || ''
-    ).filter(Boolean).join(' > ') : '');
+    ).filter(Boolean).join(' > ') : '';
 
-    // Get Airweave logo based on theme
+    // Get Airweave logo for section headers
     const airweaveLogo = isDark
         ? '/airweave-logo-svg-white-darkbg.svg'
         : '/airweave-logo-svg-lightbg-blacklogo.svg';
@@ -320,7 +352,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
     return (
         <div
             className={cn(
-                "group relative rounded-xl transition-all duration-300 overflow-hidden",
+                "group relative rounded-xl transition-all duration-300 overflow-hidden raw-data-scrollbar",
                 isDark
                     ? "bg-gradient-to-br from-gray-900/90 to-gray-900/50 border border-gray-800/50 hover:border-gray-700/70 hover:shadow-2xl hover:shadow-blue-900/10"
                     : "bg-white border border-gray-200/60 hover:border-gray-300/80 hover:shadow-lg hover:shadow-gray-200/50",
@@ -336,15 +368,21 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     {/* Title with Icon */}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-start gap-3">
-                            {/* Clean Airweave Logo - no overlay */}
-                            <div className={cn(
-                                "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden",
-                                isDark ? "bg-gray-800/50" : "bg-gray-50"
-                            )}>
+                            {/* Source Icon */}
+                            <div
+                                className={cn(
+                                    "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden",
+                                    isDark ? "bg-gray-800/50" : "bg-gray-50"
+                                )}
+                                title={formattedSourceName}
+                            >
                                 <img
-                                    src={airweaveLogo}
-                                    alt="Airweave"
-                                    className="w-full h-full object-contain p-1.5 opacity-40"
+                                    src={sourceIconUrl}
+                                    alt={formattedSourceName}
+                                    className="w-full h-full object-contain p-1.5"
+                                    onError={(e) => {
+                                        e.currentTarget.style.display = 'none';
+                                    }}
                                 />
                             </div>
                             <div className="flex-1 min-w-0 pt-0.5">
@@ -357,36 +395,14 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
 
                                 {/* Context and Type */}
                                 <div className="flex flex-wrap items-center gap-2 mb-2">
-                                    {/* Source Icon Badge */}
+                                    {/* Source Badge */}
                                     <span className={cn(
-                                        "inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium",
+                                        "inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium",
                                         isDark
-                                            ? "bg-gray-800/40 border border-gray-700/40"
-                                            : "bg-gray-50/60 border border-gray-200/50"
+                                            ? "bg-gray-800/40 border border-gray-700/40 text-gray-400"
+                                            : "bg-gray-50/60 border border-gray-200/50 text-gray-600"
                                     )}>
-                                        <div className="w-4 h-4 rounded-sm overflow-hidden flex items-center justify-center flex-shrink-0">
-                                            <img
-                                                src={sourceIconUrl}
-                                                alt={formattedSourceName}
-                                                className="w-full h-full object-contain"
-                                                onError={(e) => {
-                                                    // Fallback to first letter if icon fails
-                                                    const target = e.target as HTMLImageElement;
-                                                    target.style.display = 'none';
-                                                    const parent = target.parentElement;
-                                                    if (parent) {
-                                                        parent.classList.add(isDark ? 'bg-gray-700' : 'bg-gray-200');
-                                                        parent.innerHTML = `<span class="text-[9px] font-semibold ${isDark ? 'text-gray-300' : 'text-gray-600'}">${formattedSourceName.charAt(0)}</span>`;
-                                                    }
-                                                }}
-                                            />
-                                        </div>
-                                        <span className={cn(
-                                            "text-[11px]",
-                                            isDark ? "text-gray-400" : "text-gray-600"
-                                        )}>
-                                            {formattedSourceName}
-                                        </span>
+                                        {formattedSourceName}
                                     </span>
 
                                     {context && (
@@ -431,297 +447,394 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     </div>
 
                     {/* Top-right badges: Result number + Score */}
-                    <div className="flex flex-col items-end gap-2">
-                        {/* Result Number Badge */}
+                    <div className="flex flex-col items-end gap-1.5">
+                        {/* Result Number Badge - Clean and minimal */}
                         <div className={cn(
-                            "flex-shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold font-mono",
+                            "flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide",
                             isDark
-                                ? "bg-gray-800/60 text-gray-400 border border-gray-700/50"
-                                : "bg-gray-100 text-gray-500 border border-gray-200/60"
+                                ? "bg-gray-800/80 text-gray-300 border border-gray-700/60 shadow-sm"
+                                : "bg-white text-gray-600 border border-gray-200 shadow-sm"
                         )}>
                             #{index + 1}
                         </div>
 
-                        {/* Score Badge */}
+                        {/* Score Badge - Modern with icon and better visual hierarchy */}
                         {scoreDisplay && (
                             <div
                                 className={cn(
-                                    "flex-shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold font-mono whitespace-nowrap transition-colors cursor-help",
-                                    // Green for high scores
+                                    "flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-200 cursor-help shadow-sm hover:shadow-md",
+                                    // Green for high scores - vibrant and clean
                                     scoreDisplay.color === 'green' && (
                                         isDark
-                                            ? "bg-green-950/40 text-green-400 border border-green-900/50"
-                                            : "bg-green-50 text-green-700 border border-green-200/60"
+                                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20"
+                                            : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
                                     ),
-                                    // Yellow for medium scores
+                                    // Yellow for medium scores - warm and inviting
                                     scoreDisplay.color === 'yellow' && (
                                         isDark
-                                            ? "bg-yellow-950/40 text-yellow-400 border border-yellow-900/50"
-                                            : "bg-yellow-50 text-yellow-700 border border-yellow-200/60"
+                                            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
+                                            : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
                                     ),
-                                    // Gray for low scores
+                                    // Gray for low scores - subtle and professional
                                     scoreDisplay.color === 'gray' && (
                                         isDark
-                                            ? "bg-gray-800/60 text-gray-400 border border-gray-700/50"
-                                            : "bg-gray-100 text-gray-600 border border-gray-300/60"
+                                            ? "bg-gray-700/40 text-gray-400 border border-gray-600/50 hover:bg-gray-700/50"
+                                            : "bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-150"
                                     )
                                 )}
                                 title={
                                     isNormalizedScore
-                                        ? `Similarity score: ${score.toFixed(4)} (${score >= 0.7 ? 'Excellent' : score >= 0.5 ? 'Good' : 'Fair'} match)`
-                                        : `Relevance score: ${score.toFixed(3)}`
+                                        ? `Vector similarity: ${score.toFixed(4)} (${score >= 0.7 ? 'Excellent' : score >= 0.5 ? 'Good' : 'Fair'} match)\n\nNote: Results are reordered by AI to prioritize topical relevance. The position may differ from similarity scores.`
+                                        : `Search score: ${score.toFixed(3)}\n\nNote: Results are reordered by AI to prioritize topical relevance.`
                                 }
                             >
-                                {scoreDisplay.value}
+                                {/* Sparkle icon for high scores, target for others */}
+                                <svg
+                                    className={cn(
+                                        "w-3 h-3 flex-shrink-0",
+                                        scoreDisplay.color === 'green' && "opacity-80"
+                                    )}
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                >
+                                    {scoreDisplay.color === 'green' ? (
+                                        // Sparkle icon for high scores
+                                        <>
+                                            <path d="M12 3v18" />
+                                            <path d="M3 12h18" />
+                                            <path d="m19 19-2.5-2.5" />
+                                            <path d="m19 5-2.5 2.5" />
+                                            <path d="m5 19 2.5-2.5" />
+                                            <path d="m5 5 2.5 2.5" />
+                                        </>
+                                    ) : (
+                                        // Target/bullseye icon for medium/low scores
+                                        <>
+                                            <circle cx="12" cy="12" r="10" />
+                                            <circle cx="12" cy="12" r="6" />
+                                            <circle cx="12" cy="12" r="2" />
+                                        </>
+                                    )}
+                                </svg>
+                                <span className="font-mono tracking-tight">{scoreDisplay.value}</span>
                             </div>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* Important Metadata Fields - Always visible (max 4) */}
-            {Object.keys(importantMetadata).length > 0 && (
+            {/* Main Content - Formatted embeddable text - Collapsible */}
+            {formattedContent && (
                 <div className={cn(
-                    "px-5 py-4",
-                    isDark ? "bg-gray-900/20 border-y border-gray-800/50" : "bg-gray-50/50 border-y border-gray-100"
+                    "border-t",
+                    isDark ? "border-gray-800/50" : "border-gray-100"
                 )}>
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-                        {Object.entries(importantMetadata).map(([key, value]) => {
-                            const { displayValue, needsTruncation, isDate } = formatFieldValue(value, key);
-                            const isExpanded = expandedFields.has(key);
+                    {/* Section Header - Clickable */}
+                    <button
+                        onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
+                        className={cn(
+                            "w-full px-5 py-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
+                            isDark
+                                ? "text-gray-500 hover:text-gray-400 hover:bg-gray-900/30"
+                                : "text-gray-500 hover:text-gray-600 hover:bg-gray-50/50"
+                        )}
+                    >
+                        {isPreviewExpanded ? (
+                            <ChevronDown className="h-3 w-3" />
+                        ) : (
+                            <ChevronRight className="h-3 w-3" />
+                        )}
+                        {/* Airweave Icon */}
+                        <div className="w-3.5 h-3.5 rounded-sm overflow-hidden flex items-center justify-center flex-shrink-0 opacity-60">
+                            <img
+                                src={airweaveLogo}
+                                alt="Airweave"
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+                        Preview
+                    </button>
 
-                            return (
-                                <div key={key} className="flex flex-col gap-1.5">
-                                    <div className="flex items-start gap-3">
-                                        <span className={cn(
-                                            "text-[11px] font-semibold uppercase tracking-wider min-w-[90px] pt-0.5",
-                                            isDark ? "text-gray-500" : "text-gray-500"
-                                        )}>
-                                            {key}
-                                        </span>
-                                        <span className={cn(
-                                            "text-[13px] break-words flex-1 leading-relaxed",
-                                            isDate && "inline-flex items-center gap-1.5",
-                                            isDark ? "text-gray-200" : "text-gray-700"
-                                        )}>
-                                            {isDate && <Clock className="h-3.5 w-3.5 opacity-60 flex-shrink-0" />}
-                                            {displayValue}
-                                        </span>
-                                    </div>
-                                    {needsTruncation && (
-                                        <button
-                                            onClick={() => toggleFieldExpansion(key)}
-                                            className={cn(
-                                                "text-[11px] font-medium self-start ml-[90px] transition-all duration-200 hover:translate-x-0.5",
-                                                isDark
-                                                    ? "text-blue-400 hover:text-blue-300"
-                                                    : "text-blue-600 hover:text-blue-700"
-                                            )}
+                    {isPreviewExpanded && (
+                        <div className={cn(
+                            "px-5 pb-4",
+                            isDark ? "text-gray-200" : "text-gray-800"
+                        )}>
+                            <div className="relative">
+                                <button
+                                    onClick={() => handleCopy(formattedContent, 'content')}
+                                    className={cn(
+                                        "absolute top-0 right-0 p-1.5 rounded-lg transition-all duration-200 z-10",
+                                        isDark
+                                            ? "hover:bg-gray-800/80 text-gray-400 hover:text-gray-300"
+                                            : "hover:bg-gray-100 text-gray-600 hover:text-gray-700"
+                                    )}
+                                    title="Copy content"
+                                >
+                                    {copiedField === 'content' ? (
+                                        <Check className="h-3.5 w-3.5" />
+                                    ) : (
+                                        <Copy className="h-3.5 w-3.5" />
+                                    )}
+                                </button>
+
+                                {/* Container for content with truncation */}
+                                <div className="relative">
+                                    <div className={cn(
+                                        !isContentExpanded && formattedContent.length > 500 && "max-h-[200px] overflow-hidden"
+                                    )}>
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm]}
+                                            components={{
+                                                h1: ({ node, ...props }) => <h1 className="text-base font-bold mt-4 mb-2 first:mt-0" {...props} />,
+                                                h2: ({ node, ...props }) => <h2 className="text-sm font-bold mt-3 mb-2 first:mt-0" {...props} />,
+                                                h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-3 mb-1.5 first:mt-0" {...props} />,
+                                                p: ({ node, ...props }) => <p className="text-[13px] leading-relaxed mb-2" {...props} />,
+                                                ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-2 space-y-1 text-[13px]" {...props} />,
+                                                ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-2 space-y-1 text-[13px]" {...props} />,
+                                                li: ({ node, ...props }) => <li className="text-[13px] leading-relaxed" {...props} />,
+                                                blockquote: ({ node, ...props }) => (
+                                                    <blockquote className={cn(
+                                                        "border-l-4 pl-3 my-2 italic text-[13px]",
+                                                        isDark ? "border-gray-600 text-gray-400" : "border-gray-300 text-gray-600"
+                                                    )} {...props} />
+                                                ),
+                                                code(props) {
+                                                    const { children, className, node, ...rest } = props;
+                                                    const match = /language-(\w+)/.exec(className || '');
+                                                    return match ? (
+                                                        <SyntaxHighlighter
+                                                            language={match[1]}
+                                                            style={syntaxStyle}
+                                                            customStyle={{
+                                                                margin: '0.5rem 0',
+                                                                borderRadius: '0.375rem',
+                                                                fontSize: '0.75rem',
+                                                                padding: '0.75rem',
+                                                                background: isDark ? 'rgba(17, 24, 39, 0.8)' : 'rgba(249, 250, 251, 0.95)'
+                                                            }}
+                                                        >
+                                                            {String(children).replace(/\n$/, '')}
+                                                        </SyntaxHighlighter>
+                                                    ) : (
+                                                        <code className={cn(
+                                                            "px-1.5 py-0.5 rounded text-[11px] font-mono",
+                                                            isDark
+                                                                ? "bg-gray-800 text-gray-300"
+                                                                : "bg-gray-100 text-gray-800"
+                                                        )} {...rest}>
+                                                            {children}
+                                                        </code>
+                                                    );
+                                                },
+                                                strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
+                                                em: ({ node, ...props }) => <em className="italic" {...props} />,
+                                            }}
                                         >
-                                            {isExpanded ? '← Show Less' : 'Show More →'}
-                                        </button>
+                                            {formattedContent}
+                                        </ReactMarkdown>
+                                    </div>
+
+                                    {/* Fade overlay when content is truncated */}
+                                    {!isContentExpanded && formattedContent.length > 500 && (
+                                        <div className={cn(
+                                            "absolute bottom-0 left-0 right-0 h-16 pointer-events-none",
+                                            isDark
+                                                ? "bg-gradient-to-t from-gray-900 to-transparent"
+                                                : "bg-gradient-to-t from-white to-transparent"
+                                        )} />
                                     )}
                                 </div>
-                            );
-                        })}
-                    </div>
 
-                    {/* Show More/Less Button for Additional Metadata */}
-                    {hasRemainingMetadata && (
-                        <>
-                            <button
-                                onClick={() => setIsMetadataExpanded(!isMetadataExpanded)}
-                                className={cn(
-                                    "mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-200",
-                                    isDark
-                                        ? "text-blue-400 hover:text-blue-300 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-900/50"
-                                        : "text-blue-600 hover:text-blue-700 bg-blue-50/50 hover:bg-blue-50 border border-blue-200/60"
+                                {/* Show More/Less button for long content */}
+                                {formattedContent.length > 500 && (
+                                    <button
+                                        onClick={() => setIsContentExpanded(!isContentExpanded)}
+                                        className={cn(
+                                            "mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-200",
+                                            isDark
+                                                ? "text-blue-400 hover:text-blue-300 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-900/50"
+                                                : "text-blue-600 hover:text-blue-700 bg-blue-50/50 hover:bg-blue-50 border border-blue-200/60"
+                                        )}
+                                    >
+                                        {isContentExpanded ? (
+                                            <>
+                                                <ChevronDown className="h-3.5 w-3.5" />
+                                                Show Less
+                                            </>
+                                        ) : (
+                                            <>
+                                                <ChevronRight className="h-3.5 w-3.5" />
+                                                Show Full Content
+                                            </>
+                                        )}
+                                    </button>
                                 )}
-                            >
-                                {isMetadataExpanded ? (
-                                    <>
-                                        <ChevronDown className="h-3.5 w-3.5" />
-                                        Show Less
-                                    </>
-                                ) : (
-                                    <>
-                                        <ChevronRight className="h-3.5 w-3.5" />
-                                        {Object.keys(remainingMetadata).length} More Field{Object.keys(remainingMetadata).length !== 1 ? 's' : ''}
-                                    </>
-                                )}
-                            </button>
-
-                            {/* Additional Metadata - Collapsible */}
-                            {isMetadataExpanded && (
-                                <div className={cn(
-                                    "grid grid-cols-2 gap-x-8 gap-y-4 mt-4 pt-4",
-                                    isDark ? "border-t border-gray-800/50" : "border-t border-gray-200/50"
-                                )}>
-                                    {Object.entries(remainingMetadata).map(([key, value]) => {
-                                        const { displayValue, needsTruncation, isDate } = formatFieldValue(value, key);
-                                        const isExpanded = expandedFields.has(key);
-
-                                        return (
-                                            <div key={key} className="flex flex-col gap-1.5">
-                                                <div className="flex items-start gap-3">
-                                                    <span className={cn(
-                                                        "text-[11px] font-semibold uppercase tracking-wider min-w-[90px] pt-0.5",
-                                                        isDark ? "text-gray-500" : "text-gray-500"
-                                                    )}>
-                                                        {key}
-                                                    </span>
-                                                    <span className={cn(
-                                                        "text-[13px] break-words flex-1 leading-relaxed",
-                                                        isDate && "inline-flex items-center gap-1.5",
-                                                        isDark ? "text-gray-200" : "text-gray-700"
-                                                    )}>
-                                                        {isDate && <Clock className="h-3.5 w-3.5 opacity-60 flex-shrink-0" />}
-                                                        {displayValue}
-                                                    </span>
-                                                </div>
-                                                {needsTruncation && (
-                                                    <button
-                                                        onClick={() => toggleFieldExpansion(key)}
-                                                        className={cn(
-                                                            "text-[11px] font-medium self-start ml-[90px] transition-all duration-200 hover:translate-x-0.5",
-                                                            isDark
-                                                                ? "text-blue-400 hover:text-blue-300"
-                                                                : "text-blue-600 hover:text-blue-700"
-                                                        )}
-                                                    >
-                                                        {isExpanded ? '← Show Less' : 'Show More →'}
-                                                    </button>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
 
-            {/* Main Content - Parsed content from embeddable text */}
-            {content && (
+            {/* Important Metadata Fields - Collapsible */}
+            {Object.keys(importantMetadata).length > 0 && (
                 <div className={cn(
-                    "px-5 py-4",
-                    isDark ? "text-gray-200" : "text-gray-800"
+                    "border-t",
+                    isDark ? "border-gray-800/50" : "border-gray-100"
                 )}>
-                    <div className="relative">
-                        <button
-                            onClick={() => handleCopy(content, 'content')}
-                            className={cn(
-                                "absolute top-0 right-0 p-1.5 rounded-lg transition-all duration-200 z-10",
-                                isDark
-                                    ? "hover:bg-gray-800/80 text-gray-400 hover:text-gray-300"
-                                    : "hover:bg-gray-100 text-gray-600 hover:text-gray-700"
-                            )}
-                            title="Copy content"
-                        >
-                            {copiedField === 'content' ? (
-                                <Check className="h-3.5 w-3.5" />
-                            ) : (
-                                <Copy className="h-3.5 w-3.5" />
-                            )}
-                        </button>
+                    {/* Section Header - Clickable */}
+                    <button
+                        onClick={() => setIsPropertiesExpanded(!isPropertiesExpanded)}
+                        className={cn(
+                            "w-full px-5 py-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
+                            isDark
+                                ? "text-gray-500 hover:text-gray-400 hover:bg-gray-900/30"
+                                : "text-gray-500 hover:text-gray-600 hover:bg-gray-50/50"
+                        )}
+                    >
+                        {isPropertiesExpanded ? (
+                            <ChevronDown className="h-3 w-3" />
+                        ) : (
+                            <ChevronRight className="h-3 w-3" />
+                        )}
+                        {/* Airweave Icon */}
+                        <div className="w-3.5 h-3.5 rounded-sm overflow-hidden flex items-center justify-center flex-shrink-0 opacity-60">
+                            <img
+                                src={airweaveLogo}
+                                alt="Airweave"
+                                className="w-full h-full object-contain"
+                            />
+                        </div>
+                        Properties
+                    </button>
 
-                        {/* Container for content with truncation */}
-                        <div className="relative">
-                            <div className={cn(
-                                !isContentExpanded && content.length > 500 && "max-h-[200px] overflow-hidden"
-                            )}>
-                                <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    components={{
-                                        h1: ({ node, ...props }) => <h1 className="text-base font-bold mt-4 mb-2 first:mt-0" {...props} />,
-                                        h2: ({ node, ...props }) => <h2 className="text-sm font-bold mt-3 mb-2 first:mt-0" {...props} />,
-                                        h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-3 mb-1.5 first:mt-0" {...props} />,
-                                        p: ({ node, ...props }) => <p className="text-[13px] leading-relaxed mb-2" {...props} />,
-                                        ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-2 space-y-1 text-[13px]" {...props} />,
-                                        ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-2 space-y-1 text-[13px]" {...props} />,
-                                        li: ({ node, ...props }) => <li className="text-[13px] leading-relaxed" {...props} />,
-                                        blockquote: ({ node, ...props }) => (
-                                            <blockquote className={cn(
-                                                "border-l-4 pl-3 my-2 italic text-[13px]",
-                                                isDark ? "border-gray-600 text-gray-400" : "border-gray-300 text-gray-600"
-                                            )} {...props} />
-                                        ),
-                                        code(props) {
-                                            const { children, className, node, ...rest } = props;
-                                            const match = /language-(\w+)/.exec(className || '');
-                                            return match ? (
-                                                <SyntaxHighlighter
-                                                    language={match[1]}
-                                                    style={syntaxStyle}
-                                                    customStyle={{
-                                                        margin: '0.5rem 0',
-                                                        borderRadius: '0.375rem',
-                                                        fontSize: '0.75rem',
-                                                        padding: '0.75rem',
-                                                        background: isDark ? 'rgba(17, 24, 39, 0.8)' : 'rgba(249, 250, 251, 0.95)'
-                                                    }}
+                    {isPropertiesExpanded && (
+                        <div className={cn(
+                            "px-5 pb-3",
+                            isDark ? "bg-gray-900/20" : "bg-gray-50/50"
+                        )}>
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
+                                {Object.entries(importantMetadata).map(([key, value]) => {
+                                    const { displayValue, needsTruncation, isDate } = formatFieldValue(value, key);
+                                    const isExpanded = expandedFields.has(key);
+
+                                    return (
+                                        <div key={key} className="flex flex-col gap-1">
+                                            <div className="flex items-start gap-2.5">
+                                                <span className={cn(
+                                                    "text-[10px] font-semibold uppercase tracking-wider min-w-[80px] pt-0.5",
+                                                    isDark ? "text-gray-500" : "text-gray-500"
+                                                )}>
+                                                    {key}
+                                                </span>
+                                                <span className={cn(
+                                                    "text-[12px] break-words flex-1 leading-snug",
+                                                    isDate && "inline-flex items-center gap-1.5",
+                                                    isDark ? "text-gray-300" : "text-gray-700"
+                                                )}>
+                                                    {isDate && <Clock className="h-3 w-3 opacity-60 flex-shrink-0" />}
+                                                    {displayValue}
+                                                </span>
+                                            </div>
+                                            {needsTruncation && (
+                                                <button
+                                                    onClick={() => toggleFieldExpansion(key)}
+                                                    className={cn(
+                                                        "text-[10px] font-medium self-start ml-[80px] transition-all duration-200 hover:translate-x-0.5",
+                                                        isDark
+                                                            ? "text-blue-400 hover:text-blue-300"
+                                                            : "text-blue-600 hover:text-blue-700"
+                                                    )}
                                                 >
-                                                    {String(children).replace(/\n$/, '')}
-                                                </SyntaxHighlighter>
-                                            ) : (
-                                                <code className={cn(
-                                                    "px-1.5 py-0.5 rounded text-[11px] font-mono",
-                                                    isDark
-                                                        ? "bg-gray-800 text-gray-300"
-                                                        : "bg-gray-100 text-gray-800"
-                                                )} {...rest}>
-                                                    {children}
-                                                </code>
-                                            );
-                                        },
-                                        strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
-                                        em: ({ node, ...props }) => <em className="italic" {...props} />,
-                                    }}
-                                >
-                                    {content}
-                                </ReactMarkdown>
+                                                    {isExpanded ? '← Show Less' : 'Show More →'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
 
-                            {/* Fade overlay when content is truncated */}
-                            {!isContentExpanded && content.length > 500 && (
-                                <div className={cn(
-                                    "absolute bottom-0 left-0 right-0 h-16 pointer-events-none",
-                                    isDark
-                                        ? "bg-gradient-to-t from-gray-900 to-transparent"
-                                        : "bg-gradient-to-t from-white to-transparent"
-                                )} />
+                            {/* Show More/Less Button for Additional Metadata */}
+                            {hasRemainingMetadata && (
+                                <>
+                                    <button
+                                        onClick={() => setIsMetadataExpanded(!isMetadataExpanded)}
+                                        className={cn(
+                                            "mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-200",
+                                            isDark
+                                                ? "text-blue-400 hover:text-blue-300 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-900/50"
+                                                : "text-blue-600 hover:text-blue-700 bg-blue-50/50 hover:bg-blue-50 border border-blue-200/60"
+                                        )}
+                                    >
+                                        {isMetadataExpanded ? (
+                                            <>
+                                                <ChevronDown className="h-3.5 w-3.5" />
+                                                Show Less
+                                            </>
+                                        ) : (
+                                            <>
+                                                <ChevronRight className="h-3.5 w-3.5" />
+                                                {Object.keys(remainingMetadata).length} More Field{Object.keys(remainingMetadata).length !== 1 ? 's' : ''}
+                                            </>
+                                        )}
+                                    </button>
+
+                                    {/* Additional Metadata - Collapsible */}
+                                    {isMetadataExpanded && (
+                                        <div className={cn(
+                                            "grid grid-cols-2 gap-x-6 gap-y-2.5 mt-3 pt-3",
+                                            isDark ? "border-t border-gray-800/50" : "border-t border-gray-200/50"
+                                        )}>
+                                            {Object.entries(remainingMetadata).map(([key, value]) => {
+                                                const { displayValue, needsTruncation, isDate } = formatFieldValue(value, key);
+                                                const isExpanded = expandedFields.has(key);
+
+                                                return (
+                                                    <div key={key} className="flex flex-col gap-1">
+                                                        <div className="flex items-start gap-2.5">
+                                                            <span className={cn(
+                                                                "text-[10px] font-semibold uppercase tracking-wider min-w-[80px] pt-0.5",
+                                                                isDark ? "text-gray-500" : "text-gray-500"
+                                                            )}>
+                                                                {key}
+                                                            </span>
+                                                            <span className={cn(
+                                                                "text-[12px] break-words flex-1 leading-snug",
+                                                                isDate && "inline-flex items-center gap-1.5",
+                                                                isDark ? "text-gray-300" : "text-gray-700"
+                                                            )}>
+                                                                {isDate && <Clock className="h-3 w-3 opacity-60 flex-shrink-0" />}
+                                                                {displayValue}
+                                                            </span>
+                                                        </div>
+                                                        {needsTruncation && (
+                                                            <button
+                                                                onClick={() => toggleFieldExpansion(key)}
+                                                                className={cn(
+                                                                    "text-[10px] font-medium self-start ml-[80px] transition-all duration-200 hover:translate-x-0.5",
+                                                                    isDark
+                                                                        ? "text-blue-400 hover:text-blue-300"
+                                                                        : "text-blue-600 hover:text-blue-700"
+                                                                )}
+                                                            >
+                                                                {isExpanded ? '← Show Less' : 'Show More →'}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
-
-                        {/* Show More/Less button for long content */}
-                        {content.length > 500 && (
-                            <button
-                                onClick={() => setIsContentExpanded(!isContentExpanded)}
-                                className={cn(
-                                    "mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all duration-200",
-                                    isDark
-                                        ? "text-blue-400 hover:text-blue-300 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-900/50"
-                                        : "text-blue-600 hover:text-blue-700 bg-blue-50/50 hover:bg-blue-50 border border-blue-200/60"
-                                )}
-                            >
-                                {isContentExpanded ? (
-                                    <>
-                                        <ChevronDown className="h-3.5 w-3.5" />
-                                        Show Less
-                                    </>
-                                ) : (
-                                    <>
-                                        <ChevronRight className="h-3.5 w-3.5" />
-                                        Show Full Content
-                                    </>
-                                )}
-                            </button>
-                        )}
-                    </div>
+                    )}
                 </div>
             )}
-
 
             {/* Raw JSON View - Collapsible (for debugging) */}
             <div className={cn(
@@ -742,33 +855,60 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     ) : (
                         <ChevronRight className="h-3 w-3" />
                     )}
+                    {/* Airweave Icon */}
+                    <div className="w-3.5 h-3.5 rounded-sm overflow-hidden flex items-center justify-center flex-shrink-0 opacity-60">
+                        <img
+                            src={airweaveLogo}
+                            alt="Airweave"
+                            className="w-full h-full object-contain"
+                        />
+                    </div>
                     View Raw Data
                 </button>
 
                 {isRawExpanded && (
                     <div className="px-4 pb-3">
-                        <div className="relative">
+                        {/* Copy button header - outside scrollable area */}
+                        <div className={cn(
+                            "flex items-center justify-end px-3 py-2 rounded-t-lg border-b",
+                            isDark
+                                ? "bg-gray-900/40 border-gray-800/60"
+                                : "bg-gray-50/80 border-gray-200/60"
+                        )}>
                             <button
                                 onClick={() => handleCopy(JSON.stringify(payload, null, 2), 'raw')}
                                 className={cn(
-                                    "absolute top-2 right-2 p-1 rounded transition-colors z-10",
+                                    "flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-all duration-200",
                                     isDark
-                                        ? "hover:bg-gray-800 text-gray-400"
-                                        : "hover:bg-gray-100 text-gray-600"
+                                        ? "hover:bg-gray-800 text-gray-400 hover:text-gray-300"
+                                        : "hover:bg-gray-100 text-gray-600 hover:text-gray-700"
                                 )}
                             >
                                 {copiedField === 'raw' ? (
-                                    <Check className="h-3 w-3" />
+                                    <>
+                                        <Check className="h-3 w-3" />
+                                        <span>Copied!</span>
+                                    </>
                                 ) : (
-                                    <Copy className="h-3 w-3" />
+                                    <>
+                                        <Copy className="h-3 w-3" />
+                                        <span>Copy</span>
+                                    </>
                                 )}
                             </button>
+                        </div>
+                        {/* Scrollable code area with custom scrollbar */}
+                        <div className={cn(
+                            "rounded-b-lg overflow-hidden",
+                            // Custom scrollbar styles
+                            "raw-data-scrollbar"
+                        )}>
                             <SyntaxHighlighter
                                 language="json"
                                 style={syntaxStyle}
                                 customStyle={{
                                     margin: 0,
-                                    borderRadius: '0.375rem',
+                                    borderRadius: 0,
                                     fontSize: '0.65rem',
                                     padding: '0.75rem',
                                     background: isDark ? 'rgba(17, 24, 39, 0.8)' : 'rgba(249, 250, 251, 0.95)',

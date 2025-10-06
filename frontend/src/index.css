@@ -74,8 +74,10 @@
     --radius: 0.5rem;
 
     /* Brand colors */
-    --brand-lime: 92 80% 45%; /* #C1F297 - Tertiary Brand Color */
-    --brand-yellow: 54 100% 45%; /* #F1EEEA - Secondary Brand Color */
+    --brand-lime: 92 80% 45%;
+    /* #C1F297 - Tertiary Brand Color */
+    --brand-yellow: 54 100% 45%;
+    /* #F1EEEA - Secondary Brand Color */
 
     --highlight: 0 0% 75%;
     --highlight-foreground: 0 0% 2.4%;
@@ -167,8 +169,10 @@
     --ring: 210 67% 98.8% / 0.6;
 
     /* Brand colors */
-    --brand-lime: 92 78% 77%; /* #C1F297 - True brand color for dark mode */
-    --brand-yellow: 54 100% 45%; /* #F1EEEA - True brand color for dark mode */
+    --brand-lime: 92 78% 77%;
+    /* #C1F297 - True brand color for dark mode */
+    --brand-yellow: 54 100% 45%;
+    /* #F1EEEA - True brand color for dark mode */
 
     --highlight: 0 0% 20%;
     --highlight-foreground: 210 67% 98.8%;
@@ -255,4 +259,42 @@
 
 .dark .sidebar-nav-item:hover::before {
   @apply opacity-100;
+}
+
+/* Custom scrollbar styles for raw data viewer */
+.raw-data-scrollbar ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.raw-data-scrollbar ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.raw-data-scrollbar ::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.raw-data-scrollbar ::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.5);
+}
+
+.dark .raw-data-scrollbar ::-webkit-scrollbar-thumb {
+  background: rgba(107, 114, 128, 0.4);
+}
+
+.dark .raw-data-scrollbar ::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 114, 128, 0.6);
+}
+
+/* Firefox scrollbar support */
+.raw-data-scrollbar * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+}
+
+.dark .raw-data-scrollbar * {
+  scrollbar-color: rgba(107, 114, 128, 0.4) transparent;
 }

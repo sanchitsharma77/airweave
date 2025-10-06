@@ -1680,7 +1680,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                         </div>
                                     ) : (
                                         <div className={cn(
-                                            "px-4 py-3 space-y-4",
+                                            "px-4 py-3 space-y-4 raw-data-scrollbar",
                                             DESIGN_SYSTEM.typography.sizes.label
                                         )}>
                                             {results.map((result: any, index: number) => (
