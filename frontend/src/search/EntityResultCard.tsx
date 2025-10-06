@@ -7,6 +7,7 @@ import { materialOceanic, oneLight } from 'react-syntax-highlighter/dist/esm/sty
 import { ChevronDown, ChevronRight, ExternalLink, Copy, Check, Link as LinkIcon, Clock } from 'lucide-react';
 import { getAppIconUrl } from '@/lib/utils/icons';
 import { useTheme } from '@/lib/theme-provider';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface EntityResultCardProps {
     result: any;
@@ -446,84 +447,97 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                         </div>
                     </div>
 
-                    {/* Top-right badges: Result number + Score */}
-                    <div className="flex flex-col items-end gap-1.5">
-                        {/* Result Number Badge - Clean and minimal */}
-                        <div className={cn(
-                            "flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide",
-                            isDark
-                                ? "bg-gray-800/80 text-gray-300 border border-gray-700/60 shadow-sm"
-                                : "bg-white text-gray-600 border border-gray-200 shadow-sm"
-                        )}>
-                            #{index + 1}
-                        </div>
+                    {/* Unified badge: Result number + Score */}
+                    {scoreDisplay && (
+                        <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div
+                                        className={cn(
+                                            "flex-shrink-0 flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-200 cursor-help shadow-sm hover:shadow-md",
+                                            // Green for high scores - vibrant and clean
+                                            scoreDisplay.color === 'green' && (
+                                                isDark
+                                                    ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20"
+                                                    : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                                            ),
+                                            // Yellow for medium scores - warm and inviting
+                                            scoreDisplay.color === 'yellow' && (
+                                                isDark
+                                                    ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
+                                                    : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                                            ),
+                                            // Gray for low scores - subtle and professional
+                                            scoreDisplay.color === 'gray' && (
+                                                isDark
+                                                    ? "bg-gray-700/40 text-gray-400 border border-gray-600/50 hover:bg-gray-700/50"
+                                                    : "bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-150"
+                                            )
+                                        )}
+                                    >
+                                        {/* Result number */}
+                                        <span className="font-bold tracking-wider opacity-70">#{index + 1}</span>
 
-                        {/* Score Badge - Modern with icon and better visual hierarchy */}
-                        {scoreDisplay && (
-                            <div
-                                className={cn(
-                                    "flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-200 cursor-help shadow-sm hover:shadow-md",
-                                    // Green for high scores - vibrant and clean
-                                    scoreDisplay.color === 'green' && (
-                                        isDark
-                                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20"
-                                            : "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                                    ),
-                                    // Yellow for medium scores - warm and inviting
-                                    scoreDisplay.color === 'yellow' && (
-                                        isDark
-                                            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
-                                            : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
-                                    ),
-                                    // Gray for low scores - subtle and professional
-                                    scoreDisplay.color === 'gray' && (
-                                        isDark
-                                            ? "bg-gray-700/40 text-gray-400 border border-gray-600/50 hover:bg-gray-700/50"
-                                            : "bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-150"
-                                    )
-                                )}
-                                title={
-                                    isNormalizedScore
-                                        ? `Vector similarity: ${score.toFixed(4)} (${score >= 0.7 ? 'Excellent' : score >= 0.5 ? 'Good' : 'Fair'} match)\n\nNote: Results are reordered by AI to prioritize topical relevance. The position may differ from similarity scores.`
-                                        : `Search score: ${score.toFixed(3)}\n\nNote: Results are reordered by AI to prioritize topical relevance.`
-                                }
-                            >
-                                {/* Sparkle icon for high scores, target for others */}
-                                <svg
+                                        {/* Divider */}
+                                        <div className={cn(
+                                            "w-px h-3 opacity-30",
+                                            isDark ? "bg-gray-400" : "bg-gray-600"
+                                        )} />
+
+                                        {/* Score */}
+                                        <span className="font-mono tracking-tight">{scoreDisplay.value}</span>
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent
+                                    side="left"
                                     className={cn(
-                                        "w-3 h-3 flex-shrink-0",
-                                        scoreDisplay.color === 'green' && "opacity-80"
+                                        "px-3 py-2.5 max-w-[280px] backdrop-blur-sm",
+                                        isDark
+                                            ? "bg-gray-900/95 border border-gray-700/50 shadow-xl"
+                                            : "bg-white/95 border border-gray-200 shadow-lg"
                                     )}
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
                                 >
-                                    {scoreDisplay.color === 'green' ? (
-                                        // Sparkle icon for high scores
-                                        <>
-                                            <path d="M12 3v18" />
-                                            <path d="M3 12h18" />
-                                            <path d="m19 19-2.5-2.5" />
-                                            <path d="m19 5-2.5 2.5" />
-                                            <path d="m5 19 2.5-2.5" />
-                                            <path d="m5 5 2.5 2.5" />
-                                        </>
-                                    ) : (
-                                        // Target/bullseye icon for medium/low scores
-                                        <>
-                                            <circle cx="12" cy="12" r="10" />
-                                            <circle cx="12" cy="12" r="6" />
-                                            <circle cx="12" cy="12" r="2" />
-                                        </>
-                                    )}
-                                </svg>
-                                <span className="font-mono tracking-tight">{scoreDisplay.value}</span>
-                            </div>
-                        )}
-                    </div>
+                                    <div className="space-y-2">
+                                        {/* Result number */}
+                                        <div className={cn(
+                                            "text-[11px] font-bold tracking-wide",
+                                            isDark ? "text-gray-300" : "text-gray-700"
+                                        )}>
+                                            Result #{index + 1}
+                                        </div>
+
+                                        {/* Similarity score */}
+                                        <div className={cn(
+                                            "text-[12px]",
+                                            isDark ? "text-gray-400" : "text-gray-600"
+                                        )}>
+                                            <span className="font-medium">Similarity:</span>{' '}
+                                            <span className="font-semibold">
+                                                {isNormalizedScore
+                                                    ? `${(score * 100).toFixed(1)}%`
+                                                    : score.toFixed(3)
+                                                }
+                                            </span>
+                                        </div>
+
+                                        {/* Divider */}
+                                        <div className={cn(
+                                            "h-px w-full",
+                                            isDark ? "bg-gray-700/50" : "bg-gray-200"
+                                        )} />
+
+                                        {/* Explanation */}
+                                        <div className={cn(
+                                            "text-[11px] leading-relaxed",
+                                            isDark ? "text-gray-500" : "text-gray-500"
+                                        )}>
+                                            Position determined by semantic reranking to maximize topical relevance.
+                                        </div>
+                                    </div>
+                                </TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                    )}
                 </div>
             </div>
 
