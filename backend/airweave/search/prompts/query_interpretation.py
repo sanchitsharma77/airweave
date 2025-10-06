@@ -40,7 +40,8 @@ IMPORTANT CONSTRAINTS:
 names explicitly listed for each source or in Common fields.
 - If you cannot confidently map a term to an available field, omit the filter and lower \
 the confidence.
-- The value for source_name must match one of the listed sources exactly.
+- The value for source_name MUST be the exact short_name from the sources list (lowercase, \
+e.g., "asana", "github", "notion"). These are case-sensitive and stored exactly as shown.
 - When time-based language is used, identify the most relevant date field from the listed \
 fields.
 

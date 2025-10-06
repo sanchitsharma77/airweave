@@ -111,6 +111,18 @@ class Retrieval(SearchOperation):
 
         # Emit vector search done with stats
         top_scores = [r.get("score", 0) for r in final_results[:3] if isinstance(r, dict)]
+
+        # Add special event if no results found
+        if final_count == 0:
+            await emitter.emit(
+                "vector_search_no_results",
+                {
+                    "reason": "no_matching_documents",
+                    "has_filter": bool(filter_dict),
+                },
+                op_name=self.__class__.__name__,
+            )
+
         await emitter.emit(
             "vector_search_done",
             {

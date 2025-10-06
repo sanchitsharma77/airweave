@@ -100,10 +100,6 @@ class Reranking(SearchOperation):
 
         # Apply pagination after reranking to ensure consistent offset behavior
         paginated = self._apply_pagination(reranked, offset, limit)
-        ctx.logger.debug(
-            f"[Reranking] Reranked {len(results)} -> {len(reranked)} -> "
-            f"{len(paginated)} after offset={offset}, limit={limit}"
-        )
 
         state["results"] = paginated
 

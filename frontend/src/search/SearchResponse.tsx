@@ -78,8 +78,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     const jsonViewerRef = useRef<HTMLDivElement>(null);
 
     // Extract data from response
-    const searchStatus = searchResponse?.status || null;
-    const statusCode = searchResponse?.error ? searchResponse.status : 200;
+    const statusCode = searchResponse?.error ? 500 : 200;
     const responseTime = searchResponse?.responseTime || null;
     const completion = searchResponse?.completion || '';
     const results = searchResponse?.results || [];
@@ -91,11 +90,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
             isSearching,
             responseType,
             hasSearchResponse: !!searchResponse,
-            searchResponseStatus: searchResponse?.status,
             completionLength: completion?.length,
             completionPreview: completion?.substring(0, 50) + (completion?.length > 50 ? '...' : ''),
             resultsCount: results?.length,
-            searchStatus,
             hasError,
             activeTab,
             willReturnNull: !searchResponse && !isSearching
@@ -104,13 +101,8 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
         if (!searchResponse && !isSearching) {
             console.warn('[SearchResponseDisplay] Component will return NULL on next render!');
         }
-    }, [isSearching, responseType, searchResponse, completion, results, searchStatus, hasError, activeTab]);
+    }, [isSearching, responseType, searchResponse, completion, results, hasError, activeTab]);
 
-    useEffect(() => {
-        if (searchStatus === 'cancelled') {
-            console.log('[SearchResponseDisplay] Showing cancelled state with empty content');
-        }
-    }, [searchStatus]);
 
     // Memoize expensive style objects
     const syntaxStyle = useMemo(() => isDark ? materialOceanic : oneLight, [isDark]);
@@ -189,23 +181,6 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
         }, 100);
     }, []);
 
-    // Get status indicator colors
-    const getStatusIndicator = useCallback((status: string | null) => {
-        if (!status) return "bg-gray-400";
-
-        switch (status) {
-            case 'in_progress':
-                return isDark ? "bg-blue-400" : "bg-blue-600";
-            case 'success':
-                return isDark ? "bg-green-400" : "bg-green-500";
-            case 'no_relevant_results':
-                return isDark ? "bg-amber-400" : "bg-amber-500";
-            case 'cancelled':
-                return isDark ? "bg-red-400" : "bg-red-500";
-            default:
-                return isDark ? "bg-red-400" : "bg-red-500";
-        }
-    }, [isDark]);
 
     const handleCopyCompletion = useCallback(async () => {
         await navigator.clipboard.writeText(completion);
@@ -714,7 +689,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 const vectorSearchData = {
                     method: null as string | null,
                     finalCount: null as number | null,
-                    topScores: [] as number[]
+                    topScores: [] as number[],
+                    noResults: false,
+                    hasFilter: false
                 };
                 let j = i + 1;
                 while (j < src.length && (src[j] as any).type !== 'operator_end') {
@@ -724,6 +701,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                     } else if (nextEvent.type === 'vector_search_done') {
                         vectorSearchData.finalCount = nextEvent.final_count;
                         vectorSearchData.topScores = nextEvent.top_scores || [];
+                    } else if (nextEvent.type === 'vector_search_no_results') {
+                        vectorSearchData.noResults = true;
+                        vectorSearchData.hasFilter = nextEvent.has_filter || false;
                     }
                     j++;
                 }
@@ -760,7 +740,17 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                     }
                 }
 
-                if (vectorSearchData.finalCount !== null) {
+                if (vectorSearchData.noResults) {
+                    // Special message for zero results
+                    const noResultsMessage = vectorSearchData.hasFilter
+                        ? "No documents match the search query and applied filters"
+                        : "No documents match the search query";
+                    rows.push(
+                        <div key={`${key}-no-results`} className="py-0.5 px-2 text-[11px] text-amber-500">
+                            {noResultsMessage}
+                        </div>
+                    );
+                } else if (vectorSearchData.finalCount !== null) {
                     rows.push(
                         <div key={`${key}-found`} className="py-0.5 px-2 text-[11px] opacity-80">
                             Retrieved {vectorSearchData.finalCount} candidate result{vectorSearchData.finalCount !== 1 ? 's' : ''}
@@ -814,9 +804,21 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 }
                 if (event.type === 'recency_skipped') {
                     const reason = (event as any).reason;
+                    const reasonMessages: Record<string, string> = {
+                        'no_documents_in_filtered_space': 'No documents match the applied filters',
+                        'no_valid_timestamps': 'No valid timestamps found in matching documents',
+                        'no_timestamps': 'No timestamps available',
+                        'weight_zero': 'Recency weight set to zero',
+                        'invalid_range': 'Invalid time range detected',
+                        'zero_span': 'Time span is zero',
+                    };
+                    const displayMessage = reasonMessages[reason] || reason;
                     rows.push(
-                        <div key={`recency-skip-${i}`} className="py-0.5 px-2 text-[11px] opacity-90">
-                            • Recency bias skipped: {reason}
+                        <div key={`recency-skip-${i}`} className={cn(
+                            "py-0.5 px-2 text-[11px]",
+                            reason === 'no_documents_in_filtered_space' ? "" : ""
+                        )}>
+                            • Recency bias skipped
                         </div>
                     );
                     rows.push(
@@ -986,14 +988,15 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 continue;
             }
 
-            if (event.type === 'completion_start' || event.type === 'completion_delta' || event.type === 'completion_done') {
-                continue;
-            }
+            // Completion is no longer streamed, so we don't need to hide these events in trace
             if (event.type === 'operator_start' && event.op === 'completion') {
                 continue;
             }
             if (event.type === 'operator_end' && event.op === 'completion') {
                 continue;
+            }
+            if (event.type === 'completion_done') {
+                continue; // Don't show in trace, just for aggregation
             }
 
             if (event.type === 'connected') {
@@ -1085,25 +1088,23 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
 
     // Tab switching effects
     useEffect(() => {
-        if (searchStatus === 'cancelled') return;
         if (isSearching) {
             setActiveTab('trace');
         }
-    }, [isSearching, searchStatus]);
+    }, [isSearching]);
 
     useEffect(() => {
-        if (searchStatus === 'cancelled') return;
-        if (responseType === 'completion' && isSearching && completion && completion.length > 0) {
-            if (activeTab === 'trace') setActiveTab('answer');
+        // When completion arrives (not streaming anymore), switch to answer tab
+        if (responseType === 'completion' && !isSearching && completion && completion.length > 0) {
+            setActiveTab('answer');
         }
-    }, [responseType, isSearching, completion, activeTab, searchStatus]);
+    }, [responseType, isSearching, completion]);
 
     useEffect(() => {
-        if (searchStatus === 'cancelled') return;
-        if (responseType === 'raw' && !isSearching && Array.isArray(results) && results.length > 0 && searchStatus === 'success') {
+        if (responseType === 'raw' && !isSearching && Array.isArray(results) && results.length > 0) {
             setActiveTab('entities');
         }
-    }, [responseType, isSearching, results, searchStatus]);
+    }, [responseType, isSearching, results]);
 
     // Guard: show nothing if no response and not loading (after hooks per lint rules)
     if (!searchResponse && !isSearching) {
@@ -1115,18 +1116,6 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
         <>
             <span className={cn(DESIGN_SYSTEM.typography.sizes.label, "opacity-80")}>Response</span>
             <div className="flex items-center gap-3">
-                {searchStatus && !hasError && (
-                    <div className="flex items-center">
-                        <div className={cn(
-                            "h-1.5 w-1.5 rounded-full mr-1",
-                            getStatusIndicator(searchStatus)
-                        )}></div>
-                        <span className={cn(DESIGN_SYSTEM.typography.sizes.label, "opacity-80")}>
-                            {searchStatus.replace(/_/g, ' ')}
-                        </span>
-                    </div>
-                )}
-
                 {hasError && (
                     <div className="flex items-center text-red-500">
                         <span className={DESIGN_SYSTEM.typography.sizes.body}>Error</span>
@@ -1170,15 +1159,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                     "absolute inset-0 h-1.5 bg-gradient-to-r",
                     hasError
                         ? "from-red-500 to-red-600"
-                        : searchStatus === 'in_progress'
-                            ? "from-blue-500 to-indigo-500"
-                            : searchStatus === 'success'
-                                ? "from-green-500 to-emerald-500"
-                                : searchStatus === 'no_relevant_results'
-                                    ? "from-amber-400 to-amber-500"
-                                    : searchStatus === 'cancelled'
-                                        ? "from-red-500 to-red-600"
-                                        : "from-gray-400 to-gray-500"
+                        : "from-green-500 to-emerald-500"
                 )}></div>
             )}
         </div>
@@ -1433,33 +1414,14 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         {/* Answer Tab Content - Always rendered but hidden when not active */}
                         {responseType === 'completion' && (completion || isSearching) && (
                             <div style={{ display: activeTab === 'answer' ? 'block' : 'none' }}>
-
-
                                 <div className={cn(
                                     "overflow-auto max-h-[438px] leading-relaxed",
                                     DESIGN_SYSTEM.spacing.padding.compact,
                                     DESIGN_SYSTEM.typography.sizes.body,
                                     isDark ? "bg-gray-900 text-gray-200" : "bg-white text-gray-800"
                                 )}>
-                                    {(() => {
-                                        const showingSkeleton = isSearching && !completion;
-                                        const showingCompletion = !!completion;
-                                        const showingCursor = isSearching && completion;
-
-                                        console.log('[SearchResponseDisplay] Completion rendering logic:', {
-                                            isSearching,
-                                            hasCompletion: !!completion,
-                                            completionLength: completion?.length,
-                                            showingSkeleton,
-                                            showingCompletion,
-                                            showingCursor,
-                                            completionSource: isSearching ? 'STREAMING' : 'FINAL'
-                                        });
-
-                                        return null; // This return is just for the IIFE
-                                    })()}
-                                    {isSearching && !completion ? (
-                                        // Show skeleton only if we're searching but have no completion yet
+                                    {isSearching ? (
+                                        // Show skeleton while searching (completion not streamed anymore)
                                         <div className="animate-pulse h-32 w-full">
                                             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2.5"></div>
                                             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2.5"></div>
@@ -1468,7 +1430,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                             <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
                                         </div>
                                     ) : completion ? (
-                                        // Show the actual completion (streaming or final)
+                                        // Show the actual completion (only available when search completes)
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
                                             components={{

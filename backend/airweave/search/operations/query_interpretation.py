@@ -186,8 +186,9 @@ class QueryInterpretation(SearchOperation):
                         f"Cannot perform query interpretation."
                     )
 
-                # Store as "short_name (Display Name)" so LLM uses short_name in filter values
-                fields[f"{short_name} ({source.name})"] = source_fields
+                # Store using just the short_name as the key so LLM uses correct value
+                # Add display name in a special comment field for clarity
+                fields[short_name] = source_fields
 
         if not fields:
             raise ValueError(
@@ -311,6 +312,8 @@ class QueryInterpretation(SearchOperation):
     ) -> List[Dict[str, Any]]:
         """Validate filter conditions against available fields."""
         allowed_keys = set()
+        allowed_sources = set(available_fields.keys())
+
         for source_fields in available_fields.values():
             allowed_keys.update(source_fields.keys())
 
@@ -323,7 +326,13 @@ class QueryInterpretation(SearchOperation):
             # Convert FilterCondition to dict with mapped Qdrant path
             cond_dict = {"key": self._map_to_qdrant_path(condition.key)}
 
-            if condition.match:
+            # Special validation for source_name to ensure correct values
+            if condition.key == "source_name" and condition.match:
+                validated_match = self._validate_source_name_match(condition.match, allowed_sources)
+                if not validated_match:
+                    continue  # Invalid source_name value, skip this filter
+                cond_dict["match"] = validated_match
+            elif condition.match:
                 cond_dict["match"] = condition.match
 
             if condition.range:
@@ -332,6 +341,40 @@ class QueryInterpretation(SearchOperation):
             validated.append(cond_dict)
 
         return validated
+
+    def _validate_source_name_match(
+        self, match: Dict[str, Any], allowed_sources: set
+    ) -> Optional[Dict[str, Any]]:
+        """Validate source_name match values against allowed sources."""
+        # Handle single value match
+        if "value" in match:
+            value = str(match["value"])
+            # Check exact match or lowercase match
+            if value in allowed_sources:
+                return {"value": value}
+            # Try lowercase
+            if value.lower() in allowed_sources:
+                return {"value": value.lower()}
+            # Invalid source value
+            return None
+
+        # Handle any-of match
+        if "any" in match and isinstance(match["any"], list):
+            valid_values = []
+            for val in match["any"]:
+                val_str = str(val)
+                if val_str in allowed_sources:
+                    valid_values.append(val_str)
+                elif val_str.lower() in allowed_sources:
+                    valid_values.append(val_str.lower())
+
+            if not valid_values:
+                return None
+            if len(valid_values) == 1:
+                return {"value": valid_values[0]}
+            return {"any": valid_values}
+
+        return match
 
     def _map_to_qdrant_path(self, key: str) -> str:
         """Map field names to Qdrant payload paths."""

@@ -88,6 +88,7 @@ class EventEmitter:
             "Reranking": "llm_reranking",
             "TemporalRelevance": "recency",
             "UserFilter": "qdrant_filter",
+            "Retrieval": "vector_search",
         }
 
         if name in mappings:

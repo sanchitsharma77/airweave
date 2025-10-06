@@ -82,7 +82,12 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
             })
             .join('\n');
 
-        const curlSnippet = `curl -X 'POST' \\
+        // Add note about query interpretation if enabled
+        const interpretNote = searchConfig?.enable_query_interpretation
+            ? `# Note: interpret_filters is enabled, which may automatically add\n# additional filters extracted from your natural language query.\n# The filter shown below is your manual filter only.\n\n`
+            : '';
+
+        const curlSnippet = `${interpretNote}curl -X 'POST' \\
   '${apiUrl}' \\
   -H 'accept: application/json' \\
   -H 'x-api-key: ${apiKey}' \\
@@ -110,8 +115,16 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
             `    offset=0`
         ];
 
+        const pythonInterpretNote = searchConfig?.enable_query_interpretation
+            ? `# Note: interpret_filters is enabled, which may automatically add
+# additional filters extracted from your natural language query.
+# The filter shown below is your manual filter only.
+
+`
+            : '';
+
         const pythonSnippet =
-            `from airweave import AirweaveSDK
+            `${pythonInterpretNote}from airweave import AirweaveSDK
 
 client = AirweaveSDK(
     api_key="${apiKey}",
@@ -147,8 +160,16 @@ ${pythonParams.join(',\n')}
             `    offset: 0`
         ];
 
+        const nodeInterpretNote = searchConfig?.enable_query_interpretation
+            ? `// Note: interpretFilters is enabled, which may automatically add
+// additional filters extracted from your natural language query.
+// The filter shown below is your manual filter only.
+
+`
+            : '';
+
         const nodeSnippet =
-            `import { AirweaveSDKClient } from "@airweave/sdk";
+            `${nodeInterpretNote}import { AirweaveSDKClient } from "@airweave/sdk";
 
 const client = new AirweaveSDKClient({ apiKey: "${apiKey}" });
 

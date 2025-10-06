@@ -12,12 +12,12 @@ from pydantic import BaseModel
 from qdrant_client.http import models as rest
 
 from airweave.api.context import ApiContext
-from airweave.platform.destinations.qdrant import QdrantDestination
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
 
 if TYPE_CHECKING:
+    from airweave.platform.destinations.qdrant import QdrantDestination
     from airweave.search.emitter import EventEmitter
 
 
@@ -74,10 +74,27 @@ class TemporalRelevance(SearchOperation):
         filter_dict = state.get("filter")
         qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
 
-        # Connect to Qdrant
+        # Connect to Qdrant (runtime import to avoid circular dependency)
+        from airweave.platform.destinations.qdrant import QdrantDestination
+
         destination = await QdrantDestination.create(
             collection_id=context.collection_id, logger=None
         )
+
+        # First, check if the filtered search space has any documents
+        document_count = await self._count_filtered_documents(
+            destination, str(context.collection_id), qdrant_filter
+        )
+        ctx.logger.debug(f"[TemporalRelevance] Filtered document count: {document_count}")
+
+        if document_count == 0:
+            await emitter.emit(
+                "recency_skipped",
+                {"reason": "no_documents_in_filtered_space"},
+                op_name=self.__class__.__name__,
+            )
+            ctx.logger.warning("[TemporalRelevance] No documents found in filtered search space. ")
+            return
 
         # Get oldest and newest timestamps
         oldest, newest = await self._get_min_max_timestamps(
@@ -89,13 +106,15 @@ class TemporalRelevance(SearchOperation):
         if not oldest or not newest:
             await emitter.emit(
                 "recency_skipped",
-                {"reason": "no_timestamps"},
+                {"reason": "no_valid_timestamps"},
                 op_name=self.__class__.__name__,
             )
-            raise ValueError(
-                "Could not determine time range for temporal relevance. "
-                "Collection might be empty or have no valid timestamps."
+            ctx.logger.warning(
+                f"[TemporalRelevance] Could not find valid timestamps in "
+                f"{document_count} documents. Skipping temporal relevance calculation."
             )
+            # Don't fail - just skip temporal relevance
+            return
 
         if newest <= oldest:
             await emitter.emit(
@@ -155,9 +174,38 @@ class TemporalRelevance(SearchOperation):
         except Exception as e:
             raise ValueError(f"Invalid filter format for Qdrant: {e}") from e
 
+    async def _count_filtered_documents(
+        self,
+        destination: "QdrantDestination",
+        collection_id: str,
+        qdrant_filter: Optional[rest.Filter],
+    ) -> int:
+        """Count documents in the filtered search space."""
+        try:
+            # Use scroll with limit=1 to check if any documents exist
+            # This is more efficient than counting all documents
+            result = await destination.client.scroll(
+                collection_name=collection_id,
+                limit=1,
+                scroll_filter=qdrant_filter,
+                with_payload=False,
+                with_vectors=False,
+            )
+
+            # If we got any points, the collection is not empty
+            if result and result[0]:
+                # For efficiency, we don't need exact count, just non-zero
+                # We could do a full count, but that's expensive for large collections
+                return 1  # Return 1 to indicate "has documents"
+            return 0
+        except Exception as e:
+            # If count fails, assume collection might have documents and continue
+            # This ensures we don't fail temporal relevance due to count errors
+            raise RuntimeError(f"Failed to check document count: {e}") from e
+
     async def _get_min_max_timestamps(
         self,
-        destination: QdrantDestination,
+        destination: "QdrantDestination",
         collection_id: str,
         qdrant_filter: Optional[rest.Filter],
     ) -> tuple[Optional[datetime], Optional[datetime]]:

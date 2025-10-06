@@ -35,9 +35,7 @@ class BaseProvider(ABC):
             raise RuntimeError("Tokenizer not initialized for token counting")
         if text is None:
             return 0
-        token_count = len(tokenizer.encode(text))
-        self.ctx.logger.debug(f"[BaseProvider] Token count: {token_count}")
-        return token_count
+        return len(tokenizer.encode(text))
 
     @abstractmethod
     async def generate(self, messages: List[Dict[str, str]]) -> str:

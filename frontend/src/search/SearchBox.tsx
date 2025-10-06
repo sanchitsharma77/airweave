@@ -16,7 +16,7 @@ import { RecencyBiasSlider } from "@/search/RecencyBiasSlider";
 import { apiClient } from "@/lib/api";
 import type { SearchEvent, PartialStreamUpdate, StreamPhase } from "@/search/types";
 import { DESIGN_SYSTEM } from "@/lib/design-system";
-import { ActionCheckResponse } from "@/types";
+import { SingleActionCheckResponse } from "@/types";
 
 // Search method types
 type SearchMethod = "hybrid" | "neural" | "keyword";
@@ -117,7 +117,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
 
     // Usage limits: queries
     const [queriesAllowed, setQueriesAllowed] = useState(true);
-    const [queriesCheckDetails, setQueriesCheckDetails] = useState<ActionCheckResponse | null>(null);
+    const [queriesCheckDetails, setQueriesCheckDetails] = useState<SingleActionCheckResponse | null>(null);
     const [isCheckingUsage, setIsCheckingUsage] = useState(true);
 
     // Fetch API key on mount
@@ -196,7 +196,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
             setIsCheckingUsage(true);
             const response = await apiClient.get('/usage/check-action?action=queries');
             if (response.ok) {
-                const data: ActionCheckResponse = await response.json();
+                const data: SingleActionCheckResponse = await response.json();
                 setQueriesAllowed(data.allowed);
                 setQueriesCheckDetails(data);
             } else {
@@ -301,8 +301,8 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
             let buffer = "";
 
             // Aggregates
-            let aggregatedCompletion = "";
             let latestResults: any[] = [];
+            let latestCompletion: string | null = null;
             let requestId: string | null = null;
             let phase: StreamPhase = "searching";
 
@@ -311,7 +311,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
             };
             const emitUpdate = () => {
                 try {
-                    onStreamUpdateProp?.({ requestId, streamingCompletion: aggregatedCompletion, results: latestResults, status: phase });
+                    onStreamUpdateProp?.({ requestId, results: latestResults, status: phase });
                 } catch { void 0; }
             };
 
@@ -345,25 +345,18 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                             requestId = event.request_id || requestId;
                             emitUpdate();
                             break;
-                        case 'completion_start':
-                            phase = 'answering';
-                            emitUpdate();
-                            break;
-                        case 'completion_delta':
-                            phase = 'answering';
-                            if (typeof event.text === 'string') {
-                                aggregatedCompletion += event.text;
-                            }
-                            emitUpdate();
-                            break;
-                        case 'completion_done':
-                            // Keep aggregatedCompletion as the source of truth
-                            emitUpdate();
-                            break;
                         case 'results':
                             if (Array.isArray(event.results)) {
                                 latestResults = event.results;
                             }
+                            emitUpdate();
+                            break;
+                        case 'completion_done':
+                            // Capture completion when it's generated (not streamed)
+                            if (typeof event.text === 'string') {
+                                latestCompletion = event.text;
+                            }
+                            phase = 'answering';
                             emitUpdate();
                             break;
                         case 'error': {
@@ -375,14 +368,15 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                         case 'done': {
                             const endTime = performance.now();
                             const responseTime = Math.round(endTime - startTime);
+                            // Build final response from collected data
                             const finalResponse = {
-                                completion: aggregatedCompletion || null,
+                                completion: latestCompletion || null,
                                 results: latestResults || [],
                                 responseTime,
                             };
                             console.log('[SearchBox] Done event - sending final response:', {
-                                hasCompletion: !!aggregatedCompletion,
-                                completionLength: aggregatedCompletion?.length,
+                                hasCompletion: !!latestCompletion,
+                                completionLength: latestCompletion?.length,
                                 responseType: currentResponseType,
                                 resultsCount: latestResults?.length
                             });

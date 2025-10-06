@@ -194,6 +194,12 @@ export interface VectorSearchDoneEvent extends BaseEvent {
     top_scores?: number[];
 }
 
+export interface VectorSearchNoResultsEvent extends BaseEvent {
+    type: 'vector_search_no_results';
+    reason: string;
+    has_filter: boolean;
+}
+
 // Reranking
 export interface RerankingStartEvent extends BaseEvent {
     type: 'reranking_start';
@@ -224,19 +230,9 @@ export interface RerankingDoneEvent extends BaseEvent {
 }
 
 // Completion (answer streaming)
-export interface CompletionStartEvent extends BaseEvent {
-    type: 'completion_start';
-    model: string;
-}
-
-export interface CompletionDeltaEvent extends BaseEvent {
-    type: 'completion_delta';
-    text: string; // token fragment
-}
-
 export interface CompletionDoneEvent extends BaseEvent {
     type: 'completion_done';
-    text: string; // final assembled answer
+    text: string; // final assembled answer (not streamed, sent once when complete)
 }
 
 // Results
@@ -270,13 +266,12 @@ export type SearchEvent =
     | VectorSearchStartEvent
     | VectorSearchBatchEvent
     | VectorSearchDoneEvent
+    | VectorSearchNoResultsEvent
     | RerankingStartEvent
     | RerankingReasonDeltaEvent
     | RerankingDeltaEvent
     | RankingsEvent
     | RerankingDoneEvent
-    | CompletionStartEvent
-    | CompletionDeltaEvent
     | CompletionDoneEvent
     | ResultsEvent
     | SummaryEvent
@@ -291,7 +286,6 @@ export type StreamPhase = 'searching' | 'answering' | 'finalized' | 'cancelled';
 // Aggregated UI update emitted along raw events
 export interface PartialStreamUpdate {
     requestId?: string | null;
-    streamingCompletion?: string;
     results?: any[]; // latest snapshot
     status?: StreamPhase;
 }
