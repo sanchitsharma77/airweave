@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { materialOceanic, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ChevronDown, ChevronRight, ExternalLink, Copy, Check, Link as LinkIcon, Clock } from 'lucide-react';
+import { getAppIconUrl } from '@/lib/utils/icons';
+import { useTheme } from '@/lib/theme-provider';
 
 interface EntityResultCardProps {
     result: any;
@@ -82,6 +84,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
     const [isRawExpanded, setIsRawExpanded] = useState(false);
     const [copiedField, setCopiedField] = useState<string | null>(null);
     const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+    const { resolvedTheme } = useTheme();
 
     // Extract payload from result
     const payload = result.payload || result;
@@ -114,6 +117,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
     // Extract key fields
     const entityId = payload.entity_id || payload.id || payload._id;
     const sourceName = payload.airweave_system_metadata?.source_name || payload.source_name || 'Unknown Source';
+    const sourceIconUrl = getAppIconUrl(sourceName, resolvedTheme);
     const embeddableText = payload.embeddable_text || '';
     const breadcrumbs = payload.breadcrumbs || [];
     const url = payload.url;
@@ -129,18 +133,10 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
         typeof b === 'string' ? b : b.name || b.title || ''
     ).filter(Boolean).join(' > ') : '');
 
-    // Get icon based on entity type
-    const getTypeIcon = () => {
-        const type = entityType.toLowerCase();
-        if (type.includes('page')) return '📄';
-        if (type.includes('file')) return '📎';
-        if (type.includes('issue')) return '🎯';
-        if (type.includes('task')) return '✅';
-        if (type.includes('note')) return '📝';
-        if (type.includes('message')) return '💬';
-        if (type.includes('comment')) return '💭';
-        return '📄';
-    };
+    // Get Airweave logo based on theme
+    const airweaveLogo = isDark
+        ? '/airweave-logo-svg-white-darkbg.svg'
+        : '/airweave-logo-svg-lightbg-blacklogo.svg';
 
     // Format source name (capitalize first letter of each word)
     const formattedSourceName = sourceName
@@ -340,11 +336,16 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     {/* Title with Icon */}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-start gap-3">
+                            {/* Clean Airweave Logo - no overlay */}
                             <div className={cn(
-                                "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-lg",
+                                "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden",
                                 isDark ? "bg-gray-800/50" : "bg-gray-50"
                             )}>
-                                {getTypeIcon()}
+                                <img
+                                    src={airweaveLogo}
+                                    alt="Airweave"
+                                    className="w-full h-full object-contain p-1.5 opacity-40"
+                                />
                             </div>
                             <div className="flex-1 min-w-0 pt-0.5">
                                 <h3 className={cn(
@@ -356,6 +357,38 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
 
                                 {/* Context and Type */}
                                 <div className="flex flex-wrap items-center gap-2 mb-2">
+                                    {/* Source Icon Badge */}
+                                    <span className={cn(
+                                        "inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md text-[11px] font-medium",
+                                        isDark
+                                            ? "bg-gray-800/40 border border-gray-700/40"
+                                            : "bg-gray-50/60 border border-gray-200/50"
+                                    )}>
+                                        <div className="w-4 h-4 rounded-sm overflow-hidden flex items-center justify-center flex-shrink-0">
+                                            <img
+                                                src={sourceIconUrl}
+                                                alt={formattedSourceName}
+                                                className="w-full h-full object-contain"
+                                                onError={(e) => {
+                                                    // Fallback to first letter if icon fails
+                                                    const target = e.target as HTMLImageElement;
+                                                    target.style.display = 'none';
+                                                    const parent = target.parentElement;
+                                                    if (parent) {
+                                                        parent.classList.add(isDark ? 'bg-gray-700' : 'bg-gray-200');
+                                                        parent.innerHTML = `<span class="text-[9px] font-semibold ${isDark ? 'text-gray-300' : 'text-gray-600'}">${formattedSourceName.charAt(0)}</span>`;
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                        <span className={cn(
+                                            "text-[11px]",
+                                            isDark ? "text-gray-400" : "text-gray-600"
+                                        )}>
+                                            {formattedSourceName}
+                                        </span>
+                                    </span>
+
                                     {context && (
                                         <span className={cn(
                                             "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium",
@@ -397,39 +430,52 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                         </div>
                     </div>
 
-                    {/* Score Badge */}
-                    {scoreDisplay && (
-                        <div
-                            className={cn(
-                                "flex-shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold font-mono whitespace-nowrap transition-colors cursor-help",
-                                // Green for high scores
-                                scoreDisplay.color === 'green' && (
-                                    isDark
-                                        ? "bg-green-950/40 text-green-400 border border-green-900/50"
-                                        : "bg-green-50 text-green-700 border border-green-200/60"
-                                ),
-                                // Yellow for medium scores
-                                scoreDisplay.color === 'yellow' && (
-                                    isDark
-                                        ? "bg-yellow-950/40 text-yellow-400 border border-yellow-900/50"
-                                        : "bg-yellow-50 text-yellow-700 border border-yellow-200/60"
-                                ),
-                                // Gray for low scores
-                                scoreDisplay.color === 'gray' && (
-                                    isDark
-                                        ? "bg-gray-800/60 text-gray-400 border border-gray-700/50"
-                                        : "bg-gray-100 text-gray-600 border border-gray-300/60"
-                                )
-                            )}
-                            title={
-                                isNormalizedScore
-                                    ? `Similarity score: ${score.toFixed(4)} (${score >= 0.7 ? 'Excellent' : score >= 0.5 ? 'Good' : 'Fair'} match)`
-                                    : `Relevance score: ${score.toFixed(3)}`
-                            }
-                        >
-                            {scoreDisplay.value}
+                    {/* Top-right badges: Result number + Score */}
+                    <div className="flex flex-col items-end gap-2">
+                        {/* Result Number Badge */}
+                        <div className={cn(
+                            "flex-shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold font-mono",
+                            isDark
+                                ? "bg-gray-800/60 text-gray-400 border border-gray-700/50"
+                                : "bg-gray-100 text-gray-500 border border-gray-200/60"
+                        )}>
+                            #{index + 1}
                         </div>
-                    )}
+
+                        {/* Score Badge */}
+                        {scoreDisplay && (
+                            <div
+                                className={cn(
+                                    "flex-shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold font-mono whitespace-nowrap transition-colors cursor-help",
+                                    // Green for high scores
+                                    scoreDisplay.color === 'green' && (
+                                        isDark
+                                            ? "bg-green-950/40 text-green-400 border border-green-900/50"
+                                            : "bg-green-50 text-green-700 border border-green-200/60"
+                                    ),
+                                    // Yellow for medium scores
+                                    scoreDisplay.color === 'yellow' && (
+                                        isDark
+                                            ? "bg-yellow-950/40 text-yellow-400 border border-yellow-900/50"
+                                            : "bg-yellow-50 text-yellow-700 border border-yellow-200/60"
+                                    ),
+                                    // Gray for low scores
+                                    scoreDisplay.color === 'gray' && (
+                                        isDark
+                                            ? "bg-gray-800/60 text-gray-400 border border-gray-700/50"
+                                            : "bg-gray-100 text-gray-600 border border-gray-300/60"
+                                    )
+                                )}
+                                title={
+                                    isNormalizedScore
+                                        ? `Similarity score: ${score.toFixed(4)} (${score >= 0.7 ? 'Excellent' : score >= 0.5 ? 'Good' : 'Fair'} match)`
+                                        : `Relevance score: ${score.toFixed(3)}`
+                                }
+                            >
+                                {scoreDisplay.value}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
