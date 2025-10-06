@@ -392,11 +392,12 @@ class GitHubAuthConfig(AuthConfig):
         if not (
             v.startswith("ghp_")
             or v.startswith("github_pat_")
+            or v.startswith("gho_")
             or (len(v) == 40 and all(c in "0123456789abcdef" for c in v.lower()))
         ):
             raise ValueError(
                 "Invalid token format. Expected format: "
-                "ghp_... or github_pat_... or 40-character hex"
+                "ghp_... or github_pat_... or gho_... or 40-character hex"
             )
         return v
 
