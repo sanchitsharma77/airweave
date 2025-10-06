@@ -66,6 +66,17 @@ class GenerateAnswer(SearchOperation):
             f"[GenerateAnswer] number of results that fit in context window: {chosen_count}"
         )
 
+        # Emit event showing how many results fit in context
+        await emitter.emit(
+            "answer_context_budget",
+            {
+                "total_results": len(results),
+                "results_in_context": chosen_count,
+                "excluded": len(results) - chosen_count,
+            },
+            op_name=self.__class__.__name__,
+        )
+
         # Build messages for LLM
         system_prompt = GENERATE_ANSWER_SYSTEM_PROMPT.format(context=formatted_context)
         messages = [

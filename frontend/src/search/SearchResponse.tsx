@@ -988,13 +988,44 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 continue;
             }
 
-            // Completion is no longer streamed, so we don't need to hide these events in trace
+            // Handle answer generation events
             if (event.type === 'operator_start' && event.op === 'completion') {
+                rows.push(
+                    <div key={`completion-${i}-start`} className="px-2 py-1 text-[11px] flex items-center gap-1.5">
+                        <FiMessageSquare className="h-3 w-3 opacity-80" />
+                        <span className="opacity-90">Answer generation</span>
+                    </div>
+                );
                 continue;
             }
+
+            if (event.type === 'answer_context_budget') {
+                const e = event as any;
+                rows.push(
+                    <div key={`completion-budget-${i}`} className="py-0.5 px-2 text-[11px] opacity-80">
+                        Using {e.results_in_context} of {e.total_results} result{e.total_results !== 1 ? 's' : ''} in context
+                        {e.excluded > 0 && (
+                            <span className="opacity-70"> ({e.excluded} excluded due to token limit)</span>
+                        )}
+                    </div>
+                );
+                continue;
+            }
+
             if (event.type === 'operator_end' && event.op === 'completion') {
+                rows.push(
+                    <div key={`completion-${i}-end`} className="py-0.5 px-2 text-[11px] opacity-70">
+                        Answer generation complete
+                    </div>
+                );
+                rows.push(
+                    <div key={`completion-${i}-separator`} className="py-1">
+                        <div className="mx-2 border-t border-border/30"></div>
+                    </div>
+                );
                 continue;
             }
+
             if (event.type === 'completion_done') {
                 continue; // Don't show in trace, just for aggregation
             }

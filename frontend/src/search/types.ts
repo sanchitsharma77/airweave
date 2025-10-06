@@ -229,7 +229,14 @@ export interface RerankingDoneEvent extends BaseEvent {
     applied: boolean;
 }
 
-// Completion (answer streaming)
+// Completion (answer generation)
+export interface AnswerContextBudgetEvent extends BaseEvent {
+    type: 'answer_context_budget';
+    total_results: number;
+    results_in_context: number;
+    excluded: number;
+}
+
 export interface CompletionDoneEvent extends BaseEvent {
     type: 'completion_done';
     text: string; // final assembled answer (not streamed, sent once when complete)
@@ -272,6 +279,7 @@ export type SearchEvent =
     | RerankingDeltaEvent
     | RankingsEvent
     | RerankingDoneEvent
+    | AnswerContextBudgetEvent
     | CompletionDoneEvent
     | ResultsEvent
     | SummaryEvent
