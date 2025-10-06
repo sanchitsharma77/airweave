@@ -2,6 +2,7 @@
 
 from airweave.api.router import TrailingSlashRouter
 from airweave.api.v1.endpoints import (
+    admin,
     api_keys,
     auth_providers,
     billing,
@@ -50,6 +51,7 @@ api_router.include_router(entities.router, prefix="/entities", tags=["entities"]
 api_router.include_router(entity_counts.router, prefix="/entity-counts", tags=["entity-counts"])
 api_router.include_router(transformers.router, prefix="/transformers", tags=["transformers"])
 api_router.include_router(file_retrieval.router, prefix="/files", tags=["files"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 # Only include cursor development endpoints if LOCAL_CURSOR_DEVELOPMENT is enabled
 if settings.LOCAL_CURSOR_DEVELOPMENT:

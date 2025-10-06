@@ -66,6 +66,7 @@ class UserInDBBase(UserBase):
     auth0_id: Optional[str] = None
     primary_organization_id: Optional[UUID] = None
     user_organizations: list[UserOrganization] = Field(default_factory=list)
+    is_admin: bool = False
 
     @field_validator("user_organizations", mode="before")
     @classmethod

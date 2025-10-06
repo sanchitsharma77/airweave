@@ -24,6 +24,7 @@ import BillingSuccess from '@/pages/BillingSuccess';
 import BillingCancel from '@/pages/BillingCancel';
 import BillingSetup from '@/pages/BillingSetup';
 import BillingPortal from '@/pages/BillingPortal';
+import { AdminDashboard } from '@/pages/AdminDashboard';
 
 function App() {
   // Initialize collections event listeners when the app loads
@@ -61,6 +62,9 @@ function App() {
           {/* Billing routes */}
           <Route path="/billing/setup" element={<BillingSetup />} />
           <Route path="/billing/portal" element={<BillingPortal />} />
+
+          {/* Admin routes */}
+          <Route path="/admin" element={<AdminDashboard />} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>

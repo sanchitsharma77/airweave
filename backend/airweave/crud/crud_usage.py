@@ -254,6 +254,60 @@ class CRUDUsage(CRUDBaseOrganization[Usage, UsageCreate, UsageUpdate]):
         result = await db.execute(query)
         return result.scalars().all()
 
+    async def get_current_usage_for_orgs(
+        self,
+        db: AsyncSession,
+        *,
+        organization_ids: list[UUID],
+    ) -> dict[UUID, Usage]:
+        """Get current usage for multiple organizations (admin use only).
+
+        This method fetches the most recent usage record for each organization
+        that has an active billing period. Returns a mapping of org_id -> Usage.
+
+        Args:
+            db: Database session
+            organization_ids: List of organization IDs
+
+        Returns:
+            Dictionary mapping organization_id to current Usage record
+        """
+        from datetime import datetime
+
+        from airweave.models.billing_period import BillingPeriod
+        from airweave.schemas.billing_period import BillingPeriodStatus
+
+        if not organization_ids:
+            return {}
+
+        now = datetime.utcnow()
+
+        # Query for current usage records with active billing periods
+        query = (
+            select(self.model)
+            .join(BillingPeriod, self.model.billing_period_id == BillingPeriod.id)
+            .where(
+                and_(
+                    BillingPeriod.organization_id.in_(organization_ids),
+                    BillingPeriod.period_start <= now,
+                    BillingPeriod.period_end > now,
+                    BillingPeriod.status.in_(
+                        [
+                            BillingPeriodStatus.ACTIVE,
+                            BillingPeriodStatus.TRIAL,
+                            BillingPeriodStatus.GRACE,
+                        ]
+                    ),
+                )
+            )
+        )
+
+        result = await db.execute(query)
+        usage_records = result.scalars().all()
+
+        # Return as a dictionary for easy lookup
+        return {usage.organization_id: usage for usage in usage_records}
+
 
 # Create instance
 usage = CRUDUsage(Usage, track_user=False)

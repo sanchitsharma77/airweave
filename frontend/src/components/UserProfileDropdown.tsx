@@ -378,6 +378,20 @@ export function UserProfileDropdown() {
 
           <MenuSeparator />
 
+          {/* Admin Section */}
+          {user?.is_admin && (
+            <>
+              <InternalMenuLink
+                to="/admin"
+                icon={<Shield className="h-4 w-4" />}
+              >
+                Admin Dashboard
+              </InternalMenuLink>
+
+              <MenuSeparator />
+            </>
+          )}
+
           {/* External Links */}
           <ExternalMenuLink href="https://airweave.ai">
             Blog
