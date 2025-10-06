@@ -7,6 +7,7 @@ the retrieval strategy (hybrid, neural, or keyword).
 
 from typing import Any, List
 
+from airweave.api.context import ApiContext
 from airweave.platform.embedding_models.bm25_text2vec import BM25Text2Vec
 from airweave.schemas.search import RetrievalStrategy
 from airweave.search.context import SearchContext
@@ -27,25 +28,24 @@ class EmbedQuery(SearchOperation):
         """Depends on query expansion to get all queries to embed."""
         return ["QueryExpansion"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Generate embeddings for queries."""
+        ctx.logger.debug("[EmbedQuery] Generating embeddings for queries")
+
         # Determine queries to embed (expanded + original, or just original)
         queries = self._get_queries_to_embed(context, state)
 
-        # Validate queries fit in token limits
-        if self.strategy in (RetrievalStrategy.HYBRID, RetrievalStrategy.NEURAL):
-            self._validate_query_lengths(queries)
-
         # Generate dense embeddings if needed
+        # Note: Token validation is handled by the provider in its embed() method
         if self.strategy in (RetrievalStrategy.HYBRID, RetrievalStrategy.NEURAL):
-            dense_embeddings = await self._generate_dense_embeddings(queries)
+            dense_embeddings = await self._generate_dense_embeddings(queries, ctx)
         else:
             # Keyword-only doesn't need dense embeddings
             dense_embeddings = None
 
         # Generate sparse BM25 embeddings if needed
         if self.strategy in (RetrievalStrategy.HYBRID, RetrievalStrategy.KEYWORD):
-            sparse_embeddings = await self._generate_sparse_embeddings(queries)
+            sparse_embeddings = await self._generate_sparse_embeddings(queries, ctx)
         else:
             sparse_embeddings = None
 
@@ -72,22 +72,9 @@ class EmbedQuery(SearchOperation):
 
         return queries
 
-    def _validate_query_lengths(self, queries: List[str]) -> None:
-        """Validate all queries fit in embedding token limits."""
-        max_tokens = self.provider.model_spec.embedding_model.max_tokens
-
-        for i, query in enumerate(queries):
-            if not query or not query.strip():
-                raise ValueError(f"Query at index {i} is empty - cannot embed")
-
-            token_count = self.provider.count_tokens(query, model_type="embedding")
-            if token_count > max_tokens:
-                raise ValueError(
-                    f"Query at index {i} has {token_count} tokens, "
-                    f"exceeds embedding limit of {max_tokens}"
-                )
-
-    async def _generate_dense_embeddings(self, queries: List[str]) -> List[List[float]]:
+    async def _generate_dense_embeddings(
+        self, queries: List[str], ctx: ApiContext
+    ) -> List[List[float]]:
         """Generate dense neural embeddings using provider."""
         dense_embeddings = await self.provider.embed(queries)
 
@@ -97,9 +84,11 @@ class EmbedQuery(SearchOperation):
                 f"Embedding count mismatch: got {len(dense_embeddings)} for {len(queries)} queries"
             )
 
+        ctx.logger.debug(f"[EmbedQuery] Dense embeddings generated: {len(dense_embeddings)}")
+
         return dense_embeddings
 
-    async def _generate_sparse_embeddings(self, queries: List[str]) -> List:
+    async def _generate_sparse_embeddings(self, queries: List[str], ctx: ApiContext) -> List:
         """Generate sparse BM25 embeddings for keyword search."""
         # BM25 is local and always available
         bm25_embedder = BM25Text2Vec(logger=None)
@@ -117,5 +106,7 @@ class EmbedQuery(SearchOperation):
                 f"Sparse embedding count mismatch: got {len(sparse_embeddings)} "
                 f"for {len(queries)} queries"
             )
+
+        ctx.logger.debug(f"[EmbedQuery] Sparse embeddings generated: {len(sparse_embeddings)}")
 
         return sparse_embeddings

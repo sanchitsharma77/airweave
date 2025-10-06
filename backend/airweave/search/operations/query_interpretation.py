@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from airweave import crud
+from airweave.api.context import ApiContext
 from airweave.db.session import get_db_context
 from airweave.search.context import SearchContext
 from airweave.search.prompts import QUERY_INTERPRETATION_SYSTEM_PROMPT
@@ -55,16 +56,20 @@ class QueryInterpretation(SearchOperation):
         """Depends on query expansion to get all query variations."""
         return ["QueryExpansion"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Extract filters from query using LLM."""
+        ctx.logger.debug("[QueryInterpretation] Extracting filters from query")
+
         query = context.query
         expanded_queries = state.get("expanded_queries", [])
 
         # Discover available fields for this collection
         available_fields = await self._discover_fields(context.collection_id)
+        ctx.logger.debug(f"[QueryInterpretation] Available fields: {available_fields}")
 
         # Build prompts
         system_prompt = self._build_system_prompt(available_fields)
+        ctx.logger.debug(f"[QueryInterpretation] System prompt: {system_prompt}")
         user_prompt = self._build_user_prompt(query, expanded_queries)
 
         # Validate prompt length
@@ -81,11 +86,13 @@ class QueryInterpretation(SearchOperation):
 
         # Check confidence threshold
         if result.confidence < self.CONFIDENCE_THRESHOLD:
+            ctx.logger.debug(f"[QueryInterpretation] Low confidence: {result.confidence}")
             # Low confidence - don't apply filters
             return
 
         # Validate and map filter conditions
         validated_filters = self._validate_filters(result.filters, available_fields)
+        ctx.logger.debug(f"[QueryInterpretation] Validated filters: {validated_filters}")
 
         if not validated_filters:
             # No valid filters to apply
@@ -93,6 +100,7 @@ class QueryInterpretation(SearchOperation):
 
         # Build Qdrant filter dict
         filter_dict = self._build_qdrant_filter(validated_filters)
+        ctx.logger.debug(f"[QueryInterpretation] Filter dict: {filter_dict}")
 
         # Write to state (UserFilter will merge with this if it runs)
         state["filter"] = filter_dict
@@ -231,8 +239,17 @@ class QueryInterpretation(SearchOperation):
 
     def _validate_prompt_length(self, system_prompt: str, user_prompt: str) -> None:
         """Validate prompts fit in context window."""
-        system_tokens = self.provider.count_tokens(system_prompt, model_type="llm")
-        user_tokens = self.provider.count_tokens(user_prompt, model_type="llm")
+        # Get LLM tokenizer from provider
+        tokenizer = getattr(self.provider, "llm_tokenizer", None)
+        if not tokenizer:
+            provider_name = self.provider.__class__.__name__
+            raise RuntimeError(
+                f"Provider {provider_name} does not have an LLM tokenizer. "
+                "Cannot validate prompt length."
+            )
+
+        system_tokens = self.provider.count_tokens(system_prompt, tokenizer)
+        user_tokens = self.provider.count_tokens(user_prompt, tokenizer)
 
         total_tokens = system_tokens + user_tokens
 

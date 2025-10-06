@@ -95,8 +95,21 @@ class SearchHelpers:
                 f"Search completed successfully but analytics data was not saved."
             )
 
+    def _determine_search_status(self, search_response: SearchResponse) -> str:
+        """Determine search status from response."""
+        if hasattr(search_response, "status") and search_response.status:
+            return search_response.status
+        return "success" if search_response.results else "no_results"
+
+    def _determine_search_type(self, search_request: SearchRequest) -> str:
+        """Determine search type from request parameters."""
+        if search_request.filter:
+            return "advanced"
+        return "basic"
+
+    @staticmethod
     def load_defaults() -> dict:
-        """Load search defaults form yaml."""
+        """Load search defaults from yaml."""
         path = Path(__file__).with_name("defaults.yml")
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -106,7 +119,7 @@ class SearchHelpers:
             search_defaults = data.get("search_defaults")
             if not isinstance(search_defaults, dict) or not search_defaults:
                 raise ValueError("'search_defaults' missing or empty")
-            return search_defaults
+            return data  # Return full data dict with all keys
         except Exception as e:
             raise HTTPException(status_code=500, detail="Failed to load search defaults") from e
 

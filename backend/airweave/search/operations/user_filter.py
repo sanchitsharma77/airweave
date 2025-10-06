@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from qdrant_client.http.models import Filter as QdrantFilter
 
+from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
@@ -34,16 +35,21 @@ class UserFilter(SearchOperation):
         """Depends on query interpretation (reads state["filter"] if it ran)."""
         return ["QueryInterpretation"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Merge user filter with extracted filter."""
+        ctx.logger.debug("[UserFilter] Applying user filter")
+
         # Get existing filter from state (written by QueryInterpretation if it ran)
         existing_filter = state.get("filter")
+        ctx.logger.debug(f"[UserFilter] Existing filter: {existing_filter}")
 
         # Normalize user filter to dict and map keys
         user_filter_dict = self._normalize_user_filter()
+        ctx.logger.debug(f"[UserFilter] User filter dict: {user_filter_dict}")
 
         # Merge filters using AND semantics
         merged_filter = self._merge_filters(user_filter_dict, existing_filter)
+        ctx.logger.debug(f"[UserFilter] Merged filter: {merged_filter}")
 
         # Write final filter to state (overwrites QueryInterpretation's filter if present)
         state["filter"] = merged_filter

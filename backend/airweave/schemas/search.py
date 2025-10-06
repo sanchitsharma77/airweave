@@ -39,16 +39,15 @@ class SearchRequest(BaseModel):
     expand_query: Optional[bool] = Field(
         description="Generate a few query variations to improve recall"
     )
+    interpret_filters: Optional[bool] = Field(
+        description="Extract structured filters from natural-language query"
+    )
     rerank: Optional[bool] = Field(
         description=(
             "Reorder the top candidate results for improved relevance. "
             "Max number of results that can be reranked is capped to around 1000."
         )
     )
-    interpret_filters: Optional[bool] = Field(
-        description="Extract structured filters from natural-language query"
-    )
-
     generate_answer: Optional[bool] = Field(
         description="Generate a natural-language answer to the query"
     )

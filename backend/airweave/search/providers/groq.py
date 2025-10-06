@@ -11,6 +11,8 @@ from groq import AsyncGroq
 from pydantic import BaseModel
 from tiktoken import Encoding
 
+from airweave.api.context import ApiContext
+
 from ._base import BaseProvider
 from .schemas import ProviderModelSpec
 
@@ -22,14 +24,16 @@ class GroqProvider(BaseProvider):
     MAX_STRUCTURED_OUTPUT_TOKENS = 2000
     RERANK_SAFETY_TOKENS = 1500
 
-    def __init__(self, api_key: str, model_spec: ProviderModelSpec) -> None:
+    def __init__(self, api_key: str, model_spec: ProviderModelSpec, ctx: ApiContext) -> None:
         """Initialize Groq provider with model specs from defaults.yml."""
-        super().__init__(api_key, model_spec)
+        super().__init__(api_key, model_spec, ctx)
 
         try:
             self.client = AsyncGroq(api_key=api_key)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Groq client: {e}") from e
+
+        self.ctx.logger.debug(f"[GroqProvider] Initialized with model spec: {model_spec}")
 
         self.llm_tokenizer: Optional[Encoding] = None
         self.rerank_tokenizer: Optional[Encoding] = None

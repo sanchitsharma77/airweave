@@ -27,7 +27,7 @@ class SearchOrchestrator:
 
         execution_order = self._resolve_execution_order(context, ctx)
         for operation in execution_order:
-            await operation.execute(context, state)
+            await operation.execute(context, state, ctx)
 
         return SearchResponse(results=state.get("results"), completion=state.get("completion"))
 

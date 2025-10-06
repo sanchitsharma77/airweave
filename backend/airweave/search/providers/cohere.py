@@ -14,6 +14,8 @@ except ImportError:
 from pydantic import BaseModel
 from tiktoken import Encoding
 
+from airweave.api.context import ApiContext
+
 from ._base import BaseProvider
 from .schemas import ProviderModelSpec
 
@@ -21,9 +23,9 @@ from .schemas import ProviderModelSpec
 class CohereProvider(BaseProvider):
     """Cohere LLM provider."""
 
-    def __init__(self, api_key: str, model_spec: ProviderModelSpec) -> None:
+    def __init__(self, api_key: str, model_spec: ProviderModelSpec, ctx: ApiContext) -> None:
         """Initialize Cohere provider with model specs from defaults.yml."""
-        super().__init__(api_key, model_spec)
+        super().__init__(api_key, model_spec, ctx)
 
         if cohere is None:
             raise ImportError("Cohere package not installed. Install with: pip install cohere")
@@ -32,6 +34,8 @@ class CohereProvider(BaseProvider):
             self.client = cohere.AsyncClientV2(api_key=api_key)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Cohere client: {e}") from e
+
+        self.ctx.logger.debug(f"[CohereProvider] Initialized with model spec: {model_spec}")
 
         self.rerank_tokenizer: Optional[Encoding] = None
 

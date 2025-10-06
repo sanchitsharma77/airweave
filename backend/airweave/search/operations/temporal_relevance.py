@@ -11,6 +11,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 from qdrant_client.http import models as rest
 
+from airweave.api.context import ApiContext
 from airweave.platform.destinations.qdrant import QdrantDestination
 from airweave.search.context import SearchContext
 
@@ -43,8 +44,12 @@ class TemporalRelevance(SearchOperation):
         """Depends on filter operations."""
         return ["QueryInterpretation", "UserFilter"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Compute decay configuration from collection timestamps."""
+        ctx.logger.debug(
+            "[TemporalRelevance] Computing decay configuration from collection timestamps"
+        )
+
         # Get filter from state if available (respects filtered timespan)
         filter_dict = state.get("filter")
         qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
@@ -58,6 +63,8 @@ class TemporalRelevance(SearchOperation):
         oldest, newest = await self._get_min_max_timestamps(
             destination, str(context.collection_id), qdrant_filter
         )
+        ctx.logger.debug(f"[TemporalRelevance] Oldest timestamp: {oldest}")
+        ctx.logger.debug(f"[TemporalRelevance] Newest timestamp: {newest}")
 
         if not oldest or not newest:
             raise ValueError(
@@ -86,6 +93,7 @@ class TemporalRelevance(SearchOperation):
             midpoint=self.MIDPOINT,
             weight=self.weight,
         )
+        ctx.logger.debug(f"[TemporalRelevance] Decay config: {decay_config}")
 
         # Write to state
         state["decay_config"] = decay_config

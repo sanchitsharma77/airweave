@@ -9,6 +9,7 @@ from typing import Any, List
 
 from pydantic import BaseModel, Field
 
+from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 from airweave.search.prompts import QUERY_EXPANSION_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
@@ -42,12 +43,15 @@ class QueryExpansion(SearchOperation):
         """No dependencies - runs first if enabled."""
         return []
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Expand the query into variations."""
+        ctx.logger.debug("[QueryExpansion] Expanding the query into variations")
+
         query = context.query
 
         # Validate query length before sending to LLM
         self._validate_query_length(query)
+        ctx.logger.debug(f"[QueryExpansion] Query length validated: {len(query)} tokens")
 
         # Build prompts
         system_prompt = QUERY_EXPANSION_SYSTEM_PROMPT.format(max_expansions=self.MAX_EXPANSIONS)
@@ -65,6 +69,7 @@ class QueryExpansion(SearchOperation):
         # Validate and deduplicate alternatives
         alternatives = result.alternatives or []
         valid_alternatives = self._validate_alternatives(alternatives, query)
+        ctx.logger.debug(f"[QueryExpansion] Valid alternatives: {valid_alternatives}")
 
         # Ensure we got exactly the expected number of alternatives
         if len(valid_alternatives) != self.MAX_EXPANSIONS:
@@ -78,7 +83,16 @@ class QueryExpansion(SearchOperation):
 
     def _validate_query_length(self, query: str) -> None:
         """Validate query fits in provider's context window."""
-        token_count = self.provider.count_tokens(query, model_type="llm")
+        # Get LLM tokenizer from provider
+        tokenizer = getattr(self.provider, "llm_tokenizer", None)
+        if not tokenizer:
+            provider_name = self.provider.__class__.__name__
+            raise RuntimeError(
+                f"Provider {provider_name} does not have an LLM tokenizer. "
+                "Cannot validate query length."
+            )
+
+        token_count = self.provider.count_tokens(query, tokenizer)
 
         # Estimate prompt overhead: system prompt ~500 tokens, structured output ~500 tokens
         prompt_overhead = 1000

@@ -13,6 +13,7 @@ This operation:
 
 from typing import Any, List
 
+from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 from airweave.search.providers._base import BaseProvider
 
@@ -34,8 +35,10 @@ class Reranking(SearchOperation):
         """Depends on retrieval to have results to rerank."""
         return ["Retrieval"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Rerank results using the configured provider."""
+        ctx.logger.debug("[Reranking] Reranking results")
+
         results = state.get("results")
 
         if results is None:
@@ -55,6 +58,7 @@ class Reranking(SearchOperation):
             )
 
         rankings = await self.provider.rerank(context.query, documents, top_n)
+        ctx.logger.debug(f"[Reranking] Rankings: {rankings}")
 
         if not isinstance(rankings, list) or not rankings:
             raise RuntimeError("Provider returned empty or invalid rankings")

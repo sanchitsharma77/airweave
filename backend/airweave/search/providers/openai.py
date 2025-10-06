@@ -10,6 +10,8 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 from tiktoken import Encoding
 
+from airweave.api.context import ApiContext
+
 from ._base import BaseProvider
 from .schemas import ProviderModelSpec
 
@@ -18,16 +20,16 @@ class OpenAIProvider(BaseProvider):
     """OpenAI LLM provider."""
 
     MAX_COMPLETION_TOKENS = 10000
-    MAX_STRUCTURED_OUTPUT_TOKENS = 2000
+    MAX_STRUCTURED_OUTPUT_TOKENS = 20000
     MAX_EMBEDDING_BATCH_SIZE = 100
     RERANK_SAFETY_TOKENS = 1500
 
     TIMEOUT = 1200.0
     MAX_RETRIES = 2
 
-    def __init__(self, api_key: str, model_spec: ProviderModelSpec) -> None:
+    def __init__(self, api_key: str, model_spec: ProviderModelSpec, ctx: ApiContext) -> None:
         """Initialize OpenAI provider with model specs from defaults.yml."""
-        super().__init__(api_key, model_spec)
+        super().__init__(api_key, model_spec, ctx)
 
         try:
             self.client = AsyncOpenAI(
@@ -35,6 +37,8 @@ class OpenAIProvider(BaseProvider):
             )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize OpenAI client: {e}") from e
+
+        self.ctx.logger.debug(f"[OpenAIProvider] Initialized with model spec: {model_spec}")
 
         self.llm_tokenizer: Optional[Encoding] = None
         self.embedding_tokenizer: Optional[Encoding] = None
@@ -126,8 +130,11 @@ class OpenAIProvider(BaseProvider):
         if not max_tokens:
             raise ValueError("Max tokens not configured for embedding model")
 
+        if not self.embedding_tokenizer:
+            raise RuntimeError("Embedding tokenizer not initialized for OpenAI provider")
+
         for i, text in enumerate(texts):
-            token_count = self.count_tokens(text, model_type="embedding")
+            token_count = self.count_tokens(text, self.embedding_tokenizer)
             if token_count > max_tokens:
                 raise ValueError(
                     f"Text at index {i} has {token_count} tokens, exceeds max of {max_tokens}"

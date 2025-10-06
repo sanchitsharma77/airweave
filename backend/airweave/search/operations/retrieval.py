@@ -7,6 +7,7 @@ queries the vector database.
 
 from typing import Any, Dict, List
 
+from airweave.api.context import ApiContext
 from airweave.platform.destinations.qdrant import QdrantDestination
 from airweave.schemas.search import RetrievalStrategy
 from airweave.search.context import SearchContext
@@ -29,8 +30,10 @@ class Retrieval(SearchOperation):
         """Depends on operations that provide embeddings, filter, and decay config."""
         return ["QueryInterpretation", "EmbedQuery", "UserFilter", "TemporalRelevance"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Execute vector search against Qdrant."""
+        ctx.logger.debug("[Retrieval] Executing search against Qdrant")
+
         # Get inputs from state (embeddings validated by EmbedQuery)
         dense_embeddings = state.get("dense_embeddings")
         sparse_embeddings = state.get("sparse_embeddings")
@@ -49,6 +52,7 @@ class Retrieval(SearchOperation):
         is_bulk = len(dense_embeddings or sparse_embeddings) > 1
 
         if is_bulk:
+            ctx.logger.debug("[Retrieval] Executing bulk search")
             # Multiple queries - deduplicate then paginate
             results = await self._execute_bulk_search(
                 destination,
@@ -58,10 +62,12 @@ class Retrieval(SearchOperation):
                 decay_config,
                 search_method,
                 context,
+                ctx,
             )
             # Apply offset and limit after deduplication
             final_results = self._apply_pagination(results)
         else:
+            ctx.logger.debug("[Retrieval] Executing single search")
             # Single query - Qdrant handles offset, we just fetch limit
             final_results = await self._execute_single_search(
                 destination,
@@ -71,9 +77,11 @@ class Retrieval(SearchOperation):
                 decay_config,
                 search_method,
                 context,
+                ctx,
             )
 
         # Write to state
+        ctx.logger.debug(f"[Retrieval] results: {len(final_results)}")
         state["results"] = final_results
 
     def _get_search_method(self) -> str:
@@ -106,6 +114,7 @@ class Retrieval(SearchOperation):
         decay_config: Any,
         search_method: str,
         context: SearchContext,
+        ctx: ApiContext,
     ) -> List[Dict]:
         """Execute single query search - Qdrant handles offset."""
         query_vector = dense_embeddings[0] if dense_embeddings else None
@@ -116,6 +125,8 @@ class Retrieval(SearchOperation):
             has_reranking=context.reranking is not None,
             include_offset=False,
         )
+
+        ctx.logger.debug(f"[Retrieval] Fetch limit: {fetch_limit}")
 
         results = await destination.search(
             query_vector=query_vector,
@@ -146,6 +157,7 @@ class Retrieval(SearchOperation):
         decay_config: Any,
         search_method: str,
         context: SearchContext,
+        ctx: ApiContext,
     ) -> List[Dict]:
         """Execute bulk search - offset applied after deduplication."""
         # Calculate limit (include offset since we apply it manually)
@@ -153,6 +165,7 @@ class Retrieval(SearchOperation):
             has_reranking=context.reranking is not None,
             include_offset=True,
         )
+        ctx.logger.debug(f"[Retrieval] Fetch limit: {fetch_limit}")
 
         num_queries = len(dense_embeddings or sparse_embeddings)
         filter_conditions = [filter_dict] * num_queries if filter_dict else None

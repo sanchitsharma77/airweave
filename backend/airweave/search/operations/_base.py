@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, List
 
+from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 
 
@@ -13,6 +14,6 @@ class SearchOperation(ABC):
         pass
 
     @abstractmethod
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Execute the operation."""
         pass

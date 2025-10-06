@@ -14,7 +14,7 @@ from airweave.api.context import ApiContext
 from airweave.core.exceptions import NotFoundException
 from airweave.schemas.search import SearchRequest, SearchResponse
 from airweave.search.factory import factory
-from airweave.search.helpers import helpers
+from airweave.search.helpers import search_helpers
 from airweave.search.orchestrator import orchestrator
 
 
@@ -40,7 +40,7 @@ class SearchService:
             raise NotFoundException(detail=f"Collection '{readable_collection_id}' not found")
 
         ctx.logger.debug("Building search context")
-        search_context = factory.build(request_id, collection.id, search_request, stream)
+        search_context = factory.build(request_id, collection.id, search_request, stream, ctx)
 
         ctx.logger.debug("Executing search")
         response = await orchestrator.run(ctx, search_context)
@@ -48,7 +48,7 @@ class SearchService:
         duration_ms = (time.monotonic() - start_time) * 1000
         ctx.logger.debug(f"Search completed in {duration_ms:.2f}ms")
 
-        await helpers.persist_search_data(
+        await search_helpers.persist_search_data(
             db=db,
             search_request=search_request,
             search_response=response,

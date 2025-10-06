@@ -7,6 +7,7 @@ with inline citations.
 
 from typing import Any, Dict, List
 
+from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 from airweave.search.prompts import GENERATE_ANSWER_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
@@ -28,8 +29,10 @@ class GenerateAnswer(SearchOperation):
         """Depends on retrieval and reranking to have results."""
         return ["Retrieval", "Reranking"]
 
-    async def execute(self, context: SearchContext, state: dict[str, Any]) -> None:
+    async def execute(self, context: SearchContext, state: dict[str, Any], ctx: ApiContext) -> None:
         """Generate natural language answer from results."""
+        ctx.logger.debug("[GenerateAnswer] Generating natural language answer from results")
+
         if not self.provider.model_spec.llm_model:
             raise RuntimeError("LLM model not configured for answer generation provider")
 
@@ -43,6 +46,9 @@ class GenerateAnswer(SearchOperation):
             raise ValueError(f"Expected 'results' to be a list, got {type(results)}")
 
         formatted_context, chosen_count = self._budget_and_format_results(results, context.query)
+        ctx.logger.debug(
+            f"[GenerateAnswer] number of results that fit in context window: {chosen_count}"
+        )
 
         # Build messages for LLM
         system_prompt = GENERATE_ANSWER_SYSTEM_PROMPT.format(context=formatted_context)

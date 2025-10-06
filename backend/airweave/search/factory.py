@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from airweave.api.context import ApiContext
 from airweave.core.config import settings
 from airweave.schemas.search import SearchDefaults, SearchRequest
 from airweave.search.context import SearchContext
@@ -30,6 +31,9 @@ from airweave.search.providers.schemas import (
     RerankModelConfig,
 )
 
+# Rebuild SearchContext model now that all operation classes are imported
+SearchContext.model_rebuild()
+
 defaults_data = search_helpers.load_defaults()
 defaults = SearchDefaults(**defaults_data["search_defaults"])
 provider_models = defaults_data.get("provider_models", {})
@@ -45,6 +49,7 @@ class SearchFactory:
         collection_id: UUID,
         search_request: SearchRequest,
         stream: bool,
+        ctx: ApiContext,
     ) -> SearchContext:
         """Build SearchContext from request with validated YAML defaults."""
         if not search_request.query or not search_request.query.strip():
@@ -96,11 +101,11 @@ class SearchFactory:
 
         # Select providers for LLM-based operations
         api_keys = self._get_available_api_keys()
-        providers = self._select_all_providers(
-            api_keys, expand_query, interpret_filters, rerank, generate_answer
+        providers = self._create_provider_for_each_operation(
+            api_keys, expand_query, interpret_filters, rerank, generate_answer, ctx
         )
 
-        return SearchContext(
+        search_context = SearchContext(
             # Metadata
             request_id=request_id,
             collection_id=collection_id,
@@ -128,6 +133,25 @@ class SearchFactory:
             ),
         )
 
+        # Log search context configuration
+        ctx.logger.debug(
+            f"[SearchFactory] Built search context: \n"
+            f"request_id={request_id}, \n"
+            f"collection_id={collection_id}, \n"
+            f"stream={stream}, \n"
+            f"query='{search_request.query[:50]}...', \n"
+            f"retrieval_strategy={retrieval_strategy}, \n"
+            f"offset={offset}, \n"
+            f"limit={limit}, "
+            f"temporal_weight={temporal_weight}, \n"
+            f"expand_query={expand_query}, \n"
+            f"interpret_filters={interpret_filters}, \n"
+            f"rerank={rerank}, \n"
+            f"generate_answer={generate_answer}, \n"
+        )
+
+        return search_context
+
     def _get_available_api_keys(self) -> Dict[str, Optional[str]]:
         """Get available API keys from settings."""
         return {
@@ -136,40 +160,27 @@ class SearchFactory:
             "cohere": getattr(settings, "COHERE_API_KEY", None),
         }
 
-    def _select_all_providers(
+    def _create_provider_for_each_operation(
         self,
         api_keys: Dict[str, Optional[str]],
         expand_query: bool,
         interpret_filters: bool,
         rerank: bool,
         generate_answer: bool,
+        ctx: ApiContext,
     ) -> Dict[str, BaseProvider]:
-        """Select and validate all required providers.
-
-        Args:
-            api_keys: Available API keys
-            expand_query: Whether query expansion is enabled
-            interpret_filters: Whether query interpretation is enabled
-            rerank: Whether reranking is enabled
-            generate_answer: Whether answer generation is enabled
-
-        Returns:
-            Dict with provider instances for each operation
-
-        Raises:
-            ValueError: If required provider is not available
-        """
+        """Select and validate all required providers."""
         providers = {}
 
         # Embedding provider (always required)
-        providers["embed"] = self._init_provider_with_model_spec("embed_query", api_keys)
+        providers["embed"] = self._init_provider_with_model_spec("embed_query", api_keys, ctx)
         if not providers["embed"]:
             raise ValueError("Embedding provider required. Configure OPENAI_API_KEY")
 
         # Query expansion provider (required if enabled)
         if expand_query:
             providers["expansion"] = self._init_provider_with_model_spec(
-                "query_expansion", api_keys
+                "query_expansion", api_keys, ctx
             )
             if not providers["expansion"]:
                 raise ValueError(
@@ -180,7 +191,7 @@ class SearchFactory:
         # Query interpretation provider (required if enabled)
         if interpret_filters:
             providers["interpretation"] = self._init_provider_with_model_spec(
-                "query_interpretation", api_keys
+                "query_interpretation", api_keys, ctx
             )
             if not providers["interpretation"]:
                 raise ValueError(
@@ -190,7 +201,7 @@ class SearchFactory:
 
         # Reranking provider (required if enabled)
         if rerank:
-            providers["rerank"] = self._init_provider_with_model_spec("reranking", api_keys)
+            providers["rerank"] = self._init_provider_with_model_spec("reranking", api_keys, ctx)
             if not providers["rerank"]:
                 raise ValueError(
                     "Reranking enabled but no provider available. "
@@ -199,17 +210,20 @@ class SearchFactory:
 
         # Answer generation provider (required if enabled)
         if generate_answer:
-            providers["answer"] = self._init_provider_with_model_spec("generate_answer", api_keys)
+            providers["answer"] = self._init_provider_with_model_spec(
+                "generate_answer", api_keys, ctx
+            )
             if not providers["answer"]:
                 raise ValueError(
                     "Answer generation enabled but no provider available. "
                     "Configure GROQ_API_KEY or OPENAI_API_KEY"
                 )
 
+        ctx.logger.debug(f"[SearchFactory] Providers: {providers}")
         return providers
 
     def _init_provider_with_model_spec(
-        self, operation_name: str, api_keys: Dict[str, Optional[str]]
+        self, operation_name: str, api_keys: Dict[str, Optional[str]], ctx: ApiContext
     ) -> Optional[BaseProvider]:
         """Select and initialize provider for an operation."""
         preferences = operation_preferences.get(operation_name, {})
@@ -244,14 +258,26 @@ class SearchFactory:
             # Initialize provider with complete model spec
             try:
                 if provider_name == "groq":
-                    return GroqProvider(api_key=api_key, model_spec=model_spec)
+                    ctx.logger.debug(
+                        f"[Factory] Attempting to initialize GroqProvider for {operation_name}"
+                    )
+                    return GroqProvider(api_key=api_key, model_spec=model_spec, ctx=ctx)
                 elif provider_name == "openai":
-                    return OpenAIProvider(api_key=api_key, model_spec=model_spec)
+                    ctx.logger.debug(
+                        f"[Factory] Attempting to initialize OpenAIProvider for {operation_name}"
+                    )
+                    return OpenAIProvider(api_key=api_key, model_spec=model_spec, ctx=ctx)
                 elif provider_name == "cohere":
-                    return CohereProvider(api_key=api_key, model_spec=model_spec)
-            except Exception:
+                    ctx.logger.debug(
+                        f"[Factory] Attempting to initialize CohereProvider for {operation_name}"
+                    )
+                    return CohereProvider(api_key=api_key, model_spec=model_spec, ctx=ctx)
+            except Exception as e:
                 # Provider initialization failed (bad API key, missing tokenizer, etc.)
                 # Try next provider in fallback order
+                ctx.logger.warning(
+                    f"[Factory] Failed to initialize {provider_name} for {operation_name}: {e}"
+                )
                 continue
 
         # No provider available with valid API key and configuration

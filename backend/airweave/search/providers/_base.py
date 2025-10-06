@@ -6,16 +6,19 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from tiktoken import Encoding, get_encoding
 
+from airweave.api.context import ApiContext
+
 from .schemas import ProviderModelSpec
 
 
 class BaseProvider(ABC):
     """Base class for LLM providers."""
 
-    def __init__(self, api_key: str, model_spec: ProviderModelSpec) -> None:
+    def __init__(self, api_key: str, model_spec: ProviderModelSpec, ctx: ApiContext) -> None:
         """Initialize provider with API key and model specifications."""
         self.api_key = api_key
         self.model_spec = model_spec
+        self.ctx = ctx
 
     def _load_tokenizer(self, tokenizer_name: str, model_type: str) -> Optional[Encoding]:
         """Load a tokenizer by name with consistent error handling."""
@@ -32,7 +35,10 @@ class BaseProvider(ABC):
             raise RuntimeError("Tokenizer not initialized for token counting")
         if text is None:
             return 0
-        return len(tokenizer.encode(text))
+        token_count = len(tokenizer.encode(text))
+        self.ctx.logger.debug(f"[BaseProvider] Text: {text}")
+        self.ctx.logger.debug(f"[BaseProvider] Token count: {token_count}")
+        return token_count
 
     @abstractmethod
     async def generate(self, messages: List[Dict[str, str]]) -> str:
