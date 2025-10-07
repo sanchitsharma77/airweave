@@ -362,17 +362,17 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
         >
             {/* Header Section */}
             <div className={cn(
-                "px-5 py-4",
+                "px-4 py-3",
                 isDark ? "border-b border-gray-800/50" : "border-b border-gray-100"
             )}>
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-3">
                     {/* Title with Icon */}
                     <div className="flex-1 min-w-0">
-                        <div className="flex items-start gap-3">
+                        <div className="flex items-start gap-2.5">
                             {/* Source Icon */}
                             <div
                                 className={cn(
-                                    "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden",
+                                    "flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden",
                                     isDark ? "bg-gray-800/50" : "bg-gray-50"
                                 )}
                                 title={formattedSourceName}
@@ -388,14 +388,14 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                             </div>
                             <div className="flex-1 min-w-0 pt-0.5">
                                 <h3 className={cn(
-                                    "text-[15px] font-semibold mb-2 break-words leading-snug tracking-tight",
+                                    "text-[14px] font-semibold mb-1.5 break-words leading-snug tracking-tight",
                                     isDark ? "text-gray-50" : "text-gray-900"
                                 )}>
                                     {title}
                                 </h3>
 
                                 {/* Context and Type */}
-                                <div className="flex flex-wrap items-center gap-2 mb-2">
+                                <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
                                     {/* Source Badge */}
                                     <span className={cn(
                                         "inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium",
@@ -551,7 +551,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     <button
                         onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
                         className={cn(
-                            "w-full px-5 py-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
+                            "w-full px-4 py-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
                             isDark
                                 ? "text-gray-500 hover:text-gray-400 hover:bg-gray-900/30"
                                 : "text-gray-500 hover:text-gray-600 hover:bg-gray-50/50"
@@ -575,7 +575,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
 
                     {isPreviewExpanded && (
                         <div className={cn(
-                            "px-5 pb-4",
+                            "px-4 pb-3",
                             isDark ? "text-gray-200" : "text-gray-800"
                         )}>
                             <div className="relative">
@@ -704,7 +704,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                     <button
                         onClick={() => setIsPropertiesExpanded(!isPropertiesExpanded)}
                         className={cn(
-                            "w-full px-5 py-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
+                            "w-full px-4 py-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
                             isDark
                                 ? "text-gray-500 hover:text-gray-400 hover:bg-gray-900/30"
                                 : "text-gray-500 hover:text-gray-600 hover:bg-gray-50/50"
@@ -728,7 +728,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
 
                     {isPropertiesExpanded && (
                         <div className={cn(
-                            "px-5 pb-3",
+                            "px-4 pb-2.5",
                             isDark ? "bg-gray-900/20" : "bg-gray-50/50"
                         )}>
                             <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
@@ -858,7 +858,7 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                 <button
                     onClick={() => setIsRawExpanded(!isRawExpanded)}
                     className={cn(
-                        "w-full px-5 py-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
+                        "w-full px-4 py-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200",
                         isDark
                             ? "text-gray-500 hover:text-gray-400 hover:bg-gray-900/30"
                             : "text-gray-500 hover:text-gray-600 hover:bg-gray-50/50"

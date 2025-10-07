@@ -1381,7 +1381,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         {/* Trace Tab Content */}
                         <div style={{ display: activeTab === 'trace' ? 'block' : 'none' }}>
                             <div ref={traceContainerRef} onScroll={handleTraceScroll} className={cn(
-                                "overflow-auto max-h-[438px]",
+                                "overflow-auto max-h-[700px] raw-data-scrollbar",
                                 DESIGN_SYSTEM.spacing.padding.compact,
                                 isDark ? "bg-gray-950" : "bg-white"
                             )}>
@@ -1437,7 +1437,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
 
 
                                 <div className={cn(
-                                    "overflow-auto max-h-[438px] leading-relaxed",
+                                    "overflow-auto max-h-[700px] leading-relaxed raw-data-scrollbar",
                                     DESIGN_SYSTEM.spacing.padding.compact,
                                     DESIGN_SYSTEM.typography.sizes.body,
                                     isDark ? "bg-gray-900 text-gray-200" : "bg-white text-gray-800"
@@ -1652,7 +1652,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         {(results.length > 0 || isSearching) && (
                             <div style={{ display: activeTab === 'entities' ? 'block' : 'none' }}>
                                 <div className={cn(
-                                    "overflow-auto max-h-[438px]",
+                                    "overflow-auto max-h-[700px] raw-data-scrollbar",
                                     isDark ? "bg-gray-900" : "bg-white"
                                 )}>
                                     {isSearching ? (
@@ -1680,7 +1680,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                         </div>
                                     ) : (
                                         <div className={cn(
-                                            "px-4 py-3 space-y-4 raw-data-scrollbar",
+                                            "px-4 py-3 space-y-3 raw-data-scrollbar",
                                             DESIGN_SYSTEM.typography.sizes.label
                                         )}>
                                             {results.map((result: any, index: number) => (
