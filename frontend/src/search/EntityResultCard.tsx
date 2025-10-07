@@ -176,6 +176,10 @@ const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
         typeof b === 'string' ? b : b.name || b.title || ''
     ).filter(Boolean).join(' > ') : '';
 
+    // Extract the most relevant timestamp (updated_at from system metadata)
+    const relevantTimestamp = payload.airweave_system_metadata?.airweave_updated_at ||
+        payload.airweave_system_metadata?.airweave_created_at;
+
     // Get Airweave logo for section headers
     const airweaveLogo = isDark
         ? '/airweave-logo-svg-white-darkbg.svg'
@@ -434,6 +438,57 @@ const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
                                     )}>
                                         {entityType}
                                     </span>
+
+                                    {/* Last Updated Timestamp */}
+                                    {relevantTimestamp && (
+                                        <TooltipProvider delayDuration={200}>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <span className={cn(
+                                                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium cursor-help",
+                                                        isDark
+                                                            ? "bg-gray-800/40 text-gray-400 border border-gray-700/40"
+                                                            : "bg-gray-50/60 text-gray-600 border border-gray-200/50"
+                                                    )}>
+                                                        <Clock className="h-3 w-3" strokeWidth={1.5} />
+                                                        {formatDate(relevantTimestamp)}
+                                                    </span>
+                                                </TooltipTrigger>
+                                                <TooltipContent
+                                                    side="top"
+                                                    className={cn(
+                                                        "px-3 py-2 max-w-[280px] backdrop-blur-sm",
+                                                        isDark
+                                                            ? "bg-gray-900/95 border border-gray-700/50 shadow-xl"
+                                                            : "bg-white/95 border border-gray-200 shadow-lg"
+                                                    )}
+                                                >
+                                                    <div className="space-y-1">
+                                                        <div className={cn(
+                                                            "text-[11px] font-bold tracking-wide",
+                                                            isDark ? "text-gray-300" : "text-gray-700"
+                                                        )}>
+                                                            {payload.airweave_system_metadata?.airweave_updated_at ? 'Last Updated' : 'Created'}
+                                                        </div>
+                                                        <div className={cn(
+                                                            "text-[12px] font-mono",
+                                                            isDark ? "text-gray-400" : "text-gray-600"
+                                                        )}>
+                                                            {new Date(relevantTimestamp).toLocaleString('en-US', {
+                                                                year: 'numeric',
+                                                                month: 'short',
+                                                                day: 'numeric',
+                                                                hour: '2-digit',
+                                                                minute: '2-digit',
+                                                                second: '2-digit',
+                                                                hour12: true
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                    )}
                                 </div>
 
                                 {/* URL Link */}
