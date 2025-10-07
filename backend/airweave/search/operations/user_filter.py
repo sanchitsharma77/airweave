@@ -5,7 +5,7 @@ from query interpretation. Responsible for creating the final filter that
 will be passed to the retrieval operation.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from qdrant_client.http.models import Filter as QdrantFilter
 
@@ -13,9 +13,6 @@ from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class UserFilter(SearchOperation):
@@ -43,7 +40,6 @@ class UserFilter(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Merge user filter with extracted filter."""
         ctx.logger.debug("[UserFilter] Applying user filter")
@@ -62,7 +58,7 @@ class UserFilter(SearchOperation):
 
         # Emit filter merge event if both filters present
         if existing_filter and user_filter_dict:
-            await emitter.emit(
+            await context.emitter.emit(
                 "filter_merge",
                 {
                     "existing": existing_filter,
@@ -77,7 +73,7 @@ class UserFilter(SearchOperation):
 
         # Emit filter applied
         if merged_filter:
-            await emitter.emit(
+            await context.emitter.emit(
                 "filter_applied",
                 {"filter": merged_filter},
                 op_name=self.__class__.__name__,

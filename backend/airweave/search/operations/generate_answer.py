@@ -5,7 +5,7 @@ Synthesizes information from multiple results into a coherent response
 with inline citations.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import Any, Dict, List
 
 from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
@@ -13,9 +13,6 @@ from airweave.search.prompts import GENERATE_ANSWER_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class GenerateAnswer(SearchOperation):
@@ -37,7 +34,6 @@ class GenerateAnswer(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Generate natural language answer from results."""
         ctx.logger.debug("[GenerateAnswer] Generating natural language answer from results")
@@ -55,7 +51,7 @@ class GenerateAnswer(SearchOperation):
             raise ValueError(f"Expected 'results' to be a list, got {type(results)}")
 
         # Emit completion start
-        await emitter.emit(
+        await context.emitter.emit(
             "completion_start",
             {"model": self.provider.model_spec.llm_model.name},
             op_name=self.__class__.__name__,
@@ -67,7 +63,7 @@ class GenerateAnswer(SearchOperation):
         )
 
         # Emit event showing how many results fit in context
-        await emitter.emit(
+        await context.emitter.emit(
             "answer_context_budget",
             {
                 "total_results": len(results),
@@ -95,7 +91,7 @@ class GenerateAnswer(SearchOperation):
         state["completion"] = completion
 
         # Emit completion done
-        await emitter.emit(
+        await context.emitter.emit(
             "completion_done",
             {"text": completion},
             op_name=self.__class__.__name__,

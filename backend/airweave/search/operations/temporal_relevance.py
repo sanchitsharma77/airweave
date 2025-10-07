@@ -18,7 +18,6 @@ from ._base import SearchOperation
 
 if TYPE_CHECKING:
     from airweave.platform.destinations.qdrant import QdrantDestination
-    from airweave.search.emitter import EventEmitter
 
 
 class DecayConfig(BaseModel):
@@ -56,7 +55,6 @@ class TemporalRelevance(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Compute decay configuration from collection timestamps."""
         ctx.logger.debug(
@@ -64,7 +62,7 @@ class TemporalRelevance(SearchOperation):
         )
 
         # Emit recency start
-        await emitter.emit(
+        await context.emitter.emit(
             "recency_start",
             {"requested_weight": self.weight},
             op_name=self.__class__.__name__,
@@ -86,7 +84,7 @@ class TemporalRelevance(SearchOperation):
         ctx.logger.debug(f"[TemporalRelevance] Filtered document count: {document_count}")
 
         if document_count == 0:
-            await emitter.emit(
+            await context.emitter.emit(
                 "recency_skipped",
                 {"reason": "no_documents_in_filtered_space"},
                 op_name=self.__class__.__name__,
@@ -100,7 +98,7 @@ class TemporalRelevance(SearchOperation):
         ctx.logger.debug(f"[TemporalRelevance] Newest timestamp: {newest}")
 
         if not oldest or not newest:
-            await emitter.emit(
+            await context.emitter.emit(
                 "recency_skipped",
                 {"reason": "no_valid_timestamps"},
                 op_name=self.__class__.__name__,
@@ -113,7 +111,7 @@ class TemporalRelevance(SearchOperation):
             return
 
         if newest <= oldest:
-            await emitter.emit(
+            await context.emitter.emit(
                 "recency_skipped",
                 {"reason": "invalid_range"},
                 op_name=self.__class__.__name__,
@@ -127,7 +125,7 @@ class TemporalRelevance(SearchOperation):
         scale_seconds = (newest - oldest).total_seconds()
 
         if scale_seconds <= 0:
-            await emitter.emit(
+            await context.emitter.emit(
                 "recency_skipped",
                 {"reason": "zero_span"},
                 op_name=self.__class__.__name__,
@@ -135,7 +133,7 @@ class TemporalRelevance(SearchOperation):
             raise ValueError(f"Time span is zero or negative: {scale_seconds} seconds")
 
         # Emit time span details
-        await emitter.emit(
+        await context.emitter.emit(
             "recency_span",
             {
                 "field": self.DATETIME_FIELD,

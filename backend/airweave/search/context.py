@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from airweave.search.emitter import EventEmitter
     from airweave.search.operations import (
         EmbedQuery,
         GenerateAnswer,
@@ -32,6 +33,8 @@ class SearchContext(BaseModel):
     vector_size: int = Field()
 
     query: str = Field()
+
+    emitter: EventEmitter = Field()
 
     query_expansion: Optional[QueryExpansion] = Field()
     query_interpretation: Optional[QueryInterpretation] = Field()

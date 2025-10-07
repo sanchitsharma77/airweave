@@ -4,7 +4,7 @@ Uses LLM to interpret natural language queries and extract structured Qdrant fil
 Enables users to filter results using natural language without knowing filter syntax.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,9 +16,6 @@ from airweave.search.prompts import QUERY_INTERPRETATION_SYSTEM_PROMPT
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class FilterCondition(BaseModel):
@@ -64,7 +61,6 @@ class QueryInterpretation(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Extract filters from query using LLM."""
         ctx.logger.debug("[QueryInterpretation] Extracting filters from query")
@@ -73,7 +69,7 @@ class QueryInterpretation(SearchOperation):
         expanded_queries = state.get("expanded_queries", [])
 
         # Emit interpretation start
-        await emitter.emit(
+        await context.emitter.emit(
             "interpretation_start",
             {
                 "model": self.provider.model_spec.llm_model.name
@@ -106,7 +102,7 @@ class QueryInterpretation(SearchOperation):
         ctx.logger.debug(f"[QueryInterpretation] Confidence: {result.confidence}")
         if result.confidence < self.CONFIDENCE_THRESHOLD:
             # Low confidence - don't apply filters
-            await emitter.emit(
+            await context.emitter.emit(
                 "interpretation_skipped",
                 {
                     "reason": "confidence_below_threshold",
@@ -123,7 +119,7 @@ class QueryInterpretation(SearchOperation):
 
         if not validated_filters:
             # No valid filters to apply
-            await emitter.emit(
+            await context.emitter.emit(
                 "interpretation_skipped",
                 {
                     "reason": "no_valid_filters",
@@ -141,7 +137,7 @@ class QueryInterpretation(SearchOperation):
         state["filter"] = filter_dict
 
         # Emit filter applied
-        await emitter.emit(
+        await context.emitter.emit(
             "filter_applied",
             {"filter": filter_dict},
             op_name=self.__class__.__name__,

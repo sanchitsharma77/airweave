@@ -5,7 +5,7 @@ Generates dense neural embeddings and/or sparse BM25 embeddings based on
 the retrieval strategy (hybrid, neural, or keyword).
 """
 
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import Any, List, Optional
 
 from airweave.api.context import ApiContext
 from airweave.platform.embedding_models.bm25_text2vec import BM25Text2Vec
@@ -14,9 +14,6 @@ from airweave.search.context import SearchContext
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class EmbedQuery(SearchOperation):
@@ -36,13 +33,12 @@ class EmbedQuery(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Generate embeddings for queries."""
         ctx.logger.debug("[EmbedQuery] Generating embeddings for queries")
 
         # Emit embedding start
-        await emitter.emit(
+        await context.emitter.emit(
             "embedding_start",
             {"search_method": self.strategy.value},
             op_name=self.__class__.__name__,
@@ -75,7 +71,7 @@ class EmbedQuery(SearchOperation):
         state["sparse_embeddings"] = sparse_embeddings
 
         # Emit embedding done with stats
-        await self._emit_embedding_done(dense_embeddings, sparse_embeddings, emitter)
+        await self._emit_embedding_done(dense_embeddings, sparse_embeddings, context.emitter)
 
     def _get_queries_to_embed(self, context: SearchContext, state: dict[str, Any]) -> List[str]:
         """Get all queries to embed (original + expanded)."""
@@ -134,7 +130,7 @@ class EmbedQuery(SearchOperation):
         self,
         dense_embeddings: Optional[List[List[float]]],
         sparse_embeddings: Optional[List],
-        emitter: "EventEmitter",
+        emitter,
     ) -> None:
         """Emit embedding_done event with statistics.
 

@@ -9,6 +9,7 @@ from airweave.api.context import ApiContext
 from airweave.core.config import settings
 from airweave.schemas.search import SearchDefaults, SearchRequest
 from airweave.search.context import SearchContext
+from airweave.search.emitter import EventEmitter
 from airweave.search.helpers import search_helpers
 from airweave.search.operations import (
     EmbedQuery,
@@ -111,6 +112,9 @@ class SearchFactory:
             api_keys, expand_query, interpret_filters, rerank, generate_answer, ctx
         )
 
+        # Create event emitter for this search
+        emitter = EventEmitter(request_id=request_id, stream=stream)
+
         search_context = SearchContext(
             # Metadata
             request_id=request_id,
@@ -118,6 +122,8 @@ class SearchFactory:
             readable_collection_id=readable_collection_id,
             stream=stream,
             vector_size=vector_size,
+            # Event emitter
+            emitter=emitter,
             # Shared static data
             query=search_request.query,
             # Operation instances (execution plan)

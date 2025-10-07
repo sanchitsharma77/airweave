@@ -4,7 +4,7 @@ The orchestrator is responsible for:
 1. Extracting enabled operations from the search context
 2. Determining execution order based on dependencies
 3. Executing operations sequentially, passing state between them
-4. Managing event emission for streaming updates
+4. Using the emitter from context for streaming updates
 """
 
 from typing import Any, List, Set
@@ -12,7 +12,6 @@ from typing import Any, List, Set
 from airweave.api.context import ApiContext
 from airweave.schemas.search import SearchResponse
 from airweave.search.context import SearchContext
-from airweave.search.emitter import EventEmitter
 from airweave.search.operations._base import SearchOperation
 
 
@@ -25,8 +24,8 @@ class SearchOrchestrator:
 
     async def run(self, ctx: ApiContext, context: SearchContext) -> SearchResponse:
         """Execute search operations and return response."""
-        # Create event emitter for this search
-        emitter = EventEmitter(request_id=context.request_id, stream=context.stream)
+        # Get emitter from context
+        emitter = context.emitter
 
         # Emit initial start event
         await emitter.emit(
@@ -52,8 +51,8 @@ class SearchOrchestrator:
             await emitter.emit("operator_start", {"name": op_name}, op_name=op_name)
 
             try:
-                # Execute operation
-                await operation.execute(context, state, ctx, emitter)
+                # Execute operation (emitter is now in context)
+                await operation.execute(context, state, ctx)
 
                 # Emit operator_end
                 await emitter.emit("operator_end", {"name": op_name}, op_name=op_name)

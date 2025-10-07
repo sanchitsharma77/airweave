@@ -11,16 +11,13 @@ This operation:
   - Writes reordered list back to `state["results"]`
 """
 
-from typing import TYPE_CHECKING, Any, List
+from typing import Any, List
 
 from airweave.api.context import ApiContext
 from airweave.search.context import SearchContext
 from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class Reranking(SearchOperation):
@@ -43,7 +40,6 @@ class Reranking(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Rerank results using the configured provider."""
         ctx.logger.debug("[Reranking] Reranking results")
@@ -71,7 +67,7 @@ class Reranking(SearchOperation):
             )
 
         # Emit reranking start
-        await emitter.emit(
+        await context.emitter.emit(
             "reranking_start",
             {
                 "k": top_n,
@@ -89,7 +85,7 @@ class Reranking(SearchOperation):
             raise RuntimeError("Provider returned empty or invalid rankings")
 
         # Emit rankings snapshot
-        await emitter.emit(
+        await context.emitter.emit(
             "rankings",
             {"rankings": rankings},
             op_name=self.__class__.__name__,
@@ -104,7 +100,7 @@ class Reranking(SearchOperation):
         state["results"] = paginated
 
         # Emit reranking done
-        await emitter.emit(
+        await context.emitter.emit(
             "reranking_done",
             {
                 "rankings": rankings,

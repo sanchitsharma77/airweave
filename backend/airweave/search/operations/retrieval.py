@@ -5,7 +5,7 @@ filters, and optional temporal decay. This is the core search operation that
 queries the vector database.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import Any, Dict, List
 
 from airweave.api.context import ApiContext
 from airweave.platform.destinations.qdrant import QdrantDestination
@@ -13,9 +13,6 @@ from airweave.schemas.search import RetrievalStrategy
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
-
-if TYPE_CHECKING:
-    from airweave.search.emitter import EventEmitter
 
 
 class Retrieval(SearchOperation):
@@ -38,7 +35,6 @@ class Retrieval(SearchOperation):
         context: SearchContext,
         state: dict[str, Any],
         ctx: ApiContext,
-        emitter: "EventEmitter",
     ) -> None:
         """Execute vector search against Qdrant."""
         ctx.logger.debug("[Retrieval] Executing search against Qdrant")
@@ -54,7 +50,7 @@ class Retrieval(SearchOperation):
 
         # Emit vector search start
         num_embeddings = len(dense_embeddings or sparse_embeddings or [])
-        await emitter.emit(
+        await context.emitter.emit(
             "vector_search_start",
             {
                 "method": search_method,
@@ -114,7 +110,7 @@ class Retrieval(SearchOperation):
 
         # Add special event if no results found
         if final_count == 0:
-            await emitter.emit(
+            await context.emitter.emit(
                 "vector_search_no_results",
                 {
                     "reason": "no_matching_documents",
@@ -123,7 +119,7 @@ class Retrieval(SearchOperation):
                 op_name=self.__class__.__name__,
             )
 
-        await emitter.emit(
+        await context.emitter.emit(
             "vector_search_done",
             {
                 "final_count": final_count,
