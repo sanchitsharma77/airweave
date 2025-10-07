@@ -452,3 +452,102 @@ class TestSearch:
         # Should have some results from the initial sync
         if results.get("results"):
             assert len(results["results"]) > 0, "Expected results from synced Stripe data"
+
+    @pytest.mark.asyncio
+    async def test_legacy_get_endpoint(
+        self, api_client: httpx.AsyncClient, module_source_connection_stripe: dict
+    ):
+        """Test legacy GET endpoint with query params still works."""
+        response = await api_client.get(
+            f"/collections/{module_source_connection_stripe['readable_collection_id']}/search",
+            params={
+                "query": "invoices",
+                "response_type": "raw",
+                "limit": 10,
+                "offset": 0,
+                "recency_bias": 0.5,
+            },
+            timeout=90,
+        )
+
+        assert response.status_code == 200, f"Legacy GET search failed: {response.text}"
+
+        # Check for deprecation headers
+        assert response.headers.get("X-API-Deprecation") == "true"
+        assert "X-API-Deprecation-Message" in response.headers
+
+        results = response.json()
+        # Legacy response includes status and response_type fields
+        assert "results" in results
+        assert "status" in results
+        assert "response_type" in results
+        assert results["response_type"] == "raw"
+
+    @pytest.mark.asyncio
+    async def test_legacy_post_endpoint_with_old_schema(
+        self, api_client: httpx.AsyncClient, module_source_connection_stripe: dict
+    ):
+        """Test legacy POST endpoint with old schema fields still works."""
+        legacy_payload = {
+            "query": "customer payments",
+            "response_type": "completion",  # Old field
+            "expansion_strategy": "auto",  # Old field
+            "enable_reranking": True,  # Old field name
+            "enable_query_interpretation": False,  # Old field name
+            "search_method": "hybrid",  # Old field
+            "recency_bias": 0.3,  # Old field
+            "limit": 20,
+        }
+
+        response = await api_client.post(
+            f"/collections/{module_source_connection_stripe['readable_collection_id']}/search",
+            json=legacy_payload,
+            timeout=90,
+        )
+
+        assert response.status_code == 200, f"Legacy POST search failed: {response.text}"
+
+        # Check for deprecation headers
+        assert response.headers.get("X-API-Deprecation") == "true"
+        assert "X-API-Deprecation-Message" in response.headers
+
+        results = response.json()
+        # Legacy response includes status and response_type fields
+        assert "results" in results
+        assert "status" in results
+        assert "response_type" in results
+        assert results["response_type"] == "completion"
+
+        # With response_type=completion, should have completion field
+        if results.get("results"):
+            assert "completion" in results
+
+    @pytest.mark.asyncio
+    async def test_legacy_post_raw_response(
+        self, api_client: httpx.AsyncClient, module_source_connection_stripe: dict
+    ):
+        """Test legacy POST with response_type='raw' returns correct format."""
+        legacy_payload = {
+            "query": "invoices",
+            "response_type": "raw",
+            "expansion_strategy": "no_expansion",
+            "enable_reranking": False,
+            "limit": 5,
+        }
+
+        response = await api_client.post(
+            f"/collections/{module_source_connection_stripe['readable_collection_id']}/search",
+            json=legacy_payload,
+            timeout=90,
+        )
+
+        assert response.status_code == 200
+        results = response.json()
+
+        # Legacy response should have status and response_type
+        assert "status" in results
+        assert "response_type" in results
+        assert results["response_type"] == "raw"
+
+        # With response_type=raw, completion should be None
+        assert results.get("completion") is None
