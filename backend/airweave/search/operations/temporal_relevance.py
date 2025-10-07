@@ -82,9 +82,7 @@ class TemporalRelevance(SearchOperation):
         )
 
         # First, check if the filtered search space has any documents
-        document_count = await self._count_filtered_documents(
-            destination, str(context.collection_id), qdrant_filter
-        )
+        document_count = await self._count_filtered_documents(destination, qdrant_filter)
         ctx.logger.debug(f"[TemporalRelevance] Filtered document count: {document_count}")
 
         if document_count == 0:
@@ -97,9 +95,7 @@ class TemporalRelevance(SearchOperation):
             return
 
         # Get oldest and newest timestamps
-        oldest, newest = await self._get_min_max_timestamps(
-            destination, str(context.collection_id), qdrant_filter
-        )
+        oldest, newest = await self._get_min_max_timestamps(destination, qdrant_filter)
         ctx.logger.debug(f"[TemporalRelevance] Oldest timestamp: {oldest}")
         ctx.logger.debug(f"[TemporalRelevance] Newest timestamp: {newest}")
 
@@ -177,7 +173,6 @@ class TemporalRelevance(SearchOperation):
     async def _count_filtered_documents(
         self,
         destination: "QdrantDestination",
-        collection_id: str,
         qdrant_filter: Optional[rest.Filter],
     ) -> int:
         """Count documents in the filtered search space."""
@@ -185,7 +180,7 @@ class TemporalRelevance(SearchOperation):
             # Use scroll with limit=1 to check if any documents exist
             # This is more efficient than counting all documents
             result = await destination.client.scroll(
-                collection_name=collection_id,
+                collection_name=destination.collection_name,
                 limit=1,
                 scroll_filter=qdrant_filter,
                 with_payload=False,
@@ -206,13 +201,12 @@ class TemporalRelevance(SearchOperation):
     async def _get_min_max_timestamps(
         self,
         destination: "QdrantDestination",
-        collection_id: str,
         qdrant_filter: Optional[rest.Filter],
     ) -> tuple[Optional[datetime], Optional[datetime]]:
         """Fetch oldest and newest timestamps using ordered scrolls."""
         # Get oldest
         oldest_points = await destination.client.scroll(
-            collection_name=collection_id,
+            collection_name=destination.collection_name,
             limit=1,
             with_payload=[self.DATETIME_FIELD],
             order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="asc"),
@@ -221,7 +215,7 @@ class TemporalRelevance(SearchOperation):
 
         # Get newest
         newest_points = await destination.client.scroll(
-            collection_name=collection_id,
+            collection_name=destination.collection_name,
             limit=1,
             with_payload=[self.DATETIME_FIELD],
             order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="desc"),
