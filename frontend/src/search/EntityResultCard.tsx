@@ -16,6 +16,16 @@ interface EntityResultCardProps {
     onEntityIdClick?: (entityId: string) => void;
 }
 
+// Comparison function for React.memo
+const arePropsEqual = (prevProps: EntityResultCardProps, nextProps: EntityResultCardProps) => {
+    return (
+        prevProps.index === nextProps.index &&
+        prevProps.isDark === nextProps.isDark &&
+        prevProps.result.id === nextProps.result.id &&
+        prevProps.result.score === nextProps.result.score
+    );
+};
+
 /**
  * Format embeddable text for nice Markdown display
  * Extracts metadata fields and preserves content markdown structure
@@ -88,7 +98,7 @@ const formatEmbeddableText = (text: string): string => {
 /**
  * EntityResultCard - A human-readable card view for entity search results
  */
-export const EntityResultCard: React.FC<EntityResultCardProps> = ({
+const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
     result,
     index,
     isDark,
@@ -355,8 +365,8 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
             className={cn(
                 "group relative rounded-xl transition-all duration-300 overflow-hidden raw-data-scrollbar",
                 isDark
-                    ? "bg-gradient-to-br from-gray-900/90 to-gray-900/50 border border-gray-800/50"
-                    : "bg-white border border-gray-200/60",
+                    ? "bg-gradient-to-br from-gray-900/90 to-gray-900/50 border border-gray-800/60"
+                    : "bg-white border border-gray-200/80",
                 "backdrop-blur-sm"
             )}
         >
@@ -925,10 +935,23 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
                                     borderRadius: 0,
                                     fontSize: '0.65rem',
                                     padding: '0.75rem',
-                                    background: isDark ? 'rgba(17, 24, 39, 0.8)' : 'rgba(249, 250, 251, 0.95)',
+                                    background: 'transparent',
+                                    backgroundColor: 'transparent',
                                     maxHeight: '300px',
-                                    overflow: 'auto'
+                                    overflow: 'auto',
+                                    border: 'none',
+                                    boxShadow: 'none',
+                                    outline: 'none'
                                 }}
+                                showLineNumbers={false}
+                                wrapLines={false}
+                                lineProps={{ style: { backgroundColor: 'transparent', background: 'transparent' } }}
+                                codeTagProps={{ style: { backgroundColor: 'transparent', background: 'transparent' } }}
+                                PreTag={({ children, ...props }) => (
+                                    <pre {...props} style={{ ...props.style, background: 'transparent', backgroundColor: 'transparent', margin: 0, padding: 0 }}>
+                                        {children}
+                                    </pre>
+                                )}
                             >
                                 {JSON.stringify(payload, null, 2)}
                             </SyntaxHighlighter>
@@ -939,3 +962,6 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
         </div>
     );
 };
+
+// Export memoized version for better performance
+export const EntityResultCard = React.memo(EntityResultCardComponent, arePropsEqual);
