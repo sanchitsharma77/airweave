@@ -54,7 +54,7 @@ class SearchFactory:
     ) -> SearchContext:
         """Build SearchContext from request with validated YAML defaults."""
         if not search_request.query or not search_request.query.strip():
-            raise ValueError("Query is required")
+            raise HTTPException(status_code=422, detail="Query is required")
 
         retrieval_strategy = (
             search_request.retrieval_strategy
