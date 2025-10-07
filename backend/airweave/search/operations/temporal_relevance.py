@@ -5,7 +5,7 @@ time range of the (optionally filtered) collection. This enables recency-aware
 ranking that respects the dataset's time distribution.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from pydantic import BaseModel
@@ -245,13 +245,18 @@ class TemporalRelevance(SearchOperation):
             else:
                 return None
 
-        # Parse datetime
+        # Parse datetime and ensure timezone-aware
         if isinstance(value, str):
             try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt
             except ValueError:
                 return None
         elif isinstance(value, datetime):
+            # Ensure timezone-aware datetime
+            if value.tzinfo is None:
+                # Assume UTC for naive datetimes
+                return value.replace(tzinfo=timezone.utc)
             return value
 
         return None
