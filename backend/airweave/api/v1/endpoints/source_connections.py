@@ -67,6 +67,7 @@ async def oauth_callback(
 
     # Redirect to the app with success
     redirect_url = source_conn.auth.redirect_url
+
     if not redirect_url:
         # Fallback to app URL if redirect_url is not set
         from airweave.core.config import settings
@@ -74,9 +75,26 @@ async def oauth_callback(
         redirect_url = settings.app_url
 
     connection_id = source_conn.id
+
+    # Parse the redirect URL to preserve existing query parameters
+    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(redirect_url)
+    query_params = parse_qs(parsed.query, keep_blank_values=True)
+
+    # Add success parameters (using frontend-expected param names)
+    query_params["status"] = ["success"]
+    query_params["source_connection_id"] = [str(connection_id)]
+
+    # Reconstruct the URL with all query parameters
+    new_query = urlencode(query_params, doseq=True)
+    final_url = urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+    )
+
     return Response(
         status_code=303,
-        headers={"Location": f"{redirect_url}?success=true&connection_id={connection_id}"},
+        headers={"Location": final_url},
     )
 
 

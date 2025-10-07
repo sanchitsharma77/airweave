@@ -7,18 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud, schemas
 from airweave.api.context import ApiContext
-from airweave.core.config import settings
 from airweave.core.exceptions import NotFoundException
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.platform.destinations.qdrant import QdrantDestination
-
-
-def _determine_vector_size() -> int:
-    """Determine the vector size for a collection based on the source connection."""
-    if settings.OPENAI_API_KEY:
-        return 1536
-    else:
-        return 384
 
 
 class CollectionService:
@@ -69,13 +60,16 @@ class CollectionService:
         collection = await crud.collection.create(db, obj_in=collection_in, ctx=ctx, uow=uow)
         await uow.session.flush()
 
-        # Create a Qdrant destination
+        # Create Qdrant destination with organization context
+        # Vector size is auto-detected based on embedding model configuration
         qdrant_destination = await QdrantDestination.create(
-            collection_id=collection.id, logger=ctx.logger
+            collection_id=collection.id,
+            organization_id=ctx.organization.id,
+            logger=ctx.logger,
         )
 
-        # Setup the collection on Qdrant
-        await qdrant_destination.setup_collection(vector_size=_determine_vector_size())
+        # Setup the physical shared collection (auto-detects vector size)
+        await qdrant_destination.setup_collection()
 
         return schemas.Collection.model_validate(collection, from_attributes=True)
 

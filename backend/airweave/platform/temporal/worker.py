@@ -52,7 +52,7 @@ class TemporalWorker:
                 workflow_runner=sandbox_config,
                 max_concurrent_workflow_task_polls=8,
                 max_concurrent_activity_task_polls=16,
-                sticky_queue_schedule_to_start_timeout=timedelta(seconds=2),
+                sticky_queue_schedule_to_start_timeout=timedelta(seconds=0.5),
                 nonsticky_to_sticky_poll_ratio=0.5,
                 # Speed up cancel delivery by flushing heartbeats frequently
                 default_heartbeat_throttle_interval=timedelta(seconds=2),

@@ -40,7 +40,9 @@ class Connection(Base):
     status: Mapped[ConnectionStatus] = mapped_column(
         SQLAlchemyEnum(ConnectionStatus), default=ConnectionStatus.ACTIVE
     )
-    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organization.id"), nullable=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organization.id", ondelete="CASCADE"), nullable=True
+    )
     created_by_email: Mapped[str] = mapped_column(String, nullable=True)
     modified_by_email: Mapped[str] = mapped_column(String, nullable=True)
 

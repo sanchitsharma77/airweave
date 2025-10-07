@@ -81,8 +81,8 @@ export const sourceConnectionNameValidation: FieldValidation<string> = {
  */
 export const apiKeyValidation: FieldValidation<string> = {
   field: 'api_key',
-  debounceMs: 0,
-  showOn: 'blur',
+  debounceMs: 500,
+  showOn: 'change',
   validate: (value: string): ValidationResult => {
     if (!value) return { isValid: true, severity: 'info' };
 
@@ -434,21 +434,327 @@ export const redirectUrlValidation: FieldValidation<string> = {
 };
 
 /**
- * Get validation for a specific auth field type
+ * Repository name validation (owner/repo format)
  */
-export function getAuthFieldValidation(fieldType: string): FieldValidation<string> | null {
+export const repoNameValidation: FieldValidation<string> = {
+  field: 'repo_name',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Must contain a slash
+    if (!trimmed.includes('/')) {
+      return {
+        isValid: false,
+        hint: 'Repository must be in owner/repo format (e.g., airweave-ai/airweave)',
+        severity: 'warning'
+      };
+    }
+
+    const parts = trimmed.split('/');
+    if (parts.length !== 2) {
+      return {
+        isValid: false,
+        hint: 'Repository must be in owner/repo format (e.g., airweave-ai/airweave)',
+        severity: 'warning'
+      };
+    }
+
+    const [owner, repo] = parts;
+    if (!owner || !repo) {
+      return {
+        isValid: false,
+        hint: 'Both owner and repository name must be non-empty',
+        severity: 'warning'
+      };
+    }
+
+    // Check for valid characters
+    const validPattern = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/;
+    if (!validPattern.test(trimmed)) {
+      return {
+        isValid: false,
+        hint: 'Use only letters, numbers, hyphens, underscores, and dots',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Workspace validation (for Bitbucket, etc.)
+ */
+export const workspaceValidation: FieldValidation<string> = {
+  field: 'workspace',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Check for valid characters
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+      return {
+        isValid: false,
+        hint: 'Workspace can only contain letters, numbers, hyphens, and underscores',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Repository slug validation (for Bitbucket repo_slug)
+ */
+export const repoSlugValidation: FieldValidation<string> = {
+  field: 'repo_slug',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Check for valid characters (includes dots for repo slugs)
+    if (!/^[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+      return {
+        isValid: false,
+        hint: 'Repository slug can only contain letters, numbers, hyphens, underscores, and dots',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Database host validation (no protocol required)
+ */
+export const databaseHostValidation: FieldValidation<string> = {
+  field: 'host',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Host should NOT include protocol
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.includes('://')) {
+      return {
+        isValid: false,
+        hint: 'Host should not include protocol (e.g., use "localhost" not "postgresql://localhost")',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Database port validation
+ */
+export const databasePortValidation: FieldValidation<string> = {
+  field: 'port',
+  debounceMs: 300,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Check if the entire string is numeric (reject "123abc")
+    if (!/^\d+$/.test(trimmed)) {
+      return {
+        isValid: false,
+        hint: 'Port must be a number',
+        severity: 'warning'
+      };
+    }
+
+    const port = parseInt(trimmed, 10);
+    if (port < 1 || port > 65535) {
+      return {
+        isValid: false,
+        hint: 'Port must be between 1 and 65535',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Database tables validation
+ */
+export const databaseTablesValidation: FieldValidation<string> = {
+  field: 'tables',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return {
+        isValid: false,
+        hint: 'Tables field is required (use "*" for all tables)',
+        severity: 'info'
+      };
+    }
+
+    // Allow * for all tables
+    if (trimmed === '*') {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Split by comma and validate each table name
+    const tables = trimmed.split(',').map(t => t.trim());
+    for (const table of tables) {
+      if (!table) {
+        return {
+          isValid: false,
+          hint: 'Empty table name in list',
+          severity: 'warning'
+        };
+      }
+      // Check for valid characters (alphanumeric, underscore, dot)
+      if (!/^[a-zA-Z0-9_.]+$/.test(table)) {
+        return {
+          isValid: false,
+          hint: 'Table names can only contain letters, numbers, underscores, and dots',
+          severity: 'warning'
+        };
+      }
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * GitHub Personal Access Token validation
+ */
+export const githubTokenValidation: FieldValidation<string> = {
+  field: 'personal_access_token',
+  debounceMs: 0,
+  showOn: 'blur',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    // Check for valid GitHub token formats
+    const isClassicToken = trimmed.startsWith('ghp_');
+    const isFineGrainedToken = trimmed.startsWith('github_pat_');
+    const isLegacyToken = trimmed.length === 40 && /^[0-9a-fA-F]+$/.test(trimmed);
+
+    if (!isClassicToken && !isFineGrainedToken && !isLegacyToken) {
+      return {
+        isValid: false,
+        hint: 'GitHub token should start with "ghp_" (classic) or "github_pat_" (fine-grained)',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Stripe API key validation
+ */
+export const stripeApiKeyValidation: FieldValidation<string> = {
+  field: 'api_key',
+  debounceMs: 500,
+  showOn: 'change',
+  validate: (value: string): ValidationResult => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return { isValid: true, severity: 'info' };
+    }
+
+    if (!trimmed.startsWith('sk_test_') && !trimmed.startsWith('sk_live_')) {
+      return {
+        isValid: false,
+        hint: 'Stripe API key must start with "sk_test_" or "sk_live_"',
+        severity: 'warning'
+      };
+    }
+
+    if (trimmed.length < 20) {
+      return {
+        isValid: false,
+        hint: 'Stripe API key appears too short',
+        severity: 'warning'
+      };
+    }
+
+    return { isValid: true, severity: 'info' };
+  }
+};
+
+/**
+ * Get validation for a specific auth field type
+ * @param fieldType - The name of the field to validate
+ * @param sourceShortName - Optional source short name for source-specific validations
+ */
+export function getAuthFieldValidation(fieldType: string, sourceShortName?: string): FieldValidation<string> | null {
+  // Source-specific validations for common field names
+  if (fieldType === 'api_key' && sourceShortName === 'stripe') {
+    return stripeApiKeyValidation;
+  }
+
   switch (fieldType) {
+    // API keys and tokens
     case 'api_key':
+      return apiKeyValidation;
     case 'token':
     case 'access_token':
-    case 'personal_access_token':
       return apiKeyValidation;
+    case 'personal_access_token':
+      return githubTokenValidation;
+
+    // URLs
     case 'url':
     case 'endpoint':
     case 'base_url':
     case 'cluster_url':
-      // Note: 'host' is NOT included - database hosts don't need http:// prefix
+    case 'uri':
       return urlValidation;
+
+    // Database fields
+    case 'host':
+      return databaseHostValidation;
+    case 'port':
+      return databasePortValidation;
+    case 'tables':
+      return databaseTablesValidation;
+
+    // User credentials
     case 'email':
     case 'username':
       return emailValidation;
@@ -456,6 +762,16 @@ export function getAuthFieldValidation(fieldType: string): FieldValidation<strin
       return clientIdValidation;
     case 'client_secret':
       return clientSecretValidation;
+
+    // Source-specific fields
+    case 'repo_name':
+      return repoNameValidation;
+    case 'workspace':
+      return workspaceValidation;
+    case 'repo_slug':
+      return repoSlugValidation;
+
+    // Auth provider fields
     case 'auth_config_id':
       return authConfigIdValidation;
     case 'account_id':
@@ -468,6 +784,7 @@ export function getAuthFieldValidation(fieldType: string): FieldValidation<strin
       return environmentValidation;
     case 'external_user_id':
       return externalUserIdValidation;
+
     default:
       return null;
   }

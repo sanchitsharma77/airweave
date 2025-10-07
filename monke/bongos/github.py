@@ -29,7 +29,11 @@ class GitHubBongo(BaseBongo):
         super().__init__(credentials)
         # GitHub expects personal_access_token specifically
         self.personal_access_token = credentials["personal_access_token"]
-        self.repo_name = credentials["repo_name"]
+
+        # repo_name is now in config_fields (kwargs) after migration
+        self.repo_name = kwargs.get("repo_name")
+        if not self.repo_name:
+            raise ValueError("repo_name is required in config_fields")
 
         # Configuration from config file
         self.entity_count = int(kwargs.get("entity_count", 3))
@@ -69,7 +73,9 @@ class GitHubBongo(BaseBongo):
             token = str(uuid.uuid4())[:8]
 
             # Generate content
-            title, content = await generate_github_artifact(file_type, self.openai_model, token)
+            title, content = await generate_github_artifact(
+                file_type, self.openai_model, token
+            )
             slug = slugify(title)[:40] or f"monke-{token}"
             filename = f"{slug}-{token}.{self._get_file_extension(file_type)}"
 
@@ -106,7 +112,9 @@ class GitHubBongo(BaseBongo):
         # Update a subset of files based on configuration
         from monke.generation.github import generate_github_artifact
 
-        files_to_update = min(3, self.entity_count)  # Update max 3 files for any test size
+        files_to_update = min(
+            3, self.entity_count
+        )  # Update max 3 files for any test size
 
         async def update_single_entity(file_info: Dict[str, Any]) -> Dict[str, Any]:
             """Update a single GitHub file entity."""
@@ -149,7 +157,9 @@ class GitHubBongo(BaseBongo):
         # Use the specific deletion method to delete all entities
         return await self.delete_specific_entities(self.created_entities)
 
-    async def delete_specific_entities(self, entities: List[Dict[str, Any]]) -> List[str]:
+    async def delete_specific_entities(
+        self, entities: List[Dict[str, Any]]
+    ) -> List[str]:
         """Delete specific entities from GitHub."""
         self.logger.info(f"🥁 Deleting {len(entities)} specific entities from GitHub")
 
@@ -166,7 +176,9 @@ class GitHubBongo(BaseBongo):
                     self.logger.info(f"🗑️ Deleted test file: {test_file['path']}")
                     return test_file["path"]
                 else:
-                    self.logger.warning(f"⚠️ Could not find test file for entity: {entity['path']}")
+                    self.logger.warning(
+                        f"⚠️ Could not find test file for entity: {entity['path']}"
+                    )
                     return None
 
             except Exception as e:
@@ -179,16 +191,22 @@ class GitHubBongo(BaseBongo):
         deleted_paths = [path for path in results if path is not None]
 
         # VERIFICATION: Check if files are actually deleted from GitHub (in parallel)
-        self.logger.info("🔍 VERIFYING: Checking if files are actually deleted from GitHub")
+        self.logger.info(
+            "🔍 VERIFYING: Checking if files are actually deleted from GitHub"
+        )
 
         async def verify_deletion(entity: Dict[str, Any]) -> None:
             """Verify a single file deletion."""
             if entity["path"] in deleted_paths:
                 is_deleted = await self._verify_file_deleted(entity["path"])
                 if is_deleted:
-                    self.logger.info(f"✅ File {entity['path']} confirmed deleted from GitHub")
+                    self.logger.info(
+                        f"✅ File {entity['path']} confirmed deleted from GitHub"
+                    )
                 else:
-                    self.logger.warning(f"⚠️ File {entity['path']} still exists in GitHub!")
+                    self.logger.warning(
+                        f"⚠️ File {entity['path']} still exists in GitHub!"
+                    )
 
         # Verify all deletions in parallel
         verify_tasks = [verify_deletion(entity) for entity in entities]
@@ -205,7 +223,9 @@ class GitHubBongo(BaseBongo):
         try:
             # First, delete current session files
             if self.test_files:
-                self.logger.info(f"🗑️ Cleaning up {len(self.test_files)} current session files")
+                self.logger.info(
+                    f"🗑️ Cleaning up {len(self.test_files)} current session files"
+                )
                 for test_file in self.test_files:
                     try:
                         await self._force_delete_file(test_file["path"])
@@ -254,11 +274,14 @@ class GitHubBongo(BaseBongo):
                         if file["type"] == "file":
                             filename_lower = file["name"].lower()
                             # Check if filename contains any test patterns
-                            if any(pattern in filename_lower for pattern in test_patterns):
+                            if any(
+                                pattern in filename_lower for pattern in test_patterns
+                            ):
                                 # Also check for UUID patterns (our tokens)
                                 if (
                                     "-" in file["name"]
-                                    and len(file["name"].split("-")[-1].split(".")[0]) == 8
+                                    and len(file["name"].split("-")[-1].split(".")[0])
+                                    == 8
                                 ):
                                     test_files.append(file)
 
@@ -309,7 +332,8 @@ class GitHubBongo(BaseBongo):
 
                         # Delete all orphaned files in parallel
                         await asyncio.gather(
-                            *[delete_orphaned_file(f) for f in test_files], return_exceptions=True
+                            *[delete_orphaned_file(f) for f in test_files],
+                            return_exceptions=True,
                         )
                     else:
                         self.logger.info("✅ No orphaned test files found")
@@ -342,7 +366,9 @@ class GitHubBongo(BaseBongo):
                     params={"ref": self.branch},
                 )
 
-                self.logger.info(f"   Check response status: {check_response.status_code}")
+                self.logger.info(
+                    f"   Check response status: {check_response.status_code}"
+                )
 
                 if check_response.status_code == 200:
                     # File exists, get current SHA for update
@@ -424,7 +450,9 @@ class GitHubBongo(BaseBongo):
             )
 
             if response.status_code != 200:
-                raise Exception(f"Failed to update file: {response.status_code} - {response.text}")
+                raise Exception(
+                    f"Failed to update file: {response.status_code} - {response.text}"
+                )
 
             result = response.json()
 
@@ -462,7 +490,9 @@ class GitHubBongo(BaseBongo):
             )
 
             if response.status_code != 200:
-                raise Exception(f"Failed to delete file: {response.status_code} - {response.text}")
+                raise Exception(
+                    f"Failed to delete file: {response.status_code} - {response.text}"
+                )
 
     async def _verify_file_deleted(self, filename: str) -> bool:
         """Verify if a file is actually deleted from GitHub."""
@@ -676,7 +706,9 @@ This is an updated plain text file for testing various content types and ensurin
         }
         return extensions.get(file_type, "txt")
 
-    def _generate_file_content(self, file_type: str, file_num: int, random_suffix: str) -> str:
+    def _generate_file_content(
+        self, file_type: str, file_num: int, random_suffix: str
+    ) -> str:
         """Generate content for a test file based on type."""
         timestamp = str(int(time.time()))
 

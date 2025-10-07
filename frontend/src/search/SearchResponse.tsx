@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect, startTransition } from 'react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/lib/theme-provider';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,7 @@ import { CollapsibleCard } from '@/components/ui/CollapsibleCard';
 import { FiLayers, FiFilter, FiSliders, FiList, FiClock, FiGitMerge, FiType } from "react-icons/fi";
 import { ChartScatter } from 'lucide-react';
 import type { SearchEvent } from '@/search/types';
+import { EntityResultCard } from './EntityResultCard';
 
 interface SearchResponseProps {
     searchResponse: any;
@@ -65,9 +66,12 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     }, [isExpanded]);
 
     // State for active tab - default mirrors previous behavior; will be overridden on search start
-    const [activeTab, setActiveTab] = useState<'trace' | 'answer' | 'entities'>(
+    const [activeTab, setActiveTab] = useState<'trace' | 'answer' | 'entities' | 'raw'>(
         responseType === 'completion' ? 'answer' : 'entities'
     );
+
+    // Track if we've auto-switched tabs after search completion to avoid overriding manual user selection
+    const hasAutoSwitchedRef = useRef(false);
 
     // State for tooltip management
     const [openTooltip, setOpenTooltip] = useState<string | null>(null);
@@ -1121,19 +1125,26 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     useEffect(() => {
         if (isSearching) {
             setActiveTab('trace');
+            hasAutoSwitchedRef.current = false; // Reset flag when new search starts
         }
     }, [isSearching]);
 
     useEffect(() => {
         // When completion arrives (not streaming anymore), switch to answer tab
         if (responseType === 'completion' && !isSearching && completion && completion.length > 0) {
-            setActiveTab('answer');
+            if (activeTab === 'trace' && !hasAutoSwitchedRef.current) {
+                setActiveTab('answer');
+                hasAutoSwitchedRef.current = true;
+            }
         }
     }, [responseType, isSearching, completion]);
 
     useEffect(() => {
         if (responseType === 'raw' && !isSearching && Array.isArray(results) && results.length > 0) {
-            setActiveTab('entities');
+            if (!hasAutoSwitchedRef.current) {
+                setActiveTab('entities');
+                hasAutoSwitchedRef.current = true;
+            }
         }
     }, [responseType, isSearching, results]);
 
@@ -1165,7 +1176,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 {responseTime && (
                     <div className={cn("flex items-center opacity-80", DESIGN_SYSTEM.typography.sizes.label)}>
                         <Clock className={cn(DESIGN_SYSTEM.icons.inline, "mr-1")} strokeWidth={1.5} />
-                        <span className="font-mono">{responseTime}ms</span>
+                        <span className="font-mono">{(responseTime / 1000).toFixed(2)}s</span>
                     </div>
                 )}
             </div>
@@ -1233,7 +1244,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         )}>
                             {/* Trace tab (left) */}
                             <button
-                                onClick={() => setActiveTab('trace')}
+                                onClick={() => startTransition(() => setActiveTab('trace'))}
                                 className={cn(
                                     "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
                                     activeTab === 'trace'
@@ -1261,7 +1272,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                 <>
                                     {/* Entities (middle) */}
                                     <button
-                                        onClick={() => setActiveTab('entities')}
+                                        onClick={() => startTransition(() => setActiveTab('entities'))}
                                         className={cn(
                                             "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
                                             activeTab === 'entities'
@@ -1278,6 +1289,32 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                             Entities
                                         </div>
                                         {activeTab === 'entities' && (
+                                            <div className={cn(
+                                                "absolute bottom-0 left-0 right-0 h-0.5",
+                                                isDark ? "bg-blue-400" : "bg-blue-600"
+                                            )} />
+                                        )}
+                                    </button>
+
+                                    {/* Raw (middle-right) */}
+                                    <button
+                                        onClick={() => startTransition(() => setActiveTab('raw'))}
+                                        className={cn(
+                                            "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
+                                            activeTab === 'raw'
+                                                ? isDark
+                                                    ? "text-white bg-gray-800/70"
+                                                    : "text-gray-900 bg-white"
+                                                : isDark
+                                                    ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800/30"
+                                                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100/50"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-1.5">
+                                            <Braces className="h-3 w-3" strokeWidth={1.5} />
+                                            Raw
+                                        </div>
+                                        {activeTab === 'raw' && (
                                             <div className={cn(
                                                 "absolute bottom-0 left-0 right-0 h-0.5",
                                                 isDark ? "bg-blue-400" : "bg-blue-600"
@@ -1328,7 +1365,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                 <>
                                     {/* Answer (middle) */}
                                     <button
-                                        onClick={() => setActiveTab('answer')}
+                                        onClick={() => startTransition(() => setActiveTab('answer'))}
                                         className={cn(
                                             "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
                                             activeTab === 'answer'
@@ -1352,9 +1389,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                         )}
                                     </button>
 
-                                    {/* Entities (right) */}
+                                    {/* Entities (middle-right) */}
                                     <button
-                                        onClick={() => setActiveTab('entities')}
+                                        onClick={() => startTransition(() => setActiveTab('entities'))}
                                         className={cn(
                                             "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
                                             activeTab === 'entities'
@@ -1377,6 +1414,32 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                             )} />
                                         )}
                                     </button>
+
+                                    {/* Raw (right) */}
+                                    <button
+                                        onClick={() => startTransition(() => setActiveTab('raw'))}
+                                        className={cn(
+                                            "px-3.5 py-2 text-[13px] font-medium transition-colors relative",
+                                            activeTab === 'raw'
+                                                ? isDark
+                                                    ? "text-white bg-gray-800/70"
+                                                    : "text-gray-900 bg-white"
+                                                : isDark
+                                                    ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800/30"
+                                                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100/50"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-1.5">
+                                            <Braces className="h-3 w-3" strokeWidth={1.5} />
+                                            Raw
+                                        </div>
+                                        {activeTab === 'raw' && (
+                                            <div className={cn(
+                                                "absolute bottom-0 left-0 right-0 h-0.5",
+                                                isDark ? "bg-blue-400" : "bg-blue-600"
+                                            )} />
+                                        )}
+                                    </button>
                                 </>
                             )}
                         </div>
@@ -1390,9 +1453,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         isDark ? "border-gray-800/50" : "border-gray-200/50"
                     )}>
                         {/* Trace Tab Content */}
-                        <div style={{ display: activeTab === 'trace' ? 'block' : 'none' }}>
+                        {activeTab === 'trace' && (
                             <div ref={traceContainerRef} onScroll={handleTraceScroll} className={cn(
-                                "overflow-auto max-h-[438px]",
+                                "overflow-auto max-h-[700px] raw-data-scrollbar",
                                 DESIGN_SYSTEM.spacing.padding.compact,
                                 isDark ? "bg-gray-950" : "bg-white"
                             )}>
@@ -1440,13 +1503,13 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                     </>
                                 )}
                             </div>
-                        </div>
+                        )}
 
-                        {/* Answer Tab Content - Always rendered but hidden when not active */}
-                        {responseType === 'completion' && (completion || isSearching) && (
-                            <div style={{ display: activeTab === 'answer' ? 'block' : 'none' }}>
+                        {/* Answer Tab Content */}
+                        {activeTab === 'answer' && responseType === 'completion' && (completion || isSearching) && (
+                            <div>
                                 <div className={cn(
-                                    "overflow-auto max-h-[438px] leading-relaxed",
+                                    "overflow-auto max-h-[700px] leading-relaxed raw-data-scrollbar",
                                     DESIGN_SYSTEM.spacing.padding.compact,
                                     DESIGN_SYSTEM.typography.sizes.body,
                                     isDark ? "bg-gray-900 text-gray-200" : "bg-white text-gray-800"
@@ -1640,73 +1703,78 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                             </div>
                         )}
 
-                        {/* Entities Tab Content - Always rendered but hidden when not active */}
-                        {(results.length > 0 || isSearching) && (
-                            <div style={{ display: activeTab === 'entities' ? 'block' : 'none' }}>
-                                <div className={cn(
-                                    "overflow-auto max-h-[438px]",
-                                    isDark ? "bg-gray-900" : "bg-white"
-                                )}>
-                                    {isSearching ? (
-                                        <div className={cn(
-                                            DESIGN_SYSTEM.spacing.padding.default,
-                                            "animate-pulse space-y-2"
-                                        )}>
-                                            <div className="flex gap-2">
-                                                <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                                <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                            </div>
-                                            <div className="flex gap-2 ml-4">
-                                                <div className="h-4 w-16 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                                <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                            </div>
-                                            <div className="flex gap-2 ml-4">
-                                                <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                                <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                            </div>
-                                            <div className="flex gap-2 ml-4">
-                                                <div className="h-4 w-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                                <div className="h-4 w-36 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                                            </div>
-                                            <div className="h-4 w-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                        {/* Entities Tab Content */}
+                        {activeTab === 'entities' && (results.length > 0 || isSearching) && (
+                            <div className={cn(
+                                "overflow-auto max-h-[700px] raw-data-scrollbar",
+                                isDark ? "bg-gray-900" : "bg-white"
+                            )}>
+                                {isSearching ? (
+                                    <div className={cn(
+                                        DESIGN_SYSTEM.spacing.padding.default,
+                                        "animate-pulse space-y-2"
+                                    )}>
+                                        <div className="flex gap-2">
+                                            <div className="h-4 w-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                            <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
                                         </div>
-                                    ) : (
-                                        <div className={cn(
-                                            DESIGN_SYSTEM.spacing.padding.compact,
-                                            DESIGN_SYSTEM.typography.sizes.label
-                                        )} ref={jsonViewerRef}>
-                                            <JsonViewer
-                                                value={results}
-                                                theme={isDark ? "dark" : "light"}
-                                                style={{
-                                                    fontSize: '0.62rem',
-                                                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-                                                }}
-                                                rootName={false}
-                                                displayDataTypes={false}
-                                                enableClipboard={false}
-                                                quotesOnKeys={false}
-                                                indentWidth={2}
-                                                collapseStringsAfterLength={100}
-                                                groupArraysAfterLength={100}
-                                                defaultInspectDepth={10}
-                                                defaultInspectControl={(path, value) => {
-                                                    // Collapse airweave_system_metadata by default
-                                                    if (path.includes('airweave_system_metadata')) {
-                                                        return false;
-                                                    }
-                                                    // Expand all other nodes by default for better entity visibility
-                                                    return true;
-                                                }}
+                                        <div className="flex gap-2 ml-4">
+                                            <div className="h-4 w-16 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                            <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                        </div>
+                                        <div className="flex gap-2 ml-4">
+                                            <div className="h-4 w-20 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                            <div className="h-4 w-24 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                        </div>
+                                        <div className="flex gap-2 ml-4">
+                                            <div className="h-4 w-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                            <div className="h-4 w-36 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                        </div>
+                                        <div className="h-4 w-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                                    </div>
+                                ) : (
+                                    <div className={cn(
+                                        "px-4 py-3 space-y-5 raw-data-scrollbar",
+                                        DESIGN_SYSTEM.typography.sizes.label
+                                    )}>
+                                        {results.map((result: any, index: number) => (
+                                            <EntityResultCard
+                                                key={result.payload?.entity_id || result.id || index}
+                                                result={result}
+                                                index={index}
+                                                isDark={isDark}
+                                                onEntityIdClick={handleEntityClick}
                                             />
-                                        </div>
-                                    )}
-                                </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Raw Tab Content */}
+                        {activeTab === 'raw' && (
+                            <div className={cn(
+                                "overflow-auto max-h-[700px] raw-data-scrollbar p-4",
+                                isDark ? "bg-gray-950" : "bg-gray-50"
+                            )}>
+                                <JsonViewer
+                                    value={searchResponse}
+                                    theme={isDark ? 'dark' : 'light'}
+                                    displayDataTypes={false}
+                                    enableClipboard={true}
+                                    defaultInspectDepth={10}
+                                    style={{
+                                        fontSize: '12px',
+                                        fontFamily: 'monospace',
+                                        backgroundColor: 'transparent'
+                                    }}
+                                />
                             </div>
                         )}
                     </div>
-                )}
-            </div>
-        </CollapsibleCard>
+                )
+                }
+            </div >
+        </CollapsibleCard >
     );
 };

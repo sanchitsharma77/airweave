@@ -29,6 +29,7 @@ class SearchContext(BaseModel):
     collection_id: UUID = Field()
     readable_collection_id: str = Field()
     stream: bool = Field()
+    vector_size: int = Field()
 
     query: str = Field()
 

@@ -27,8 +27,8 @@ class OrganizationBilling(Base):
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Billing plan and status
-    billing_plan: Mapped[str] = mapped_column(String(50), default="TRIAL", nullable=False)
-    billing_status: Mapped[str] = mapped_column(String(50), default="ACTIVE", nullable=False)
+    billing_plan: Mapped[str] = mapped_column(String(50), default="trial", nullable=False)
+    billing_status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
 
     # Trial tracking - now only used for tracking Stripe's trial
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(

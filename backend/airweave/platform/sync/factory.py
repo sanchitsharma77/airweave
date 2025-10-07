@@ -999,7 +999,13 @@ class SyncFactory:
             )
 
         destination_class = resource_locator.get_destination(destination_schema)
-        destination = await destination_class.create(collection_id=collection.id, logger=ctx.logger)
+
+        # Vector size is auto-detected based on embedding model configuration
+        destination = await destination_class.create(
+            collection_id=collection.id,
+            organization_id=collection.organization_id,
+            logger=ctx.logger,
+        )
 
         # Set contextual logger on destination
         if hasattr(destination, "set_logger"):

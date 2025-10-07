@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud
 from airweave.api.context import ApiContext
-from airweave.core.exceptions import NotFoundException
+from airweave.core.exceptions import NotFoundException, PermissionException
 from airweave.core.shared_models import CollectionStatus
 from airweave.crud._base_organization import CRUDBaseOrganization
 from airweave.models.collection import Collection
@@ -126,9 +126,15 @@ class CRUDCollection(CRUDBaseOrganization[Collection, CollectionCreate, Collecti
         collection = result.scalar_one_or_none()
 
         if not collection:
-            raise NotFoundException(f"Collection with readable ID {readable_id} not found")
+            raise NotFoundException(f"Collection '{readable_id}' not found.")
 
-        await self._validate_organization_access(ctx, collection.organization_id)
+        # Validate organization access - convert PermissionException to NotFoundException
+        # to avoid leaking information about collection existence across organizations
+        try:
+            await self._validate_organization_access(ctx, collection.organization_id)
+        except PermissionException:
+            # Don't reveal that the collection exists but belongs to another organization
+            raise NotFoundException(f"Collection '{readable_id}' not found.")
 
         # Compute and set the ephemeral status
         collection = (await self._attach_ephemeral_status(db, [collection], ctx))[0]

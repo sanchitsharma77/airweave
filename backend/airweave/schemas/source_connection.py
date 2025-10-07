@@ -179,6 +179,10 @@ class SourceConnectionCreate(BaseModel):
         None,
         description="Authentication config (defaults to OAuth browser flow for OAuth sources)",
     )
+    redirect_url: Optional[str] = Field(
+        None,
+        description="URL to redirect to after OAuth flow completes (only used for OAuth flows)",
+    )
 
     @model_validator(mode="after")
     def set_sync_immediately_default(self):

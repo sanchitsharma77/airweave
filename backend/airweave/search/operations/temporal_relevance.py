@@ -78,7 +78,7 @@ class TemporalRelevance(SearchOperation):
         from airweave.platform.destinations.qdrant import QdrantDestination
 
         destination = await QdrantDestination.create(
-            collection_id=context.collection_id, logger=None
+            collection_id=context.collection_id, vector_size=context.vector_size, logger=None
         )
 
         # First, check if the filtered search space has any documents

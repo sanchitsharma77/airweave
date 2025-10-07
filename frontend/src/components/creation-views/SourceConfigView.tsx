@@ -12,6 +12,7 @@ import { AuthProviderSelector } from './AuthProviderSelector';
 import { useAuthProvidersStore } from '@/lib/stores/authProviders';
 import { ValidatedInput } from '@/components/ui/validated-input';
 import { sourceConnectionNameValidation, getAuthFieldValidation, clientIdValidation, clientSecretValidation, redirectUrlValidation } from '@/lib/validation/rules';
+import ReactMarkdown from 'react-markdown';
 
 interface SourceConfigViewProps {
   humanReadableId: string;
@@ -107,15 +108,11 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
     setCustomRedirectUrl(value);
   };
 
-  // Generate default redirect URL with HTTPS
+  // Generate default redirect URL
   const getDefaultRedirectUrl = () => {
     const origin = window.location.origin;
-    // Always use HTTPS by default, even for localhost
-    if (origin.startsWith('https://')) {
-      return `${origin}?oauth_return=true`;
-    }
-    // Convert HTTP to HTTPS for all origins (including localhost)
-    return origin.replace('http://', 'https://') + '?oauth_return=true';
+    // Use the current protocol (don't force HTTPS for local dev)
+    return `${origin}?oauth_return=true`;
   };
 
   // Update store when connection name changes
@@ -388,6 +385,8 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
         // For OAuth, don't sync until after authorization is complete
         // For external provider, sync immediately since we're using existing auth
         sync_immediately: authMode === 'direct_auth' || authMode === 'external_provider',
+        // Set redirect URL for OAuth flows
+        redirect_url: getDefaultRedirectUrl(),
       };
 
       // Add config fields if any - filter out empty values
@@ -470,7 +469,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
               <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
                 Create Source Connection
               </h2>
-              <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400">
+              <p className="my-2.5 text-sm text-gray-500 dark:text-gray-400">
                 Connect your {sourceName || 'data source'} to sync and search its content
               </p>
             </div>
@@ -531,7 +530,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                   {authMode === 'direct_auth' && sourceDetails?.auth_fields?.fields && (
                     <div className="space-y-3">
                       <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Configuration
+                        Direct Credentials Configuration
                       </label>
                       {sourceDetails.auth_fields.fields.map((field) => (
                         <div key={field.name}>
@@ -540,16 +539,42 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                             {field.required && <span className="text-red-500 ml-1">*</span>}
                           </label>
                           {field.description && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
-                              {field.description}
-                            </p>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
+                              <ReactMarkdown
+                                components={{
+                                  p: ({ children }) => <span>{children}</span>,
+                                  a: ({ href, children }) => (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                                    >
+                                      {children}
+                                    </a>
+                                  ),
+                                  ul: ({ children }) => (
+                                    <ul className="list-disc pl-4 my-2 space-y-0.5">
+                                      {children}
+                                    </ul>
+                                  ),
+                                  li: ({ children }) => (
+                                    <li className="text-xs text-gray-500 dark:text-gray-400">
+                                      {children}
+                                    </li>
+                                  ),
+                                }}
+                              >
+                                {field.description}
+                              </ReactMarkdown>
+                            </div>
                           )}
                           <ValidatedInput
                             type={field.name.includes('password') || field.name.includes('token') ? 'password' : 'text'}
                             placeholder=""
                             value={authFields[field.name] || ''}
                             onChange={(value) => setAuthFields({ ...authFields, [field.name]: value })}
-                            validation={getAuthFieldValidation(field.name)}
+                            validation={getAuthFieldValidation(field.name, sourceDetails?.short_name)}
                             className={cn(
                               "focus:border-gray-400 dark:focus:border-gray-600",
                               isDark
@@ -562,11 +587,14 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                     </div>
                   )}
 
-                  {/* Config fields */}
+                  {/* Config fields (additional configuration) */}
                   {sourceDetails?.config_fields?.fields && sourceDetails.config_fields.fields.length > 0 && (
                     <div className="space-y-3">
                       <label className="block text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Additional Configuration
+                        {(() => {
+                          const hasRequiredFields = sourceDetails.config_fields.fields.some((field: any) => field.required);
+                          return hasRequiredFields ? "Additional Configuration" : "Additional Configuration (optional)";
+                        })()}
                       </label>
                       {sourceDetails.config_fields.fields.map((field) => (
                         <div key={field.name}>
@@ -575,9 +603,35 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                             {field.required && <span className="text-red-500 ml-1">*</span>}
                           </label>
                           {field.description && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
-                              {field.description}
-                            </p>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">
+                              <ReactMarkdown
+                                components={{
+                                  p: ({ children }) => <span>{children}</span>,
+                                  a: ({ href, children }) => (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                                    >
+                                      {children}
+                                    </a>
+                                  ),
+                                  ul: ({ children }) => (
+                                    <ul className="list-disc pl-4 my-2 space-y-0.5">
+                                      {children}
+                                    </ul>
+                                  ),
+                                  li: ({ children }) => (
+                                    <li className="text-xs text-gray-500 dark:text-gray-400">
+                                      {children}
+                                    </li>
+                                  ),
+                                }}
+                              >
+                                {field.description}
+                              </ReactMarkdown>
+                            </div>
                           )}
                           <input
                             type="text"
@@ -687,7 +741,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                                 Need help setting up OAuth?
                               </span>
                               <a
-                                href="https://docs.airweave.ai/integrations/oauth-setup"
+                                href={`https://docs.airweave.ai/docs/connectors/${selectedSource.replace(/_/g, '-')}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className={cn(

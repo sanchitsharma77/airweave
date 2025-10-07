@@ -82,8 +82,49 @@ export const OrganizationSettings = ({
   const handleDeleteOrganization = async () => {
     if (!currentOrganization) return;
 
-    const confirmed = window.confirm('Are you sure you want to delete this organization? This action cannot be undone.');
-    if (!confirmed) return;
+    // Safety check: Verify user is owner
+    if (currentOrganization.role !== 'owner') {
+      toast.error('Only organization owners can delete the organization');
+      return;
+    }
+
+    // Check if this is the last organization
+    if (organizations.length === 1) {
+      toast.error('Cannot delete your only organization. You must have at least one organization.');
+      return;
+    }
+
+    // Extra warning if this is the primary organization
+    const warningMessage = currentOrganization.is_primary
+      ? `⚠️ WARNING: You are about to delete your PRIMARY organization "${currentOrganization.name}".\n\n` +
+        'This will permanently delete:\n' +
+        '• All collections and data\n' +
+        '• All source connections\n' +
+        '• All API keys\n' +
+        '• All organization settings\n\n' +
+        'This action CANNOT be undone.\n\n' +
+        'Type the organization name to confirm:'
+      : `Are you sure you want to delete "${currentOrganization.name}"?\n\n` +
+        'This will permanently delete:\n' +
+        '• All collections and data\n' +
+        '• All source connections\n' +
+        '• All API keys\n' +
+        '• All organization settings\n\n' +
+        'This action CANNOT be undone.\n\n' +
+        'Type the organization name to confirm:';
+
+    // Require typing the organization name for confirmation
+    const userInput = window.prompt(warningMessage);
+
+    if (!userInput) {
+      // User cancelled
+      return;
+    }
+
+    if (userInput.trim() !== currentOrganization.name) {
+      toast.error('Organization name does not match. Deletion cancelled.');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -104,17 +145,18 @@ export const OrganizationSettings = ({
       const remainingOrgs = organizations.filter(org => org.id !== currentOrganization.id);
 
       if (remainingOrgs.length === 0) {
-        // No organizations left, redirect to a page that handles this state
-        navigate('/');
+        // No organizations left, redirect to no-organization page
+        navigate('/no-organization');
       } else {
         // There are other organizations, navigate to dashboard which will show the new current org
         // Use window.location.href to ensure a full page reload and proper state initialization
         window.location.href = '/';
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to delete organization:', error);
-      toast.error('Failed to delete organization');
+      const errorMessage = error.message || 'Failed to delete organization';
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }

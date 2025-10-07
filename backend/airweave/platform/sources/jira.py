@@ -152,6 +152,41 @@ class JiraSource(BaseSource):
             self.logger.error(f"Request failed: {str(e)}")
             raise
 
+    @tenacity.retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+    )
+    async def _post_with_auth(
+        self, client: httpx.AsyncClient, url: str, json_data: Dict[str, Any]
+    ) -> Any:
+        """Make an authenticated POST request to the Jira REST API."""
+        access_token = await self.get_access_token()
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Atlassian-Token": "no-check",
+        }
+
+        if self.cloud_id:
+            headers["X-Cloud-ID"] = self.cloud_id
+
+        try:
+            response = await client.post(url, headers=headers, json=json_data)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401 and self._token_manager:
+                self.logger.info("Received 401 error, attempting to refresh token")
+                refreshed = await self._token_manager.refresh_on_unauthorized()
+                if refreshed:
+                    self.logger.info("Token refreshed, retrying request")
+                    raise
+            self.logger.error(f"Request failed: {str(e)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Request failed: {str(e)}")
+            raise
+
     # Entity Creation Functions
     def _create_project_entity(self, project_data):
         """Transform raw project data into a JiraProjectEntity."""
@@ -290,53 +325,43 @@ class JiraSource(BaseSource):
             f"Starting issue entity generation for project: {project_key} ({project.name})"
         )
 
-        # Setup for pagination
-        search_url = f"{self.base_url}/rest/api/3/search"
-        start_at = 0
+        # Setup for pagination - using new /rest/api/3/search/jql endpoint
+        search_url = f"{self.base_url}/rest/api/3/search/jql"
         max_results = 50
-        page = 1
-        total_issues = 0
+        next_page_token = None
 
         while True:
-            # Construct parameters with JQL query for the project
-            params = {
+            # Construct JSON body for POST request with JQL query
+            search_body = {
                 "jql": f"project = {project_key}",
-                "startAt": start_at,
                 "maxResults": max_results,
-                "fields": "summary,description,status,issuetype,created,updated",
+                "fields": ["summary", "description", "status", "issuetype", "created", "updated"],
             }
 
-            # Convert params to URL query string
-            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
-            full_url = f"{search_url}?{query_string}"
+            # Add nextPageToken if we have one (for pagination)
+            if next_page_token:
+                search_body["nextPageToken"] = next_page_token
 
-            self.logger.info(f"Fetching issues page {page} for project {project_key}")
-            data = await self._get_with_auth(client, full_url)
+            self.logger.info(f"Fetching issues for project {project_key}")
+            data = await self._post_with_auth(client, search_url, search_body)
 
             # Log response overview
             total = data.get("total", 0)
             issues = data.get("issues", [])
-            self.logger.info(
-                f"Found {len(issues)} issues on page {page} (total available: {total})"
-            )
+            self.logger.info(f"Found {len(issues)} issues (total available: {total})")
 
             # Process each issue
             for issue_data in issues:
-                total_issues += 1
                 issue_entity = self._create_issue_entity(issue_data, project)
                 yield issue_entity
 
-            # Check if we've processed all issues
-            start_at += max_results
-            page += 1
+            # Check if we've processed all issues using isLast flag
+            is_last = data.get("isLast", True)
+            next_page_token = data.get("nextPageToken")
 
-            if start_at >= total:
-                self.logger.info(
-                    f"Completed fetching all {total_issues} issues for project {project_key}"
-                )
+            if is_last or not next_page_token:
+                self.logger.info(f"Completed fetching all issues for project {project_key}")
                 break
-
-            self.logger.debug(f"Moving to next page, startAt={start_at}")
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from Jira."""

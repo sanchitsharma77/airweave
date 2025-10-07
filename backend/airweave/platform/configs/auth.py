@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from airweave.platform.configs._base import BaseConfig
 
@@ -93,15 +93,37 @@ class ODBCAuthConfig(AuthConfig):
 class BaseDatabaseAuthConfig(AuthConfig):
     """Base database authentication configuration."""
 
-    host: str = Field(title="Host", description="The host of the PostgreSQL database")
-    port: int = Field(title="Port", description="The port of the PostgreSQL database")
-    database: str = Field(title="Database", description="The name of the PostgreSQL database")
-    user: str = Field(title="Username", description="The username for the PostgreSQL database")
-    password: str = Field(title="Password", description="The password for the PostgreSQL database")
+    host: str = Field(
+        title="Host",
+        description="The host of the PostgreSQL database",
+        min_length=1,
+    )
+    port: int = Field(
+        title="Port",
+        description="The port of the PostgreSQL database",
+        gt=0,
+        le=65535,
+    )
+    database: str = Field(
+        title="Database",
+        description="The name of the PostgreSQL database",
+        min_length=1,
+    )
+    user: str = Field(
+        title="Username",
+        description="The username for the PostgreSQL database",
+        min_length=1,
+    )
+    password: str = Field(
+        title="Password",
+        description="The password for the PostgreSQL database",
+        min_length=1,
+    )
     schema: str = Field(
         default="public",
         title="Schema",
         description="The schema of the PostgreSQL database",
+        min_length=1,
     )
     tables: str = Field(
         default="*",
@@ -110,7 +132,62 @@ class BaseDatabaseAuthConfig(AuthConfig):
             "Comma separated list of tables and views to sync. For example, 'users,orders'. "
             "For all tables (not views), use '*'."
         ),
+        min_length=1,
     )
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        """Validate database host."""
+        if not v or not v.strip():
+            raise ValueError("Host is required")
+        v = v.strip()
+        # Host should not include protocol
+        if v.startswith(("http://", "https://", "postgresql://", "mysql://")):
+            raise ValueError(
+                "Host should not include protocol (e.g., use 'localhost' not 'postgresql://localhost')"
+            )
+        return v
+
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, v: int) -> int:
+        """Validate database port."""
+        if v <= 0 or v > 65535:
+            raise ValueError("Port must be between 1 and 65535")
+        return v
+
+    @field_validator("database", "user", "password", "schema")
+    @classmethod
+    def validate_not_empty(cls, v: str, info) -> str:
+        """Validate that required fields are not empty."""
+        if not v or not v.strip():
+            field_name = info.field_name.replace("_", " ").title()
+            raise ValueError(f"{field_name} is required")
+        return v.strip()
+
+    @field_validator("tables")
+    @classmethod
+    def validate_tables(cls, v: str) -> str:
+        """Validate tables list."""
+        if not v or not v.strip():
+            raise ValueError("Tables field is required (use '*' for all tables)")
+        v = v.strip()
+        # Allow * for all tables, or comma-separated list
+        if v == "*":
+            return v
+        # Split by comma and validate each table name
+        tables = [t.strip() for t in v.split(",")]
+        for table in tables:
+            if not table:
+                raise ValueError("Empty table name in list")
+            # Basic validation - alphanumeric, underscore, and dot (for schema.table)
+            if not all(c.isalnum() or c in "._" for c in table):
+                raise ValueError(
+                    f"Invalid table name '{table}'. "
+                    "Use alphanumeric characters, underscores, and dots only"
+                )
+        return v
 
     class Config:
         """Pydantic config."""
@@ -141,7 +218,8 @@ class QdrantAuthConfig(AuthConfig):
 
     url: str = Field(title="URL", description="The URL of the Qdrant service")
     api_key: str = Field(
-        title="API Key", description="The API key for the Qdrant service (if required)"
+        title="API Key",
+        description="The API key for the Qdrant service (if required)",
     )
 
 
@@ -174,49 +252,71 @@ class AttioAuthConfig(APIKeyAuthConfig):
     api_key: str = Field(
         title="API Key",
         description="The API key for Attio. Generate one in Workspace Settings > Developers.",
+        min_length=10,
     )
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, v: str) -> str:
+        """Validate Attio API key."""
+        if not v or not v.strip():
+            raise ValueError("API key is required")
+        v = v.strip()
+        # Check for common placeholder values
+        placeholder_values = ["your-api-key", "xxx", "api-key-here", "paste-here", "placeholder"]
+        if any(placeholder in v.lower() for placeholder in placeholder_values):
+            raise ValueError("Please enter your actual API key, not a placeholder value")
+        return v
 
 
 class BitbucketAuthConfig(AuthConfig):
     """Bitbucket authentication credentials schema.
 
-    Supports either:
-    - access_token (Bearer) + workspace/repo_slug, or
-    - username + app_password (legacy Basic) + workspace/repo_slug
+    Requires API token authentication with Atlassian email.
     """
 
-    # New token-based auth
-    access_token: Optional[str] = Field(
-        default=None,
+    access_token: str = Field(
         title="API Token",
         description=(
-            "Bitbucket API token used as a Bearer token. Provide this to use token-based auth."
+            "Create a Bitbucket API token "
+            "[here](https://id.atlassian.com/manage-profile/security/api-tokens) "
+            "with scopes:\n"
+            "- account\n"
+            "- read:user:bitbucket\n"
+            "- read:workspace:bitbucket\n"
+            "- read:repository:bitbucket\n\n"
+            "When using this, also provide your Atlassian email address."
         ),
+        min_length=10,
     )
 
-    # Legacy Basic auth (deprecated)
-    username: Optional[str] = Field(
-        default=None,
-        title="Username",
-        description="Your Bitbucket username (email when using API token)",
-    )
-    app_password: Optional[str] = Field(
-        default=None,
-        title="App Password",
-        description=("Bitbucket app password (deprecated). Prefer API tokens where available."),
+    email: str = Field(
+        title="Email",
+        description="Your Atlassian email address (required for API token authentication)",
     )
 
     workspace: str = Field(
-        default=None,
         title="Workspace",
         description="Bitbucket workspace slug (e.g., 'my-workspace')",
+        min_length=1,
+        pattern=r"^[a-zA-Z0-9_-]+$",
     )
     repo_slug: Optional[str] = Field(
         default="",
         title="Repository Slug",
         description="Specific repository to sync (e.g., 'my-repo'). "
         "If empty, syncs all repositories in the workspace.",
+        pattern=r"^[a-zA-Z0-9_.-]*$",
     )
+
+    @model_validator(mode="after")
+    def validate_required_fields(self):
+        """Ensure required authentication fields are provided."""
+        if not self.access_token or not self.access_token.strip():
+            raise ValueError("API token is required")
+        if not self.email or not self.email.strip():
+            raise ValueError("Atlassian email is required")
+        return self
 
 
 class BoxAuthConfig(OAuth2WithRefreshAuthConfig):
@@ -277,11 +377,29 @@ class GitHubAuthConfig(AuthConfig):
     personal_access_token: str = Field(
         title="Personal Access Token",
         description="GitHub PAT with read rights (code, contents, metadata) to the repository",
+        min_length=4,
     )
-    repo_name: str = Field(
-        title="Repository Name",
-        description="Repository to sync in owner/repo format (e.g., 'airweave-ai/airweave')",
-    )
+
+    @field_validator("personal_access_token")
+    @classmethod
+    def validate_personal_access_token(cls, v: str) -> str:
+        """Validate GitHub personal access token format."""
+        if not v or not v.strip():
+            raise ValueError("Personal access token is required")
+        v = v.strip()
+        # GitHub classic tokens start with ghp_, fine-grained tokens start with github_pat_
+        # Also allow legacy tokens (40 char hex)
+        if not (
+            v.startswith("ghp_")
+            or v.startswith("github_pat_")
+            or v.startswith("gho_")
+            or (len(v) == 40 and all(c in "0123456789abcdef" for c in v.lower()))
+        ):
+            raise ValueError(
+                "Invalid token format. Expected format: "
+                "ghp_... or github_pat_... or gho_... or 40-character hex"
+            )
+        return v
 
 
 class GmailAuthConfig(OAuth2BYOCAuthConfig):
@@ -381,11 +499,24 @@ class CTTIAuthConfig(AuthConfig):
     """CTTI Clinical Trials authentication credentials schema."""
 
     username: str = Field(
-        title="Username", description="Username for the AACT Clinical Trials database"
+        title="Username",
+        description="Username for the AACT Clinical Trials database",
+        min_length=1,
     )
     password: str = Field(
-        title="Password", description="Password for the AACT Clinical Trials database"
+        title="Password",
+        description="Password for the AACT Clinical Trials database",
+        min_length=1,
     )
+
+    @field_validator("username", "password")
+    @classmethod
+    def validate_not_empty(cls, v: str, info) -> str:
+        """Validate that username and password are not empty."""
+        if not v or not v.strip():
+            field_name = info.field_name.replace("_", " ").title()
+            raise ValueError(f"{field_name} is required")
+        return v.strip()
 
 
 class PostgreSQLAuthConfig(BaseDatabaseAuthConfig):
@@ -420,7 +551,19 @@ class StripeAuthConfig(AuthConfig):
         description="The API key for the Stripe account. Should start with 'sk_test_' for test mode"
         " or 'sk_live_' for live mode.",
         pattern="^sk_(test|live)_[A-Za-z0-9]+$",
+        min_length=20,
     )
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, v: str) -> str:
+        """Validate Stripe API key format."""
+        if not v or not v.strip():
+            raise ValueError("API key is required")
+        v = v.strip()
+        if not v.startswith(("sk_test_", "sk_live_")):
+            raise ValueError("Stripe API key must start with 'sk_test_' or 'sk_live_'")
+        return v
 
 
 class TodoistAuthConfig(OAuth2AuthConfig):
@@ -441,9 +584,13 @@ class TrelloAuthConfig(AuthConfig):
     Trello uses OAuth1, which requires both a token and token secret.
     """
 
-    oauth_token: str = Field(title="OAuth Token", description="The OAuth1 access token for Trello")
+    oauth_token: str = Field(
+        title="OAuth Token",
+        description="The OAuth1 access token for Trello",
+    )
     oauth_token_secret: str = Field(
-        title="OAuth Token Secret", description="The OAuth1 access token secret for Trello"
+        title="OAuth Token Secret",
+        description="The OAuth1 access token secret for Trello",
     )
 
 

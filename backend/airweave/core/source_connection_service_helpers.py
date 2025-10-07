@@ -882,7 +882,11 @@ class SourceConnectionHelpers:
             if collection:
                 from airweave.platform.destinations.qdrant import QdrantDestination
 
-                destination = await QdrantDestination.create(collection_id=collection.id)
+                destination = await QdrantDestination.create(
+                    collection_id=collection.id,
+                    organization_id=collection.organization_id,
+                    # vector_size auto-detected based on embedding model configuration
+                )
                 await destination.delete_by_sync_id(source_conn.sync_id)
                 ctx.logger.info(f"Deleted data for sync {source_conn.sync_id}")
         except Exception as e:

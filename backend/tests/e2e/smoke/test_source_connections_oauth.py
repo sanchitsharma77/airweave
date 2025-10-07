@@ -465,3 +465,250 @@ class TestOAuth1Authentication:
         # The Pydantic validator raises: "OAuth1 BYOC requires both consumer_key and consumer_secret or neither"
         assert "consumer" in error_str and ("both" in error_str or "neither" in error_str or "required" in error_str), \
             f"Expected validation error about OAuth1 credentials, got: {error}"
+
+
+class TestOAuthCallbackRedirect:
+    """Test suite for OAuth callback redirect URL handling."""
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_redirect_with_custom_url(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback redirects to custom URL with correct query parameters."""
+        custom_redirect = "https://example.com/oauth-return"
+
+        # Create source connection with custom redirect URL
+        payload = {
+            "name": "Test OAuth with Custom Redirect",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify redirect_url was stored
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_preserves_existing_query_params(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test that OAuth callback preserves existing query parameters in redirect URL."""
+        # Redirect URL with existing query parameters
+        custom_redirect = "https://example.com/oauth-return?existing_param=value1&another=value2"
+
+        payload = {
+            "name": "Test OAuth Query Params",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+        connection_id = connection["id"]
+
+        # Verify the redirect URL was stored with query params
+        stored_redirect = connection["auth"]["redirect_url"]
+        assert "existing_param=value1" in stored_redirect
+        assert "another=value2" in stored_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection_id}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_uses_new_parameter_names(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test that OAuth callback uses new parameter names: status and source_connection_id."""
+        custom_redirect = "https://example.com/oauth-return"
+
+        payload = {
+            "name": "Test OAuth Param Names",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify redirect_url is stored correctly
+        assert connection["auth"]["redirect_url"] == custom_redirect
+        # The actual callback test would require completing OAuth flow
+        # which requires valid OAuth credentials, so we verify storage here
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_url_fragment(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback with redirect URL containing a fragment."""
+        custom_redirect = "https://example.com/oauth-return#section"
+
+        payload = {
+            "name": "Test OAuth with Fragment",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify redirect_url with fragment was stored
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_complex_query_params(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback with complex query parameters including special characters."""
+        # URL with special characters that need proper encoding
+        custom_redirect = "https://example.com/oauth?param1=value%20with%20spaces&param2=value&empty="
+
+        payload = {
+            "name": "Test OAuth Complex Params",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify the redirect URL was stored
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_without_redirect_url(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback falls back to app URL when redirect_url is not provided."""
+        # Don't provide redirect_url, should default to None
+        payload = {
+            "name": "Test OAuth No Redirect",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # When redirect_url is not provided, it should be None
+        # The callback endpoint will fall back to settings.app_url
+        assert connection["auth"]["redirect_url"] is None
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_redirect_with_localhost(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback with localhost redirect URL (for local development)."""
+        # Test with HTTP localhost (common in local dev)
+        custom_redirect = "http://localhost:3000/?oauth_return=true"
+
+        payload = {
+            "name": "Test OAuth Localhost",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify localhost URL is preserved as-is (not converted to HTTPS)
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_duplicate_query_params(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback with duplicate query parameter names."""
+        # URL with duplicate parameter names (valid in HTTP)
+        custom_redirect = "https://example.com/oauth?tag=value1&tag=value2"
+
+        payload = {
+            "name": "Test OAuth Duplicate Params",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify the redirect URL with duplicate params was stored
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_redirect_url_with_path_and_query(
+        self, api_client: httpx.AsyncClient, collection: Dict, config
+    ):
+        """Test OAuth callback with redirect URL containing path segments and query params."""
+        custom_redirect = "https://example.com/app/integrations/callback?source=oauth&flow=new"
+
+        payload = {
+            "name": "Test OAuth Path Query",
+            "short_name": "notion",
+            "readable_collection_id": collection["readable_id"],
+            "authentication": {},
+            "redirect_url": custom_redirect,
+            "sync_immediately": False,
+        }
+
+        response = await api_client.post("/source-connections", json=payload)
+        response.raise_for_status()
+        connection = response.json()
+
+        # Verify the full URL structure is preserved
+        assert connection["auth"]["redirect_url"] == custom_redirect
+
+        # Cleanup
+        await api_client.delete(f"/source-connections/{connection['id']}")

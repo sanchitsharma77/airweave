@@ -100,6 +100,11 @@ class SearchFactory:
                 status_code=422, detail="temporal_relevance must be between 0 and 1"
             )
 
+        # Auto-detect vector size based on embedding model configuration
+        from airweave.platform.destinations.collection_strategy import get_default_vector_size
+
+        vector_size = get_default_vector_size()
+
         # Select providers for LLM-based operations
         api_keys = self._get_available_api_keys()
         providers = self._create_provider_for_each_operation(
@@ -112,6 +117,7 @@ class SearchFactory:
             collection_id=collection_id,
             readable_collection_id=readable_collection_id,
             stream=stream,
+            vector_size=vector_size,
             # Shared static data
             query=search_request.query,
             # Operation instances (execution plan)

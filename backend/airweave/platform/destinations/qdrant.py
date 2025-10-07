@@ -37,6 +37,10 @@ from airweave.core.logging import logger as default_logger
 from airweave.platform.configs.auth import QdrantAuthConfig
 from airweave.platform.decorators import destination
 from airweave.platform.destinations._base import VectorDBDestination
+from airweave.platform.destinations.collection_strategy import (
+    get_default_vector_size,
+    get_physical_collection_name,
+)
 from airweave.platform.entities._base import ChunkEntity
 
 if TYPE_CHECKING:
@@ -47,13 +51,19 @@ KEYWORD_VECTOR_NAME = "bm25"
 
 @destination("Qdrant", "qdrant", config_class=QdrantAuthConfig, supports_vector=True)
 class QdrantDestination(VectorDBDestination):
-    """Qdrant destination with legacy-compatible sparse querying + batch search."""
+    """Qdrant destination with multi-tenant support and legacy compatibility."""
 
     def __init__(self):
         """Initialize defaults and placeholders for connection and collection state."""
         super().__init__()
-        self.collection_name: str | None = None
+        # Logical identifiers (from SQL)
         self.collection_id: UUID | None = None
+        self.organization_id: UUID | None = None
+
+        # Physical collection mapping
+        self.collection_name: str | None = None  # Physical collection name
+
+        # Connection
         self.url: str | None = None
         self.api_key: str | None = None
         self.client: AsyncQdrantClient | None = None
@@ -64,13 +74,38 @@ class QdrantDestination(VectorDBDestination):
     # ----------------------------------------------------------------------------------
     @classmethod
     async def create(
-        cls, collection_id: UUID, logger: Optional[ContextualLogger] = None
+        cls,
+        collection_id: UUID,
+        organization_id: Optional[UUID] = None,
+        vector_size: Optional[int] = None,
+        logger: Optional[ContextualLogger] = None,
     ) -> "QdrantDestination":
-        """Create and return a connected destination for the given collection."""
+        """Create and return a connected destination.
+
+        Args:
+            collection_id: SQL collection UUID
+            organization_id: Organization UUID
+            vector_size: Vector dimensions - auto-detected if not provided:
+                         - 1536 if OpenAI API key is set (text-embedding-3-small)
+                         - 384 otherwise (MiniLM-L6-v2)
+            logger: Logger instance
+
+        Returns:
+            Configured QdrantDestination instance with multi-tenant shared collection
+
+        Note:
+            Tenant isolation is achieved via airweave_collection_id filtering in Qdrant.
+            Each collection belongs to exactly one organization, so collection_id is sufficient.
+        """
         instance = cls()
         instance.set_logger(logger or default_logger)
         instance.collection_id = collection_id
-        instance.collection_name = str(collection_id)
+        instance.organization_id = organization_id
+        instance.vector_size = vector_size if vector_size is not None else get_default_vector_size()
+
+        # Map to physical shared collection
+        instance.collection_name = get_physical_collection_name(vector_size=instance.vector_size)
+        instance.logger.info(f"Mapped collection {collection_id} → {instance.collection_name}")
 
         credentials = await cls.get_credentials()
         if credentials:
@@ -146,31 +181,20 @@ class QdrantDestination(VectorDBDestination):
             self.logger.error(f"Error checking if collection exists: {e}")
             raise
 
-    async def setup_collection(self, *args, **kwargs) -> None:
-        """Set up the collection (accepts both legacy and new signatures).
+    async def setup_collection(self, vector_size: int | None = None) -> None:
+        """Set up physical Qdrant collection with multi-tenant support.
 
-        Supported call styles:
-          - setup_collection(vector_size)
-          - setup_collection(collection_id, vector_size)
-          - setup_collection(vector_size=..., collection_id=...)
+        Implements Qdrant's multi-tenancy recommendations:
+        - payload_m=16, m=0 for per-tenant HNSW indexes
+        - Tenant keyword index with is_tenant=true for co-location
+
+        See: https://qdrant.tech/documentation/guides/multiple-partitions/
+
+        Args:
+            vector_size: Vector dimensions (optional, uses instance value if not provided)
         """
-        collection_id: UUID | None = None
-        vector_size: Optional[int] = None
-
-        if len(args) == 1:
-            vector_size = args[0]
-        elif len(args) >= 2:
-            collection_id, vector_size = args[0], args[1]
-        else:
-            vector_size = kwargs.get("vector_size")
-            collection_id = kwargs.get("collection_id")
-
-        if vector_size is None:
-            raise TypeError("setup_collection() missing required argument: 'vector_size'")
-
-        if collection_id is not None:
-            self.collection_id = collection_id
-            self.collection_name = str(collection_id)
+        if vector_size:
+            self.vector_size = vector_size
 
         await self.ensure_client_readiness()
 
@@ -185,13 +209,21 @@ class QdrantDestination(VectorDBDestination):
                 self.logger.debug(f"Collection {self.collection_name} already exists.")
                 return
 
-            self.logger.info(f"Creating collection {self.collection_name}...")
+            self.logger.info(f"Creating physical collection {self.collection_name}...")
+
+            # Per-tenant HNSW as per Qdrant docs
+            # https://qdrant.tech/documentation/guides/multiple-partitions/#calibrate-performance
+            hnsw_config = rest.HnswConfigDiff(
+                payload_m=16,  # Build per-tenant HNSW
+                m=0,  # Disable global HNSW
+                ef_construct=100,
+            )
+
             await self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config={
-                    # DEFAULT_VECTOR_NAME is "" (empty string) in qdrant-client local
                     DEFAULT_VECTOR_NAME: rest.VectorParams(
-                        size=vector_size if vector_size else self.vector_size,
+                        size=self.vector_size,
                         distance=rest.Distance.COSINE,
                     ),
                 },
@@ -200,11 +232,57 @@ class QdrantDestination(VectorDBDestination):
                         modifier=rest.Modifier.IDF,
                     )
                 },
-                optimizers_config=rest.OptimizersConfigDiff(indexing_threshold=20000),
+                hnsw_config=hnsw_config,
+                optimizers_config=rest.OptimizersConfigDiff(
+                    indexing_threshold=20000,
+                    max_segment_size=200000,  # Smaller segments for better filtering
+                ),
                 on_disk_payload=True,
             )
 
-            # Range indexes for recency/filters
+            # Tenant index for co-location and performance
+            # https://qdrant.tech/documentation/guides/multiple-partitions/#calibrate-performance
+            self.logger.info("Creating tenant index on collection_id")
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="airweave_collection_id",
+                field_schema=rest.KeywordIndexParams(
+                    type=rest.PayloadSchemaType.KEYWORD,
+                    is_tenant=True,  # Enables co-location optimization
+                ),
+            )
+
+            # Indexes for delete operations (critical for WAL performance)
+            # Without these, deletes become full collection scans during recovery
+            self.logger.info("Creating sync_id index for delete operations")
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="airweave_system_metadata.sync_id",
+                field_schema=rest.PayloadSchemaType.KEYWORD,
+            )
+
+            self.logger.info("Creating db_entity_id index for delete operations")
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="airweave_system_metadata.db_entity_id",
+                field_schema=rest.PayloadSchemaType.KEYWORD,
+            )
+
+            self.logger.info("Creating entity_id index for bulk delete operations")
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="entity_id",
+                field_schema=rest.PayloadSchemaType.KEYWORD,
+            )
+
+            self.logger.info("Creating parent_entity_id index for parent-based deletes")
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="parent_entity_id",
+                field_schema=rest.PayloadSchemaType.KEYWORD,
+            )
+
+            # Timestamp indexes for recency boosting
             self.logger.debug(
                 f"Creating range indexes for timestamp fields in {self.collection_name}..."
             )
@@ -218,6 +296,8 @@ class QdrantDestination(VectorDBDestination):
                 field_name="airweave_system_metadata.airweave_created_at",
                 field_schema=rest.PayloadSchemaType.DATETIME,
             )
+
+            self.logger.info(f"✓ Collection {self.collection_name} created successfully")
 
         except Exception as e:
             if "already exists" not in str(e):
@@ -253,6 +333,9 @@ class QdrantDestination(VectorDBDestination):
         ):
             data_object["airweave_system_metadata"].pop("vectors", None)
 
+        # Add tenant metadata for filtering
+        data_object["airweave_collection_id"] = str(self.collection_id)
+
         # Deterministic per-chunk ID
         point_id = self._make_point_uuid(
             entity.airweave_system_metadata.db_entity_id, entity.entity_id
@@ -281,7 +364,7 @@ class QdrantDestination(VectorDBDestination):
 
     # --------- NEW: helpers to keep bulk_insert simple (fixes C901) -------------------
     def _build_point_struct(self, entity: ChunkEntity) -> rest.PointStruct:
-        """Convert a ChunkEntity to a Qdrant PointStruct."""
+        """Convert a ChunkEntity to a Qdrant PointStruct with tenant metadata."""
         entity_data = entity.to_storage_dict()
 
         if not entity.airweave_system_metadata:
@@ -294,6 +377,9 @@ class QdrantDestination(VectorDBDestination):
             entity_data["airweave_system_metadata"], dict
         ):
             entity_data["airweave_system_metadata"].pop("vectors", None)
+
+        # Add tenant metadata for filtering
+        entity_data["airweave_collection_id"] = str(self.collection_id)
 
         point_id = self._make_point_uuid(
             entity.airweave_system_metadata.db_entity_id, entity.entity_id
@@ -325,16 +411,26 @@ class QdrantDestination(VectorDBDestination):
         except Exception:  # pragma: no cover
             rhex = ()
 
-        write_timeout_errors: tuple[type[BaseException], ...] = ()
+        timeout_errors: tuple[type[BaseException], ...] = ()
         try:
             import httpcore  # type: ignore
             import httpx
 
-            write_timeout_errors = (httpx.WriteTimeout, httpcore.WriteTimeout)
+            # Catch both read and write timeouts
+            timeout_errors = (
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpcore.ReadTimeout,
+                httpcore.WriteTimeout,
+            )
         except Exception:  # pragma: no cover
-            write_timeout_errors = ()
+            timeout_errors = ()
 
         try:
+            self.logger.debug(
+                f"[Qdrant] Upserting {len(points)} points to collection={self.collection_name}, "
+                f"collection_id={self.collection_id}, vector_size={self.vector_size}"
+            )
             op = await self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
@@ -342,11 +438,26 @@ class QdrantDestination(VectorDBDestination):
             )
             if hasattr(op, "errors") and op.errors:
                 raise Exception(f"Errors during bulk insert: {op.errors}")
-        except (*write_timeout_errors, *rhex) as e:  # type: ignore[misc]
+        except (*timeout_errors, *rhex) as e:  # type: ignore[misc]
             n = len(points)
+
+            # Extract underlying error if wrapped
+            underlying_error = None
+            if hasattr(e, "__cause__") and e.__cause__:
+                underlying_error = e.__cause__
+
+            error_details = f"{type(e).__name__}: {e}"
+            if underlying_error:
+                error_details += (
+                    f" | Underlying: {type(underlying_error).__name__}: {underlying_error}"
+                )
+
             if n <= 1 or n <= min_batch:
                 self.logger.error(
-                    f"[Qdrant] Upsert failed on batch of {n} (min_batch={min_batch}): {e}"
+                    f"[Qdrant] Upsert failed on batch of {n} (min_batch={min_batch}) "
+                    f"to collection={self.collection_name}, collection_id={self.collection_id}. "
+                    f"Error: {error_details}",
+                    exc_info=True,  # This will log the full traceback
                 )
                 raise
             mid = n // 2
@@ -365,6 +476,20 @@ class QdrantDestination(VectorDBDestination):
             return
 
         await self.ensure_client_readiness()
+
+        # Log collection info before building points
+        self.logger.info(
+            f"[Qdrant] bulk_insert: {len(entities)} entities → collection={self.collection_name}, "
+            f"collection_id={self.collection_id}, vector_size={self.vector_size}"
+        )
+
+        # Verify collection exists
+        if not await self.collection_exists(self.collection_name):
+            self.logger.error(
+                f"[Qdrant] Collection {self.collection_name} does NOT exist! "
+                f"collection_id={self.collection_id}. Creating it now..."
+            )
+            await self.setup_collection(self.vector_size)
 
         point_structs = [self._build_point_struct(e) for e in entities]
 
@@ -386,10 +511,15 @@ class QdrantDestination(VectorDBDestination):
             points_selector=rest.FilterSelector(
                 filter=rest.Filter(
                     must=[
+                        # CRITICAL: Tenant filter for multi-tenant performance
+                        rest.FieldCondition(
+                            key="airweave_collection_id",
+                            match=rest.MatchValue(value=str(self.collection_id)),
+                        ),
                         rest.FieldCondition(
                             key="airweave_system_metadata.db_entity_id",
                             match=rest.MatchValue(value=str(db_entity_id)),
-                        )
+                        ),
                     ]
                 )
             ),
@@ -403,11 +533,16 @@ class QdrantDestination(VectorDBDestination):
             collection_name=self.collection_name,
             points_selector=rest.FilterSelector(
                 filter=rest.Filter(
-                    should=[
+                    must=[
+                        # CRITICAL: Tenant filter for multi-tenant performance
+                        rest.FieldCondition(
+                            key="airweave_collection_id",
+                            match=rest.MatchValue(value=str(self.collection_id)),
+                        ),
                         rest.FieldCondition(
                             key="airweave_system_metadata.sync_id",
                             match=rest.MatchValue(value=str(sync_id)),
-                        )
+                        ),
                     ]
                 )
             ),
@@ -424,6 +559,11 @@ class QdrantDestination(VectorDBDestination):
             points_selector=rest.FilterSelector(
                 filter=rest.Filter(
                     must=[
+                        # CRITICAL: Tenant filter for multi-tenant performance
+                        rest.FieldCondition(
+                            key="airweave_collection_id",
+                            match=rest.MatchValue(value=str(self.collection_id)),
+                        ),
                         rest.FieldCondition(
                             key="airweave_system_metadata.sync_id",
                             match=rest.MatchValue(value=str(sync_id)),
@@ -445,6 +585,11 @@ class QdrantDestination(VectorDBDestination):
             points_selector=rest.FilterSelector(
                 filter=rest.Filter(
                     must=[
+                        # CRITICAL: Tenant filter for multi-tenant performance
+                        rest.FieldCondition(
+                            key="airweave_collection_id",
+                            match=rest.MatchValue(value=str(self.collection_id)),
+                        ),
                         rest.FieldCondition(
                             key="parent_entity_id", match=rest.MatchValue(value=str(parent_id))
                         ),
@@ -468,6 +613,11 @@ class QdrantDestination(VectorDBDestination):
             points_selector=rest.FilterSelector(
                 filter=rest.Filter(
                     must=[
+                        # CRITICAL: Tenant filter for multi-tenant performance
+                        rest.FieldCondition(
+                            key="airweave_collection_id",
+                            match=rest.MatchValue(value=str(self.collection_id)),
+                        ),
                         rest.FieldCondition(
                             key="airweave_system_metadata.sync_id",
                             match=rest.MatchValue(value=str(sync_id)),
@@ -661,7 +811,7 @@ class QdrantDestination(VectorDBDestination):
         decay_config: Optional[DecayConfig],
         offset: Optional[int],
     ) -> list[rest.QueryRequest]:
-        """Create per-query request objects used by `bulk_search`."""
+        """Create per-query request objects with automatic tenant filtering."""
         requests: list[rest.QueryRequest] = []
         for i, qv in enumerate(query_vectors):
             sv = sparse_vectors[i] if sparse_vectors else None
@@ -672,8 +822,31 @@ class QdrantDestination(VectorDBDestination):
                 search_method=search_method,
                 decay_config=decay_config,
             )
+
+            # CRITICAL: Auto-inject tenant filter for multi-tenant isolation
+            # This ensures searches only return results from the correct collection
+            tenant_filter = rest.Filter(
+                must=[
+                    rest.FieldCondition(
+                        key="airweave_collection_id",
+                        match=rest.MatchValue(value=str(self.collection_id)),
+                    )
+                ]
+            )
+
+            # Merge with user-provided filters
             if filter_conditions and filter_conditions[i]:
-                req.filter = rest.Filter.model_validate(filter_conditions[i])
+                user_filter = rest.Filter.model_validate(filter_conditions[i])
+                # Combine must conditions (tenant filter + user filters)
+                combined_must = tenant_filter.must + (user_filter.must or [])
+                req.filter = rest.Filter(
+                    must=combined_must,
+                    should=user_filter.should,
+                    must_not=user_filter.must_not,
+                )
+            else:
+                req.filter = tenant_filter
+
             if offset and offset > 0:
                 req.offset = offset
             if score_threshold is not None:

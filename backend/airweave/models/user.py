@@ -22,6 +22,7 @@ class User(Base):
     auth0_id: Mapped[str] = mapped_column(String, unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Many-to-many relationship with organizations
     user_organizations: Mapped[List["UserOrganization"]] = relationship(

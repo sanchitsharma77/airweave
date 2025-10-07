@@ -607,16 +607,38 @@ class OrganizationService:
         collections = collections_result.scalars().all()
 
         logger.info(f"Deleting {len(collections)} Qdrant collections for organization {org_name}")
+        from qdrant_client.http import models as rest
+
         deleted_count = 0
         failed_count = 0
 
         for collection in collections:
             try:
-                destination = await QdrantDestination.create(collection_id=collection.id)
+                # Note: In multi-tenant mode, we don't delete the shared collection,
+                # just the points for this collection
+                destination = await QdrantDestination.create(
+                    collection_id=collection.id,
+                    organization_id=collection.organization_id,
+                    # vector_size auto-detected based on embedding model configuration
+                )
                 if destination.client:
-                    await destination.client.delete_collection(collection_name=str(collection.id))
+                    # Delete only this collection's data from shared collection
+                    await destination.client.delete(
+                        collection_name=destination.collection_name,
+                        points_selector=rest.FilterSelector(
+                            filter=rest.Filter(
+                                must=[
+                                    rest.FieldCondition(
+                                        key="airweave_collection_id",
+                                        match=rest.MatchValue(value=str(collection.id)),
+                                    )
+                                ]
+                            )
+                        ),
+                        wait=True,
+                    )
                     deleted_count += 1
-                    logger.info(f"Deleted Qdrant collection {collection.id} ({collection.name})")
+                    logger.info(f"Deleted data for collection {collection.id} ({collection.name})")
             except Exception as e:
                 failed_count += 1
                 logger.error(

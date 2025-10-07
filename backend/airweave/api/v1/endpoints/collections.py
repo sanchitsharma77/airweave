@@ -133,15 +133,34 @@ async def delete(
     if db_obj is None:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Delete the entire Qdrant collection
+    # Delete collection data from shared Qdrant collection
     try:
+        from qdrant_client.http import models as rest
+
         from airweave.platform.destinations.qdrant import QdrantDestination
 
-        destination = await QdrantDestination.create(collection_id=db_obj.id)
-        # Delete the entire collection in Qdrant
+        destination = await QdrantDestination.create(
+            collection_id=db_obj.id,
+            organization_id=db_obj.organization_id,
+            # vector_size auto-detected based on embedding model configuration
+        )
+        # Delete all points for this collection from shared collection
         if destination.client:
-            await destination.client.delete_collection(collection_name=str(db_obj.id))
-            ctx.logger.info(f"Deleted Qdrant collection {db_obj.id}")
+            await destination.client.delete(
+                collection_name=destination.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(db_obj.id)),
+                            )
+                        ]
+                    )
+                ),
+                wait=True,
+            )
+            ctx.logger.info(f"Deleted data for collection {db_obj.id} from shared collection")
     except Exception as e:
         ctx.logger.error(f"Error deleting Qdrant collection: {str(e)}")
         # Continue with deletion even if Qdrant deletion fails

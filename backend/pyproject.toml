@@ -60,6 +60,7 @@ pdfminer-six = "^20250506"
 resend = "^2.13.1"
 groq = "^0.31.1"
 cohere = "^5.13.11"
+cryptography = "^46.0.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"

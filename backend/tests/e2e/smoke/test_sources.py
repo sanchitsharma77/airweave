@@ -172,7 +172,7 @@ class TestSources:
     async def test_blocked_sources_have_no_auth_providers(self, api_client: httpx.AsyncClient):
         """Test that blocked sources correctly show empty supported_auth_providers."""
         # Sources that are known to be blocked by all providers
-        blocked_sources = ["github", "confluence", "jira", "bitbucket"]
+        blocked_sources = ["ctti"]
 
         for source_name in blocked_sources:
             response = await api_client.get(f"/sources/{source_name}")
@@ -194,7 +194,7 @@ class TestSources:
     async def test_supported_sources_have_auth_providers(self, api_client: httpx.AsyncClient):
         """Test that well-supported sources have auth providers listed."""
         # Sources that should be supported by at least one provider
-        supported_sources = ["notion", "slack", "stripe", "hubspot_crm", "linear"]
+        supported_sources = ["notion", "slack", "stripe", "hubspot_crm", "linear", "github"]
 
         sources_with_providers = []
         for source_name in supported_sources:

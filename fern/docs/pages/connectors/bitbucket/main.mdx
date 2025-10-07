@@ -41,35 +41,32 @@ This connector uses a custom authentication configuration.
 
 Bitbucket authentication credentials schema.
 
-Supports either:
-- access_token (Bearer) + workspace/repo_slug, or
-- username + app_password (legacy Basic) + workspace/repo_slug
+Requires API token authentication with Atlassian email.
 
 <ParamField
   path="access_token"
-  type="Optional[str]"
-  required={false}
+  type="str"
+  required={true}
 >
-  Bitbucket API token used as a Bearer token. Provide this to use token-based auth.
+  Create a Bitbucket API token [here](https://id.atlassian.com/manage-profile/security/api-tokens) with scopes:
+- account
+- read:user:bitbucket
+- read:workspace:bitbucket
+- read:repository:bitbucket
+
+When using this, also provide your Atlassian email address.
 </ParamField>
 <ParamField
-  path="username"
-  type="Optional[str]"
-  required={false}
+  path="email"
+  type="str"
+  required={true}
 >
-  Your Bitbucket username (email when using API token)
-</ParamField>
-<ParamField
-  path="app_password"
-  type="Optional[str]"
-  required={false}
->
-  Bitbucket app password (deprecated). Prefer API tokens where available.
+  Your Atlassian email address (required for API token authentication)
 </ParamField>
 <ParamField
   path="workspace"
   type="str"
-  required={false}
+  required={true}
 >
   Bitbucket workspace slug (e.g., 'my-workspace')
 </ParamField>
