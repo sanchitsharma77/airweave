@@ -130,7 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     fetchUserProfile();
-  }, [auth0IsAuthenticated, tokenInitialized, auth0User, enrichedUser]);
+  }, [auth0IsAuthenticated, tokenInitialized, auth0User]);
 
   // Login function
   const login = () => {
