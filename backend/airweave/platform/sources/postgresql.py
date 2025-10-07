@@ -447,15 +447,19 @@ class PostgreSQLSource(BaseSource):
         When wildcard (*) is used, only base tables are returned.
         When specific names are provided, both tables and views are checked.
         """
-        tables_config = self.config.get("tables", "*")
+        tables_config = self.config.get("tables", "*") or "*"
 
         # Handle both wildcard and CSV list of tables
         if tables_config == "*":
             # Default behavior: only sync base tables, not views
             return await self._get_tables(schema)
 
-        # Split by comma and strip whitespace
-        tables = [t.strip() for t in tables_config.split(",")]
+        # Split by comma and strip whitespace, filter out empty strings
+        tables = [t.strip() for t in tables_config.split(",") if t.strip()]
+
+        # If no valid tables after filtering, treat as wildcard
+        if not tables:
+            return await self._get_tables(schema)
 
         # When specific names are provided, check both tables and views
         available_tables_and_views = await self._get_tables_and_views(schema)
@@ -799,7 +803,7 @@ class PostgreSQLSource(BaseSource):
         """Generate entities for all tables in specified schemas with incremental support."""
         try:
             await self._connect()
-            schema = self.config.get("schema", "public")
+            schema = self.config.get("schema", "public") or "public"
             tables = await self._get_table_list(schema)
 
             self.logger.info(
@@ -1018,7 +1022,7 @@ class PostgreSQLSource(BaseSource):
                 return False
 
             # 3) Schema existence
-            schema = (self.config or {}).get("schema", "public")
+            schema = (self.config or {}).get("schema", "public") or "public"
             exists = await self.conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1);",
                 schema,
@@ -1028,16 +1032,18 @@ class PostgreSQLSource(BaseSource):
                 return False
 
             # 4) If specific tables were requested, verify they exist
-            tables_cfg = (self.config or {}).get("tables", "*")
+            tables_cfg = (self.config or {}).get("tables", "*") or "*"
             if isinstance(tables_cfg, str) and tables_cfg != "*":
                 requested = [t.strip() for t in tables_cfg.split(",") if t.strip()]
-                available = await self._get_tables(schema)
-                missing = [t for t in requested if t not in available]
-                if missing:
-                    self.logger.error(
-                        f"Tables not found in schema '{schema}': {', '.join(missing)}"
-                    )
-                    return False
+                # If no valid tables after filtering, skip validation (will default to all)
+                if requested:
+                    available = await self._get_tables(schema)
+                    missing = [t for t in requested if t not in available]
+                    if missing:
+                        self.logger.error(
+                            f"Tables not found in schema '{schema}': {', '.join(missing)}"
+                        )
+                        return False
 
             return True
 
