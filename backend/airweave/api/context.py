@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from airweave import schemas
 from airweave.core.logging import ContextualLogger
+from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 
 
 class ApiContext(BaseModel):
@@ -62,6 +63,22 @@ class ApiContext(BaseModel):
     def is_user_auth(self) -> bool:
         """Whether this is user authentication (Auth0)."""
         return self.auth_method == "auth0"
+
+    def has_feature(self, flag: FeatureFlagEnum) -> bool:
+        """Check if organization has a feature enabled.
+
+        Args:
+            flag: Feature flag to check (use FeatureFlag enum from core.shared_models)
+
+        Returns:
+            True if enabled, False otherwise
+
+        Example:
+            from airweave.core.shared_models import FeatureFlag
+            if ctx.has_feature(FeatureFlag.S3_DESTINATION):
+                # Feature is enabled for this organization
+        """
+        return flag in self.organization.enabled_features
 
     def __str__(self) -> str:
         """String representation for logging."""

@@ -1,10 +1,12 @@
 """Admin-specific schemas for enhanced dashboard views."""
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 
 
 class OrganizationMetrics(BaseModel):
@@ -43,6 +45,11 @@ class OrganizationMetrics(BaseModel):
     is_member: bool = Field(False, description="Whether the current admin user is already a member")
     member_role: Optional[str] = Field(
         None, description="Admin's role in this organization (if member)"
+    )
+
+    # Feature flags
+    enabled_features: List[FeatureFlagEnum] = Field(
+        default_factory=list, description="List of enabled feature flags for this organization"
     )
 
     class Config:

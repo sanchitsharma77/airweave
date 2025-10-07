@@ -1,10 +1,12 @@
 """Organization schemas."""
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 
 
 class OrganizationBase(BaseModel):
@@ -48,6 +50,10 @@ class Organization(OrganizationInDBBase):
     name: str
     description: Optional[str] = None
     auth0_org_id: Optional[str] = None
+    enabled_features: List[FeatureFlagEnum] = Field(
+        default_factory=list,
+        description="List of enabled feature flags for this organization",
+    )
 
 
 class OrganizationWithRole(BaseModel):
@@ -64,3 +70,7 @@ class OrganizationWithRole(BaseModel):
     is_primary: bool
     auth0_org_id: Optional[str] = None
     org_metadata: Optional[Dict[str, Any]] = None
+    enabled_features: List[FeatureFlagEnum] = Field(
+        default_factory=list,
+        description="List of enabled feature flags for this organization",
+    )

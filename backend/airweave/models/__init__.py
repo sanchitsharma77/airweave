@@ -13,6 +13,7 @@ from .entity import Entity
 from .entity_count import EntityCount
 from .entity_definition import EntityDefinition
 from .entity_relation import EntityRelation
+from .feature_flag import FeatureFlag
 from .integration_credential import IntegrationCredential
 from .organization import Organization
 from .organization_billing import OrganizationBilling
@@ -45,6 +46,7 @@ __all__ = [
     "EmbeddingModel",
     "EntityDefinition",
     "EntityRelation",
+    "FeatureFlag",
     "IntegrationCredential",
     "Organization",
     "OrganizationBilling",

@@ -9,6 +9,7 @@ from airweave.models._base import Base
 
 if TYPE_CHECKING:
     from airweave.models.billing_period import BillingPeriod
+    from airweave.models.feature_flag import FeatureFlag
     from airweave.models.organization_billing import OrganizationBilling
     from airweave.models.usage import Usage
     from airweave.models.user_organization import UserOrganization
@@ -58,4 +59,12 @@ class Organization(Base):
         cascade="all, delete-orphan",
         lazy="noload",
         order_by="desc(BillingPeriod.period_start)",  # Most recent first
+    )
+
+    # Relationship with feature flags (eager loaded for ApiContext)
+    feature_flags: Mapped[List["FeatureFlag"]] = relationship(
+        "FeatureFlag",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        lazy="selectin",  # Auto-load for feature checking
     )

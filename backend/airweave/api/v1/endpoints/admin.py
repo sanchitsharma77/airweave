@@ -15,6 +15,7 @@ from airweave.api.router import TrailingSlashRouter
 from airweave.billing.service import billing_service
 from airweave.core.exceptions import InvalidStateError, NotFoundException
 from airweave.core.organization_service import organization_service
+from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 from airweave.crud.crud_organization_billing import organization_billing
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.integrations.auth0_management import auth0_management_client
@@ -25,6 +26,27 @@ from airweave.models.user_organization import UserOrganization
 from airweave.schemas.organization_billing import BillingPlan, BillingStatus
 
 router = TrailingSlashRouter()
+
+
+@router.get("/feature-flags", response_model=List[dict])
+async def list_available_feature_flags(
+    ctx: ApiContext = Depends(deps.get_context),
+) -> List[dict]:
+    """Get all available feature flags in the system (admin only).
+
+    Args:
+        ctx: API context
+
+    Returns:
+        List of feature flag definitions with name and value
+
+    Raises:
+        HTTPException: If user is not an admin
+    """
+    _require_admin(ctx)
+
+    # Return all feature flags from the enum
+    return [{"name": flag.name, "value": flag.value} for flag in FeatureFlagEnum]
 
 
 def _require_admin(ctx: ApiContext) -> None:
@@ -153,6 +175,9 @@ async def list_all_organizations(
         usage_record = usage_map.get(org.id)
         admin_role = admin_membership_map.get(org.id)
 
+        # Extract enabled features from the relationship
+        enabled_features = [FeatureFlagEnum(ff.flag) for ff in org.feature_flags if ff.enabled]
+
         org_metrics.append(
             schemas.OrganizationMetrics(
                 id=org.id,
@@ -171,6 +196,7 @@ async def list_all_organizations(
                 query_count=usage_record.queries if usage_record else 0,
                 is_member=admin_role is not None,
                 member_role=admin_role,
+                enabled_features=enabled_features,
             )
         )
 
@@ -562,3 +588,87 @@ async def create_enterprise_organization(
         # Don't fail the request if Auth0 fails
 
     return schemas.Organization.model_validate(org)
+
+
+@router.post("/organizations/{organization_id}/feature-flags/{flag}/enable")
+async def enable_feature_flag(
+    organization_id: UUID,
+    flag: str,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> dict:
+    """Enable a feature flag for an organization (admin only).
+
+    Args:
+        organization_id: The organization ID
+        flag: The feature flag name to enable
+        db: Database session
+        ctx: API context
+
+    Returns:
+        Success message with flag details
+
+    Raises:
+        HTTPException: If user is not an admin, organization doesn't exist, or invalid flag
+    """
+    _require_admin(ctx)
+
+    # Verify organization exists
+    org = await crud.organization.get(db, organization_id, ctx, skip_access_validation=True)
+    if not org:
+        raise NotFoundException(f"Organization {organization_id} not found")
+
+    # Validate flag exists
+    try:
+        feature_flag = FeatureFlagEnum(flag)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid feature flag: {flag}")
+
+    # Enable the feature
+    await crud.organization.enable_feature(db, organization_id, feature_flag)
+
+    ctx.logger.info(f"Admin enabled feature flag {flag} for org {organization_id}")
+
+    return {"message": f"Feature flag '{flag}' enabled", "organization_id": str(organization_id)}
+
+
+@router.post("/organizations/{organization_id}/feature-flags/{flag}/disable")
+async def disable_feature_flag(
+    organization_id: UUID,
+    flag: str,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> dict:
+    """Disable a feature flag for an organization (admin only).
+
+    Args:
+        organization_id: The organization ID
+        flag: The feature flag name to disable
+        db: Database session
+        ctx: API context
+
+    Returns:
+        Success message with flag details
+
+    Raises:
+        HTTPException: If user is not an admin, organization doesn't exist, or invalid flag
+    """
+    _require_admin(ctx)
+
+    # Verify organization exists
+    org = await crud.organization.get(db, organization_id, ctx, skip_access_validation=True)
+    if not org:
+        raise NotFoundException(f"Organization {organization_id} not found")
+
+    # Validate flag exists
+    try:
+        feature_flag = FeatureFlagEnum(flag)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid feature flag: {flag}")
+
+    # Disable the feature
+    await crud.organization.disable_feature(db, organization_id, feature_flag)
+
+    ctx.logger.info(f"Admin disabled feature flag {flag} for org {organization_id}")
+
+    return {"message": f"Feature flag '{flag}' disabled", "organization_id": str(organization_id)}
