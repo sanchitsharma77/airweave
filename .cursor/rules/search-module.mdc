@@ -1,5 +1,5 @@
 ---
-globs: **/search/**,**/collections.py
+globs: **/search/**,**/search.py
 alwaysApply: false
 ---
 # Airweave Search Rules
@@ -13,7 +13,7 @@ The search module (`@search/`) implements a **modular, pipeline-based architectu
 ### Operation-Based Pipeline
 
 ```python
-SearchRequest → ConfigBuilder → SearchConfig → Executor → SearchResponse
+SearchRequest → SearchFactory → SearchContext → SearchOrchestrator → SearchResponse
                                     ↓
                             [Operations Pipeline]
 ```
@@ -21,73 +21,113 @@ SearchRequest → ConfigBuilder → SearchConfig → Executor → SearchResponse
 Each operation:
 - Implements `SearchOperation` abstract base class
 - Declares dependencies explicitly
-- Reads/writes to shared context dictionary
+- Reads/writes to shared state dictionary
 - Can be optional (graceful failure)
 - Executes asynchronously
 
 ### Request Flow
-1. **Endpoint** → Creates/receives `SearchRequest`
-2. **SearchServiceV2.search_with_request()** → Main orchestrator
-3. **ConfigBuilder.build()** → Creates execution plan with operations
-4. **Executor.execute()** → Runs operations in dependency order
-5. **Qdrant destination** → Vector search execution
-6. **Response cleaning** → Remove internal fields, format results
+1. **Endpoint** (`api/v1/endpoints/search.py`) → Creates/receives `SearchRequest`
+2. **SearchService.search()** → Main entry point
+3. **SearchFactory.build()** → Creates `SearchContext` with enabled operations
+4. **SearchOrchestrator.run()** → Executes operations in dependency order
+5. **Operations** → Execute in topologically sorted order
+6. **Qdrant destination** → Vector search execution
 7. **Data Persistence** → Save search query to `search_queries` table via `CRUDSearchQuery`
 
 ### API Endpoints
 
-Two search endpoints in `collections.py` provide different levels of functionality:
+Search endpoints are defined in `api/v1/endpoints/search.py` and mounted under `/collections` prefix in `api/v1/api.py`:
 
-1. **GET `/{readable_id}/search`** - Basic search with query parameters
-   - Simple interface for common use cases
-   - Parameters: `query`, `response_type`, `limit`, `offset`, `recency_bias`
-   - Internally creates a `SearchRequest` and delegates to SearchServiceV2
+```python
+# In api/v1/api.py
+from airweave.api.v1.endpoints import search
+api_router.include_router(search.router, prefix="/collections", tags=["collections"])
+```
 
-2. **POST `/{readable_id}/search`** - Advanced search with full control
-   - Accepts `SearchRequest` body with Qdrant filter support
-   - Enables metadata filtering, query interpretation, custom strategies
-   - Full access to all search features and configurations
+**Available Endpoints:**
 
-Both endpoints use **SearchServiceV2** (the new modular service), ensuring consistent behavior and quality.
+1. **GET `/collections/{readable_id}/search`** - Legacy endpoint (DEPRECATED)
+   - Maintained for backwards compatibility
+   - Query parameters: `query`, `response_type`, `limit`, `offset`, `recency_bias`
+   - Returns `LegacySearchResponse` with `status` field
+   - Automatically converts to new format internally
+   - Adds deprecation headers
+
+2. **POST `/collections/{readable_id}/search`** - Main search endpoint (RECOMMENDED)
+   - Accepts both `SearchRequest` (new) and `LegacySearchRequest` (old) schemas
+   - Supports Qdrant native filters via `filter` field
+   - Full control over all search features
+   - Returns `SearchResponse` (new) or `LegacySearchResponse` (legacy) based on input schema
+   - Adds deprecation headers for legacy requests
+
+3. **POST `/collections/{readable_id}/search/stream`** - Streaming search with SSE
+   - Accepts both `SearchRequest` and `LegacySearchRequest`
+   - Returns Server-Sent Events (SSE) stream
+   - Real-time progress updates via Redis pubsub
+   - Automatically converts legacy requests
+
+4. **GET `/collections/internal/filter-schema`** - Filter schema endpoint
+   - Returns Qdrant Filter JSON schema for frontend validation
+   - Public endpoint for building UI filter builders
+
+All endpoints use the same underlying `SearchService.search()`, ensuring consistent behavior and quality.
 
 ### Input/Output Schemas
 
-**SearchRequest** (input):
+**SearchRequest** (new schema - `schemas/search.py`):
 ```python
-query: str                                    # Search text
-filter: Optional[Filter]                      # Qdrant filter object
-limit: int = 20                              # Results per page
-offset: int = 0                              # Pagination
-score_threshold: Optional[float]             # Min similarity score
-response_type: Literal["raw", "completion"]  # Output format
-expansion_strategy: QueryExpansionStrategy   # Query variants
-recency_bias: Optional[float]               # Recency weight (0-1)
-enable_reranking: Optional[bool]            # LLM reranking
-enable_query_interpretation: Optional[bool]  # NL filter extraction
+query: str                                   # Search text (required)
+retrieval_strategy: Optional[RetrievalStrategy]  # "hybrid", "neural", or "keyword"
+filter: Optional[QdrantFilter]               # Qdrant native filter object
+offset: Optional[int]                        # Pagination offset
+limit: Optional[int]                         # Results per page
+temporal_relevance: Optional[float]          # Recency weight (0-1, default: 0.3)
+expand_query: Optional[bool]                 # Generate query variations
+interpret_filters: Optional[bool]            # Extract filters from natural language
+rerank: Optional[bool]                       # LLM-based reranking
+generate_answer: Optional[bool]              # AI-generated completion
 ```
 
-**SearchResponse** (output):
+**SearchResponse** (new schema - `schemas/search.py`):
 ```python
-results: List[Dict]                         # Search results
-completion: Optional[str]                   # AI-generated answer
-response_type: ResponseType                 # raw/completion
-status: SearchStatus                        # success/no_results
+results: List[Dict]                          # Search results
+completion: Optional[str]                    # AI-generated answer (if generate_answer=True)
+```
+
+**LegacySearchRequest** (old schema - `schemas/search_legacy.py`):
+```python
+query: str
+response_type: ResponseType                  # "raw" or "completion"
+search_method: Optional[str]                 # "hybrid", "neural", "keyword"
+expansion_strategy: Optional[QueryExpansionStrategy]  # "auto", "llm", "no_expansion"
+recency_bias: Optional[float]                # Recency weight (0-1)
+enable_reranking: Optional[bool]             # LLM reranking
+enable_query_interpretation: Optional[bool]  # Filter extraction
+# ... other legacy fields
+```
+
+**LegacySearchResponse** (old schema):
+```python
+results: List[Dict]
+response_type: ResponseType
+completion: Optional[str]
+status: SearchStatus                         # "success", "no_results", etc.
 ```
 
 Result payload includes: `entity_id`, `source_name`, `md_content`, `metadata`, `score`, `breadcrumbs`, `url`
 
 ## Key Components
 
-### Search Operations
+### Search Operations (`search/operations/`)
 
-1. **QueryInterpretation**: LLM-based filter extraction from natural language
-2. **QueryExpansion**: Generates query variants (AUTO strategy by default)
-3. **QdrantFilterOperation**: Applies user/LLM-extracted filters
-4. **Embedding**: Generates dense (neural) and sparse (BM25) embeddings
-5. **VectorSearch**: Executes hybrid search combining neural + keyword
-6. **RecencyBias**: Dynamic time-based decay for recency-aware ranking
-7. **LLMReranking**: Post-retrieval reranking using language models
-8. **CompletionGeneration**: AI summaries from search results
+1. **QueryExpansion** (`query_expansion.py`): Generates query variants using LLM
+2. **QueryInterpretation** (`query_interpretation.py`): LLM-based filter extraction from natural language
+3. **EmbedQuery** (`embed_query.py`): Generates dense (neural) and sparse (BM25) embeddings
+4. **UserFilter** (`user_filter.py`): Applies and merges user-provided Qdrant filters
+5. **TemporalRelevance** (`temporal_relevance.py`): Dynamic time-based decay configuration
+6. **Retrieval** (`retrieval.py`): Executes vector search in Qdrant (hybrid/neural/keyword)
+7. **Reranking** (`reranking.py`): Post-retrieval reranking using LLM providers
+8. **GenerateAnswer** (`generate_answer.py`): AI-generated completions from search results
 
 ### Hybrid Search
 
@@ -97,23 +137,30 @@ True hybrid search combining:
 - **Fusion**: Reciprocal Rank Fusion (RRF)
 - Default: `"hybrid"` for optimal quality
 
-### Dynamic Recency Scoring
+### Dynamic Temporal Relevance
 
 ```python
-final_score = similarity × (1 - recency_bias + recency_bias × decay)
+final_score = similarity × (1 - weight + weight × decay)
 ```
-- Computes decay dynamically from data age distribution
+- Computes decay dynamically from actual collection time range
 - Respects filters when determining time ranges
 - Linear decay with configurable weight (default: 0.3)
-- Applied at Qdrant level for efficiency
+- Applied at Qdrant level for efficiency via `DecayConfig`
 
 ### Configuration Defaults
 
-**SearchConfigBuilder** centralizes all defaults:
-- `DEFAULT_EXPANSION_STRATEGY = AUTO`
-- `DEFAULT_RERANKING = True`
-- `DEFAULT_RECENCY_BIAS = 0.3`
-- `DEFAULT_SEARCH_METHOD = "hybrid"`
+Defaults are defined in `search/defaults.yml` and loaded via `SearchFactory`:
+- `retrieval_strategy: hybrid` - Combines neural + keyword search
+- `temporal_relevance: 0.3` - Moderate recency weighting
+- `expand_query: true` - Generate query variations
+- `interpret_filters: false` - Manual filter control by default
+- `rerank: true` - LLM-based reranking enabled
+- `generate_answer: true` - AI completion generation enabled
+- `offset: 0`, `limit: 1000` - Pagination defaults
+
+Provider and model configurations are also in `defaults.yml`:
+- `provider_models`: Model specs per provider (OpenAI, Groq, Cohere)
+- `operation_preferences`: Provider selection order for each operation
 
 ## Entity Architecture
 
@@ -152,16 +199,25 @@ ChunkEntity builds structured markdown representation:
 
 ## Advanced Features
 
-### Query Expansion Strategies
-- **NO_EXPANSION**: Single query
-- **SIMILAR**: 2-3 semantic variations
-- **BROAD**: 4-5 diverse perspectives
-- **AUTO**: Intelligent selection (default)
+### Query Expansion
+- Boolean control: `expand_query: true/false`
+- When enabled, generates up to 4 query variations using LLM
+- Provides diverse paraphrases to improve recall
+- Includes keyword-forward and normalized variants
+- Expands abbreviations and synonyms
+
+### Provider System (`search/providers/`)
+- **OpenAI** (`openai.py`): Complete provider - LLM, embeddings, reranking
+- **Groq** (`groq.py`): Fast LLM inference and reranking (no embeddings)
+- **Cohere** (`cohere.py`): Specialized reranking API
+- Automatic provider selection based on available API keys
+- Fallback chain for resilience
 
 ### Hybrid Search Prefetch
-- Large prefetch limits (10,000+) for broad candidate sets
+- Large prefetch limits for broad candidate sets
 - Ensures both neural and BM25 contribute meaningfully
-- Enables effective recency scoring across full collection
+- Enables effective temporal relevance across full collection
+- Rerank multiplier (2x) fetches extra candidates for better reranking
 
 ## System Metadata
 
@@ -185,22 +241,26 @@ vectors: Optional[List[List[float] | SparseEmbedding | None]]
 ## Performance & Quality
 
 ### Optimizations
-- Async-first design
-- Parallel operation execution
-- Lazy entity materialization
-- Bulk search APIs
-- Smart prefetching
+- Async-first design throughout
+- Parallel operation execution via orchestrator
+- Provider-based architecture for flexibility
+- Bulk search APIs for multiple queries
+- Smart prefetching for reranking
+- Token budget management for LLM operations
 
-### Intelligent Defaults
-- Query expansion: AUTO
-- LLM reranking: ON
-- Search method: hybrid
-- Recency bias: 0.3
+### Intelligent Defaults (from `defaults.yml`)
+- Query expansion: `true` (enabled)
+- LLM reranking: `true` (enabled)
+- Retrieval strategy: `hybrid` (neural + keyword)
+- Temporal relevance: `0.3` (moderate recency)
+- Generate answer: `true` (AI completion)
+- Interpret filters: `false` (manual control)
 
 ### Graceful Degradation
-- Query interpretation failure → continues without filters
+- Query interpretation failure → continues without extracted filters
 - Reranking failure → returns unranked results
-- Expansion failure → single query fallback
+- Query expansion failure → uses original query only
+- Provider fallback chain for resilience
 
 ## Implementation Details
 
@@ -226,11 +286,13 @@ HTTP status mapping in endpoints:
 - Others → 500
 
 ### Critical Gotchas
-1. **Filter format**: Must convert to dict for Qdrant
-2. **Offset with expansion**: No guarantees with multi-query search
-3. **OpenAI dependency**: Falls back to LocalText2Vec if no API key
+1. **Filter format**: Must convert to dict for Qdrant (done automatically in operations)
+2. **Offset with expansion**: Pagination applied after deduplication in bulk search
+3. **Provider dependencies**: Requires at least OpenAI API key for embeddings; other providers optional
 4. **Source names**: Case-sensitive in filters (e.g., "GitHub" not "github")
-5. **Embedding model**: Auto-selects based on OPENAI_API_KEY presence
+5. **Embedding model**: Auto-selected from provider_models configuration
+6. **Legacy compatibility**: Both old and new schemas supported via `legacy_adapter.py`
+7. **Operation dependencies**: Orchestrator resolves execution order via topological sort
 
 ## Search Persistence & Analytics
 
@@ -248,19 +310,25 @@ class SearchQuery(OrganizationBase, UserMixin):
     # Core search data
     query_text: str                    # Full search query
     query_length: int                  # Character count
-    search_type: str                   # "basic", "advanced", "streaming"
-    response_type: Optional[str]       # "raw", "completion"
-    
+    is_streaming: bool                 # Whether this was a streaming search
+    retrieval_strategy: str            # "hybrid", "neural", or "keyword"
+
+    # Search parameters
+    limit: int                         # Results limit
+    offset: int                        # Pagination offset
+    temporal_relevance: float          # Recency weight (0-1)
+    filter: Optional[Dict]             # Applied Qdrant filter
+
     # Performance metrics
     duration_ms: int                   # Execution time
     results_count: int                 # Results returned
-    status: str                        # "success", "no_results", "error"
-    
+
     # Feature usage tracking
-    query_expansion_enabled: bool      # Query expansion used
-    reranking_enabled: bool            # LLM reranking used
-    query_interpretation_enabled: bool # Query interpretation used
-    
+    expand_query: bool                 # Query expansion enabled
+    interpret_filters: bool            # Query interpretation enabled
+    rerank: bool                       # LLM reranking enabled
+    generate_answer: bool              # AI completion enabled
+
     # Relationships
     collection_id: UUID                # Collection searched
     user_id: Optional[UUID]            # User who searched (null for API)
@@ -289,12 +357,310 @@ Search persistence is **non-blocking**:
 - If persistence fails → Search continues, error logged
 - Core search functionality is never compromised
 
+## Best Practices
+
+### When Working with Search
+
+1. **Always use the new schemas** (`SearchRequest`/`SearchResponse`) for new code
+2. **Let defaults do the work** - Most parameters are optional; factory applies intelligent defaults
+3. **Use the service singleton** - Import from `airweave.search.service import service`
+4. **Handle both schemas in endpoints** - Accept `Union[SearchRequest, LegacySearchRequest]` for compatibility
+5. **Log with context** - Operations receive `ctx: ApiContext` with pre-configured logger
+6. **Emit events for streaming** - Use `EventEmitter` for progress updates
+7. **Validate providers early** - Factory raises clear errors for missing API keys
+
+### Adding New Operations
+
+To add a new search operation:
+
+1. **Create operation class** in `search/operations/your_operation.py`:
+   ```python
+   from ._base import SearchOperation
+
+   class YourOperation(SearchOperation):
+       def depends_on(self) -> List[str]:
+           return ["EmbedQuery"]  # Declare dependencies
+
+       async def execute(self, context, state, ctx, emitter):
+           # Read from state
+           embeddings = state.get("dense_embeddings")
+
+           # Do work
+           result = await self._process(embeddings)
+
+           # Write to state
+           state["your_result"] = result
+
+           # Emit events
+           await emitter.emit("your_event", {"data": result}, op_name=self.__class__.__name__)
+   ```
+
+2. **Add to SearchContext** in `search/context.py`:
+   ```python
+   your_operation: Optional[YourOperation] = Field(default=None)
+   ```
+
+3. **Add to factory** in `search/factory.py`:
+   ```python
+   search_context = SearchContext(
+       # ... existing fields
+       your_operation=YourOperation() if some_condition else None,
+   )
+   ```
+
+4. **Update orchestrator** - No changes needed! It automatically discovers operations from context
+
+### Modifying Prompts
+
+System prompts are in `search/prompts/`:
+- Each prompt is a module constant (e.g., `QUERY_EXPANSION_SYSTEM_PROMPT`)
+- Use `.format()` for dynamic values (e.g., available fields)
+- Test with different LLM providers (prompt quality varies)
+- Keep prompts focused and concise for better results
+
+### Working with Providers
+
+Providers implement capabilities (LLM, embeddings, reranking):
+- **BaseProvider** defines the interface
+- Each provider declares its supported capabilities via `ProviderModelSpec`
+- Factory selects providers based on `operation_preferences` in `defaults.yml`
+- Providers handle tokenization, budgeting, and API calls
+- Add new providers by implementing `BaseProvider` and adding to factory
+
+## Legacy Adapter & Migration
+
+### Legacy Support (`search/legacy_adapter.py`)
+
+The system maintains backwards compatibility with the old search API:
+
+**Converting Legacy Requests:**
+- `response_type` → `generate_answer` (enum to boolean)
+- `search_method` → `retrieval_strategy` (renamed)
+- `expansion_strategy` → `expand_query` (enum to boolean)
+- `recency_bias` → `temporal_relevance` (renamed)
+- `enable_reranking` → `rerank` (renamed)
+- `enable_query_interpretation` → `interpret_filters` (renamed)
+- `score_threshold` → Removed (no longer supported)
+
+**Converting Legacy Responses:**
+- New `SearchResponse` → `LegacySearchResponse` with `status` and `response_type` fields
+- Status inferred from result count and quality
+- Response type preserved from request
+
+**Deprecation Headers:**
+When using legacy schemas, endpoints add HTTP headers:
+- `X-API-Deprecation: true`
+- `X-API-Deprecation-Message: <migration guidance>`
+
+### Migration Path
+
+**For API consumers:**
+1. Update request schema to use new field names
+2. Update response handling (remove status checks)
+3. Test with new schema before removing old code
+4. Monitor deprecation headers
+
+**For internal code:**
+- Always use new `SearchRequest` and `SearchResponse` schemas
+- Legacy adapter handles conversion automatically
+- Service layer only processes new schemas
+
 ## Design Principles
 
-1. **Modularity**: Self-contained operations
-2. **Configurability**: Centralized through SearchConfig
-3. **Extensibility**: Plug-in new operations via SearchOperation interface
-4. **Performance**: Async, parallel, bulk operations
-5. **Quality-first**: Optimized defaults
-6. **Observability**: Comprehensive logging
-7. **Database-first analytics**: Every search is persisted for comprehensive analysis
+1. **Modularity**: Self-contained operations in `search/operations/`
+2. **Configurability**: Centralized via `SearchContext` and `defaults.yml`
+3. **Extensibility**: Plug-in new operations via `SearchOperation` interface
+4. **Performance**: Async-first, provider-based architecture
+5. **Quality-first**: Optimized defaults with provider fallback chains
+6. **Observability**: Comprehensive logging and streaming events via `EventEmitter`
+7. **Database-first analytics**: Every search persisted via `SearchHelpers.persist_search_data()`
+8. **Backwards compatibility**: Legacy adapter maintains API compatibility seamlessly
+
+### SearchContext (`search/context.py`)
+
+The `SearchContext` is the execution plan for a search request:
+
+```python
+class SearchContext(BaseModel):
+    # Metadata
+    request_id: str
+    collection_id: UUID
+    readable_collection_id: str
+    stream: bool
+    vector_size: int
+
+    # Input query
+    query: str
+
+    # Operation instances (None if disabled)
+    query_expansion: Optional[QueryExpansion]
+    query_interpretation: Optional[QueryInterpretation]
+    embed_query: EmbedQuery  # Always required
+    user_filter: Optional[UserFilter]
+    temporal_relevance: Optional[TemporalRelevance]
+    retrieval: Retrieval  # Always required
+    reranking: Optional[Reranking]
+    generate_answer: Optional[GenerateAnswer]
+```
+
+The factory builds this context by:
+1. Applying defaults from `defaults.yml`
+2. Validating API keys for required providers
+3. Creating provider instances for each enabled operation
+4. Building operation instances with proper providers
+5. Returning complete execution plan
+
+## Module Structure
+
+```
+search/
+├── service.py              # Main SearchService entry point
+├── factory.py              # SearchFactory - builds SearchContext
+├── orchestrator.py         # SearchOrchestrator - executes operations
+├── context.py              # SearchContext - holds operation instances
+├── emitter.py              # EventEmitter - streaming event publishing
+├── helpers.py              # SearchHelpers - persistence and utilities
+├── defaults.yml            # Configuration defaults and provider specs
+├── legacy_adapter.py       # Converts between old and new schemas
+├── utils.py                # Utility functions for filter handling
+├── operations/             # Individual search operations
+│   ├── _base.py            # SearchOperation abstract base
+│   ├── query_expansion.py
+│   ├── query_interpretation.py
+│   ├── embed_query.py
+│   ├── user_filter.py
+│   ├── temporal_relevance.py
+│   ├── retrieval.py
+│   ├── reranking.py
+│   └── generate_answer.py
+├── providers/              # LLM provider implementations
+│   ├── _base.py            # BaseProvider abstract class
+│   ├── schemas.py          # Provider model specifications
+│   ├── openai.py           # OpenAI provider
+│   ├── groq.py             # Groq provider
+│   └── cohere.py           # Cohere provider
+└── prompts/                # System prompts for LLM operations
+    ├── __init__.py
+    ├── query_expansion.py
+    ├── query_interpretation.py
+    ├── reranking.py
+    └── generate_answer.py
+```
+
+## Quick Reference
+
+### Basic Search (New Schema)
+```python
+from airweave.schemas.search import SearchRequest
+from airweave.search.service import service
+
+# Minimal request - uses all defaults from defaults.yml
+request = SearchRequest(query="find customer issues")
+
+response = await service.search(
+    request_id=ctx.request_id,
+    readable_collection_id="my-collection",
+    search_request=request,
+    stream=False,
+    db=db,
+    ctx=ctx,
+)
+
+# Access results
+results = response.results
+completion = response.completion  # AI answer if generate_answer=True
+```
+
+### Advanced Search with Options
+```python
+request = SearchRequest(
+    query="deployment failures last week",
+    retrieval_strategy=RetrievalStrategy.HYBRID,
+    temporal_relevance=0.7,  # Strong recency bias
+    expand_query=True,
+    interpret_filters=True,  # Extract "last week" as date filter
+    rerank=True,
+    generate_answer=False,  # Just return results
+    limit=50,
+    offset=0,
+    filter={  # Manual Qdrant filter
+        "must": [
+            {"key": "source_name", "match": {"value": "github"}}
+        ]
+    }
+)
+
+response = await service.search(...)
+```
+
+### Streaming Search
+```python
+# In endpoint - same SearchRequest, set stream=True
+response = await service.search(
+    request_id=ctx.request_id,
+    readable_collection_id="my-collection",
+    search_request=request,
+    stream=True,  # Enables event emission
+    db=db,
+    ctx=ctx,
+)
+
+# Events are automatically emitted to Redis channel: search:{request_id}
+# Frontend subscribes via POST /collections/{id}/search/stream
+```
+
+### Legacy Request Conversion
+```python
+from airweave.schemas.search_legacy import LegacySearchRequest
+from airweave.search.legacy_adapter import convert_legacy_request_to_new
+
+# Old schema
+legacy = LegacySearchRequest(
+    query="test",
+    response_type=ResponseType.COMPLETION,
+    expansion_strategy=QueryExpansionStrategy.AUTO,
+    enable_reranking=True,
+)
+
+# Convert to new schema
+new_request = convert_legacy_request_to_new(legacy)
+# Result: SearchRequest(query="test", generate_answer=True, expand_query=True, rerank=True)
+```
+
+### Common Patterns
+
+**Simple search with defaults:**
+```python
+# Relies on defaults.yml configuration
+request = SearchRequest(query="customer feedback")
+response = await service.search(ctx.request_id, "collection-id", request, False, db, ctx)
+```
+
+**Search with custom temporal weighting:**
+```python
+# Prioritize recent documents strongly
+request = SearchRequest(
+    query="recent updates",
+    temporal_relevance=0.9,  # Very strong recency bias
+)
+```
+
+**Search with manual filtering only:**
+```python
+# Disable query interpretation, provide exact filter
+request = SearchRequest(
+    query="bugs",
+    interpret_filters=False,  # Don't auto-extract filters
+    filter={"must": [{"key": "status", "match": {"value": "open"}}]},
+)
+```
+
+**Fast search (skip expensive operations):**
+```python
+# Disable reranking for speed
+request = SearchRequest(
+    query="quick lookup",
+    rerank=False,  # Skip ~10s reranking step
+    generate_answer=False,  # Skip completion generation
+)
+```
