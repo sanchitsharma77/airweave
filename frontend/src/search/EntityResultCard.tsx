@@ -355,8 +355,8 @@ export const EntityResultCard: React.FC<EntityResultCardProps> = ({
             className={cn(
                 "group relative rounded-xl transition-all duration-300 overflow-hidden raw-data-scrollbar",
                 isDark
-                    ? "bg-gradient-to-br from-gray-900/90 to-gray-900/50 border border-gray-800/50 hover:border-gray-700/70 hover:shadow-2xl hover:shadow-blue-900/10"
-                    : "bg-white border border-gray-200/60 hover:border-gray-300/80 hover:shadow-lg hover:shadow-gray-200/50",
+                    ? "bg-gradient-to-br from-gray-900/90 to-gray-900/50 border border-gray-800/50"
+                    : "bg-white border border-gray-200/60",
                 "backdrop-blur-sm"
             )}
         >
