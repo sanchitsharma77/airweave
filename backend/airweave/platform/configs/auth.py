@@ -379,12 +379,6 @@ class GitHubAuthConfig(AuthConfig):
         description="GitHub PAT with read rights (code, contents, metadata) to the repository",
         min_length=4,
     )
-    repo_name: str = Field(
-        title="Repository Name",
-        description="Repository to sync in owner/repo format (e.g., 'airweave-ai/airweave')",
-        min_length=3,
-        pattern=r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$",
-    )
 
     @field_validator("personal_access_token")
     @classmethod
@@ -398,33 +392,13 @@ class GitHubAuthConfig(AuthConfig):
         if not (
             v.startswith("ghp_")
             or v.startswith("github_pat_")
+            or v.startswith("gho_")
             or (len(v) == 40 and all(c in "0123456789abcdef" for c in v.lower()))
         ):
             raise ValueError(
                 "Invalid token format. Expected format: "
-                "ghp_... or github_pat_... or 40-character hex"
+                "ghp_... or github_pat_... or gho_... or 40-character hex"
             )
-        return v
-
-    @field_validator("repo_name")
-    @classmethod
-    def validate_repo_name(cls, v: str) -> str:
-        """Validate repository name is in owner/repo format."""
-        if not v or not v.strip():
-            raise ValueError("Repository name is required")
-        v = v.strip()
-        if "/" not in v:
-            raise ValueError(
-                "Repository must be in 'owner/repo' format (e.g., 'airweave-ai/airweave')"
-            )
-        parts = v.split("/")
-        if len(parts) != 2:
-            raise ValueError(
-                "Repository must be in 'owner/repo' format (e.g., 'airweave-ai/airweave')"
-            )
-        owner, repo = parts
-        if not owner or not repo:
-            raise ValueError("Both owner and repository name must be non-empty")
         return v
 
 

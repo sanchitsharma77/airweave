@@ -71,9 +71,9 @@ Bongos are auto-discovered by `BongoRegistry` via the `connector_type` class att
 ### Example
 ```python
 class GitHubBongo(BaseBongo):
-    def __init__(self, credentials: Dict[str, Any]):
+    def __init__(self, credentials: Dict[str, Any], config: Dict[str, Any]):
         super().__init__(credentials)
-        self.repo_name = credentials["repo_name"]
+        self.repo_name = config["repo_name"]  # Now from config_fields
         self.token = credentials["personal_access_token"]
 
     async def create_entities(self) -> List[Dict[str, Any]]:
@@ -102,8 +102,8 @@ connector:
   auth_mode: direct  # or "provider"
   auth_fields:
     personal_access_token: MONKE_GITHUB_PERSONAL_ACCESS_TOKEN
-    repo_name: MONKE_GITHUB_REPO_NAME
   config_fields:
+    repo_name: MONKE_GITHUB_REPO_NAME  # Moved from auth_fields
     branch: "main"
     post_create_sleep_seconds: 15
 

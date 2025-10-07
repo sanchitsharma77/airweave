@@ -25,10 +25,6 @@ class ComposioAuthProvider(BaseAuthProvider):
     # Sources that Composio does not support
     BLOCKED_SOURCES = [
         "postgresql",
-        "confluence",
-        "jira",
-        "bitbucket",
-        "github",
         "ctti",
     ]
 
@@ -36,6 +32,7 @@ class ComposioAuthProvider(BaseAuthProvider):
     # Key: Airweave field name, Value: Composio field name
     FIELD_NAME_MAPPING = {
         "api_key": "generic_api_key",  # Stripe and other API key sources
+        "personal_access_token": "access_token",  # GitHub PAT mapping
         # Add more mappings as needed
     }
 
