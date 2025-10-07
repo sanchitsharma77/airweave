@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
             backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             env["PYTHONPATH"] = backend_dir
             subprocess.run(
-                ["alembic", "upgrade", "head"],
+                ["alembic", "upgrade", "heads"],
                 check=True,
                 cwd=backend_dir,
                 env=env,
