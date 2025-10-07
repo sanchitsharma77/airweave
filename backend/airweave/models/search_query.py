@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
+from sqlalchemy import JSON as sa_JSON
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,29 +53,29 @@ class SearchQuery(OrganizationBase, UserMixin):
         Integer, nullable=False, comment="Length of the search query in characters"
     )
 
-    # Search type and response configuration
-    search_type: Mapped[str] = mapped_column(
-        String(20), nullable=False, comment="Type of search: 'basic', 'advanced'"
-    )
-    response_type: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True, comment="Response type: 'raw', 'completion'"
+    # Search type (streaming vs non-streaming)
+    is_streaming: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Whether this was a streaming search",
     )
 
-    # Search parameters
-    limit: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, comment="Maximum number of results requested"
+    # Search parameters (actual values used after applying defaults)
+    retrieval_strategy: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="Retrieval strategy: 'hybrid', 'neural', 'keyword'"
     )
-    offset: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, comment="Number of results to skip for pagination"
+    limit: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="Maximum number of results requested"
     )
-    score_threshold: Mapped[Optional[float]] = mapped_column(
-        Float, nullable=True, comment="Minimum similarity score threshold"
+    offset: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="Number of results to skip for pagination"
     )
-    recency_bias: Mapped[Optional[float]] = mapped_column(
-        Float, nullable=True, comment="Recency bias weight (0.0 to 1.0)"
+    temporal_relevance: Mapped[float] = mapped_column(
+        Float, nullable=False, comment="Temporal relevance weight (0.0 to 1.0)"
     )
-    search_method: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True, comment="Search method: 'hybrid', 'neural', 'keyword'"
+    filter: Mapped[Optional[dict]] = mapped_column(
+        sa_JSON, nullable=True, comment="Qdrant filter applied (if any)"
     )
 
     # Performance metrics
@@ -84,21 +85,19 @@ class SearchQuery(OrganizationBase, UserMixin):
     results_count: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="Number of results returned"
     )
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        comment="Search status: 'success', 'no_results', 'no_relevant_results', 'error'",
-    )
 
-    # Search configuration flags
-    query_expansion_enabled: Mapped[Optional[bool]] = mapped_column(
-        Boolean, nullable=True, comment="Whether query expansion was enabled"
+    # Search configuration flags (actual features enabled after applying defaults)
+    expand_query: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="Whether query expansion was enabled"
     )
-    reranking_enabled: Mapped[Optional[bool]] = mapped_column(
-        Boolean, nullable=True, comment="Whether LLM reranking was enabled"
+    interpret_filters: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="Whether query interpretation was enabled"
     )
-    query_interpretation_enabled: Mapped[Optional[bool]] = mapped_column(
-        Boolean, nullable=True, comment="Whether query interpretation was enabled"
+    rerank: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="Whether LLM reranking was enabled"
+    )
+    generate_answer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="Whether answer generation was enabled"
     )
 
     # Relationships
@@ -123,8 +122,8 @@ class SearchQuery(OrganizationBase, UserMixin):
         Index("ix_search_queries_collection_created", "collection_id", "created_at"),
         Index("ix_search_queries_user_created", "user_id", "created_at"),
         Index("ix_search_queries_api_key_created", "api_key_id", "created_at"),
-        Index("ix_search_queries_status", "status"),
-        Index("ix_search_queries_search_type", "search_type"),
+        Index("ix_search_queries_is_streaming", "is_streaming"),
+        Index("ix_search_queries_retrieval_strategy", "retrieval_strategy"),
         Index("ix_search_queries_query_text", "query_text"),  # For text analysis
         Index("ix_search_queries_duration", "duration_ms"),
         Index("ix_search_queries_results_count", "results_count"),

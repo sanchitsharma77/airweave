@@ -5,41 +5,244 @@ edit-this-page-url: https://github.com/airweave-ai/airweave/blob/main/fern/docs/
 slug: search
 ---
 
+<Warning>
+**Search API Updated (October 2025)**
+
+The search API has been updated. The legacy API continues to work, but we recommend migrating to the new API.
+
+<Accordion title="View Migration Details">
+
+### What Changed?
+
+**Endpoints:**
+- ~~`GET /collections/{id}/search`~~ → Still works but deprecated
+- `POST /collections/{id}/search` → Accepts both old and new schemas
+
+**Request Schema:**
+| Legacy Field | New Field | Change |
+|-------------|-----------|--------|
+| `response_type` (`"raw"` \| `"completion"`) | `generate_answer` (boolean) | Enum → Boolean |
+| `expansion_strategy` (`"auto"` \| `"llm"` \| `"no_expansion"`) | `expand_query` (boolean) | Enum → Boolean |
+| `enable_query_interpretation` | `interpret_filters` | Renamed |
+| `search_method` | `retrieval_strategy` | Renamed |
+| `recency_bias` | `temporal_relevance` | Renamed |
+| `enable_reranking` | `rerank` | Renamed |
+| `score_threshold` | *(removed)* | Deprecated |
+
+### Full Comparison
+
+<CodeGroup>
+```python title="Legacy (Deprecated)"
+from airweave import AirweaveSDK
+
+client = AirweaveSDK(api_key="YOUR_API_KEY")
+
+# Old GET endpoint with query params
+response = await client.collections.search_collection(
+    readable_id="my-collection",
+    query="customer issues",
+    response_type="completion",  # ❌
+    limit=50,
+    recency_bias=0.5,
+)
+
+# Old POST with verbose schema
+from airweave.schemas.search import SearchRequest
+
+request = SearchRequest(
+    query="deployment procedures",
+    response_type="completion",           # ❌
+    expansion_strategy="auto",            # ❌
+    enable_reranking=True,                # ✅
+    enable_query_interpretation=True,     # ❌
+    search_method="hybrid",               # ❌
+    recency_bias=0.3,                     # ❌
+)
+```
+
+```python title="New (Recommended)"
+from airweave import AirweaveSDK
+
+client = AirweaveSDK(api_key="YOUR_API_KEY")
+
+# New POST-only endpoint with clean schema
+from airweave.schemas.search import SearchRequest
+
+request = SearchRequest(
+    query="customer issues",
+    generate_answer=True,         # ✅
+    limit=50,
+    temporal_relevance=0.5,       # ✅
+)
+
+response = await client.collections.search_collection(
+    readable_id="my-collection",
+    search_request=request
+)
+
+# Comprehensive example
+request = SearchRequest(
+    query="deployment procedures",
+    generate_answer=True,         # ✅
+    expand_query=True,            # ✅
+    rerank=True,                  # ✅
+    interpret_filters=True,       # ✅
+    retrieval_strategy="hybrid",  # ✅
+    temporal_relevance=0.3,       # ✅
+)
+```
+</CodeGroup>
+
+
+## Migration Steps
+
+### Step 1: Update Request Schema
+
+<CodeGroup>
+```python title="Before"
+request = SearchRequest(
+    query="test",
+    response_type="completion",
+    expansion_strategy="auto",
+    enable_reranking=True,
+    search_method="hybrid",
+)
+```
+
+```python title="After"
+request = SearchRequest(
+    query="test",
+    generate_answer=True,
+    expand_query=True,
+    rerank=True,
+    retrieval_strategy="hybrid",
+)
+```
+</CodeGroup>
+
+### Step 2: Update Response Handling
+
+<CodeGroup>
+```python title="Before"
+response = await client.collections.search_collection(...)
+
+# Old response structure
+if response.status == "success":
+    if response.response_type == "completion":
+        print(response.completion)
+    else:
+        print(response.results)
+```
+
+```python title="After"
+response = await client.collections.search_collection(...)
+
+# New response structure
+if response.completion:
+    print(response.completion)
+else:
+    print(response.results)
+```
+</CodeGroup>
+
+### Step 3: Remove Deprecated Fields
+
+The new response no longer includes:
+- `status` field
+- `response_type` field
+
+## REST API Migration
+
+### GET Endpoint (Deprecated)
+
+<CodeGroup>
+```bash title="Legacy GET (Deprecated)"
+curl -X GET "https://api.airweave.ai/collections/{id}/search?query=test&response_type=completion" \
+  -H "x-api-key: your-api-key"
+```
+
+```bash title="New POST (Recommended)"
+curl -X POST "https://api.airweave.ai/collections/{id}/search" \
+  -H "x-api-key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "test",
+    "generate_answer": true
+  }'
+```
+</CodeGroup>
+
+### POST Endpoint Schema
+
+<CodeGroup>
+```bash title="❌ Legacy Schema"
+{
+  "query": "test",
+  "response_type": "completion",
+  "expansion_strategy": "auto",
+  "enable_reranking": true,
+  "search_method": "hybrid"
+}
+```
+
+```bash title="✅ New Schema"
+{
+  "query": "test",
+  "generate_answer": true,
+  "expand_query": true,
+  "rerank": true,
+  "retrieval_strategy": "hybrid"
+}
+```
+</CodeGroup>
+
+
+### Detecting Deprecation
+
+When using the legacy API, you'll receive HTTP headers indicating deprecation:
+
+```http
+X-API-Deprecation: true
+X-API-Deprecation-Message: ...
+```
+
+</Accordion>
+</Warning>
+
 Airweave lets you search across all your connected data sources through one unified interface. When you query a collection, Airweave runs a multi-step search pipeline that combines AI understanding with keyword precision. You can start with the defaults or configure each step for full control.
 
 <Note>
-Want to try out our search right now? Head to our [interactive API documentation](https://docs.airweave.ai/api-reference/collections/search-advanced-collections-readable-id-search-post) where you can test search queries directly in your browser!
+Want to try out our search right now? Head to our [interactive API documentation](https://docs.airweave.ai/api-reference/collections/search-collections-readable-id-search-post) where you can test search queries directly in your browser!
 </Note>
 
 ## Quick Reference
 
 Here are the default settings Airweave uses. You can override any of these in your queries.
 
-| Feature | Default | What it does |
-|---------|---------|--------------|
-| Query Expansion | `auto` | Automatically creates query variations when AI is available |
-| Search Method | `hybrid` | Combines AI semantic search with keyword matching |
-| Query Interpretation | Off | You control filters manually |
-| AI Reranking | On | Improves result quality (adds ~10s latency) |
-| Recency Boost | `0.3` | Slightly prefers newer content |
-| Score Filter | None | Returns all matches |
-| Response Format | `raw` | Returns actual documents, not AI summaries |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `expand_query` | `true` | Generate query variations for better recall |
+| `retrieval_strategy` | `hybrid` | Combines AI semantic search with keyword matching |
+| `interpret_filters` | `false` | Extract filters from natural language (you control manually by default) |
+| `rerank` | `true` | LLM-based result reordering (adds ~10s latency) |
+| `temporal_relevance` | `0.3` | Weight toward recent content (0.0-1.0) |
+| `generate_answer` | `true` | Generate AI completion from results |
+| `limit` | `1000` | Maximum results to return |
+| `offset` | `0` | Results to skip for pagination |
 
 ## Which endpoint to use
-Choose the **GET** endpoint for simple searches, and the **POST** endpoint when you need advanced config.
-
 
 <CardGroup cols={2}>
-  <Card title="Simple Search" icon="magnifying-glass" href="/api-reference/collections/search-collections-readable-id-search-get">
+  <Card title="Simple Search (Deprecated)" icon="magnifying-glass" href="/api-reference/collections/search-collections-readable-id-search-get">
     **GET** `/collections/{readable_id}/search`
 
-    Best for quick searches with default settings. Just pass your query and go.
+    **⚠️ Deprecated:** This endpoint is maintained for backwards compatibility only. Use POST for new integrations.
   </Card>
 
-  <Card title="Advanced Search" icon="sliders" href="/api-reference/collections/search-advanced-collections-readable-id-search-post">
+  <Card title="Advanced Search (Recommended)" icon="sliders" href="/api-reference/collections/search-collections-readable-id-search-post">
     **POST** `/collections/{readable_id}/search`
 
-    Use this when you need to customize any of the options above.
+    **Recommended:** Full control. Use this for all new integrations.
   </Card>
 </CardGroup>
 
@@ -61,10 +264,9 @@ Defaults are designed to work out of the box, and you can override any stage as 
 
 Expands your query to catch related terms and synonyms that may not appear verbatim in your documents. This improves recall when wording differs but meaning is the same.
 
-**Options**: `expansion_strategy`
-- `auto` (default): Uses AI to expand queries when available
-- `llm`: Always uses AI to create up to 4 query variations
-- `no_expansion`: Search only for your exact query
+**Parameter**: `expand_query` (boolean)
+- `true` (default): Generate query variations for better recall
+- `false`: Search only for your exact query
 
 <CodeBlocks>
 ```bash title="cURL" {6}
@@ -73,7 +275,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "customer churn analysis",
-    "expansion_strategy": "llm"
+    "expand_query": true
   }'
 ```
 
@@ -86,7 +288,7 @@ results = await client.collections.search_advanced(
     "your-collection-id",
     {
         "query": "customer churn analysis",
-        "expansion_strategy": "llm"
+        "expand_query": true
     }
 )
 ```
@@ -100,7 +302,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "payment failures",
-    expansion_strategy: "llm",
+    expandQuery: true,
   }
 );
 ```
@@ -112,7 +314,7 @@ const response = await client.collections.searchAdvanced(
 
 The search method determines how Airweave searches your data. Different methods balance semantic understanding and keyword precision. You can use AI to understand meaning, traditional keyword matching, or both.
 
-**Options**: `search_method`
+**Parameter**: `retrieval_strategy`
 - `hybrid` (default): Best of both worlds - finds results by meaning AND exact keywords
 - `neural`: AI-powered search that understands what you mean, not just what you type
 - `keyword`: Traditional search that looks for exact word matches
@@ -124,7 +326,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "authentication flow security vulnerabilities",
-    "search_method": "hybrid"
+    "retrieval_strategy": "hybrid"
   }'
 ```
 
@@ -133,7 +335,7 @@ results = await client.collections.search_advanced(
     "your-collection-id",
     {
         "query": "authentication flow security vulnerabilities",
-        "search_method": "hybrid"
+        "retrieval_strategy": "hybrid"
     }
 )
 ```
@@ -143,7 +345,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "authentication flow security vulnerabilities",
-    search_method: "hybrid",
+    retrievalStrategy: "hybrid",
   }
 );
 ```
@@ -343,7 +545,7 @@ Query interpretation allows Airweave to automatically extract structured filters
 
 This feature is useful when you want to let end users search in plain English, for example _"open GitHub issues from last week"_ or _"critical bugs reported this month"_. Airweave analyzes the query, identifies entities like dates, sources, or statuses, and applies them as filters.
 
-**Options**: `enable_query_interpretation`
+**Parameter**: `interpret_filters` (boolean)
 - `false` (default): You control all filters manually
 - `true`: AI extracts filters from your natural language query
 
@@ -354,7 +556,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "open asana tickets from last week",
-    "enable_query_interpretation": true
+    "interpret_filters": true
   }'
 ```
 
@@ -362,14 +564,14 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="open asana tickets from last week",
-    enable_query_interpretation=True
+    interpret_filters=True
 )
 # AI understands: Asana source, open status, last 7 days
 
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="critical bugs from GitHub this month",
-    enable_query_interpretation=True
+    interpret_filters=True
 )
 ```
 
@@ -378,7 +580,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "open asana tickets from last week",
-    enableQueryInterpretation: true
+    interpretFilters: true
   }
 );
 
@@ -386,7 +588,7 @@ const response2 = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "critical bugs from GitHub this month",
-    enableQueryInterpretation: true
+    interpretFilters: true
   }
 );
 ```
@@ -409,7 +611,7 @@ where,
 - **d(t)** = time decay factor (0 = oldest, 1 = newest).
 
 
-**Options**: `recency_bias` (0.0 to 1.0)
+**Parameter**: `temporal_relevance` (0.0 to 1.0)
 - `0.3` (default): Slightly prefer newer content
 - `0.0`: Don't care about dates, just find the best matches
 - `1.0`: Heavily prioritize the newest content
@@ -421,7 +623,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "project updates",
-    "recency_bias": 0.7
+    "temporal_relevance": 0.7
   }'
 ```
 
@@ -429,7 +631,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="project updates",
-    recency_bias=0.7
+    temporal_relevance=0.7
 )
 ```
 
@@ -438,7 +640,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "project updates",
-    recencyBias: 0.7,
+    temporalRelevance: 0.7,
   }
 );
 ```
@@ -480,51 +682,11 @@ const response = await client.collections.searchCollection({
 ```
 </CodeBlocks>
 
-### Filter by Relevance Score
-
-Set a minimum relevance score to filter out weak matches. Useful when you only want high-quality results.
-
-**Options**: `score_threshold` (0.0 to 1.0)
-- `None` (default): Return all matches
-- `0.7-0.8`: Return only high-confidence matches
-
-<CodeBlocks>
-```bash title="cURL" {6}
-curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
-  -H 'x-api-key: YOUR_API_KEY' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "query": "security vulnerability CVE-2024",
-    "score_threshold": 0.8
-  }'
-```
-
-```python title="Python" {4}
-results = await client.collections.search_advanced(
-    readable_id="your-collection-id",
-    query="security vulnerability CVE-2024",
-    score_threshold=0.8
-)
-```
-
-```javascript title="Node.js" {5}
-const response = await client.collections.searchAdvanced(
-  "your-collection-id",
-  {
-    query: "security vulnerability CVE-2024",
-    scoreThreshold: 0.8,
-  }
-);
-```
-</CodeBlocks>
-
-Use this when you need very reliable matches and can tolerate lower recall. For example, in compliance or legal document retrieval.
-
 ### AI Reranking
 
 AI reranking takes the top set of results from the initial search and reorders them using a large language model. This improves accuracy in cases where keyword or semantic similarity alone might be misleading.
 
-**Options**: `enable_reranking`
+**Parameter**: `rerank` (boolean)
 - `true` (default): AI reviews and reorders results for best relevance
 - `false`: Skip reranking for faster results
 
@@ -539,7 +701,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "user authentication methods",
-    "enable_reranking": false
+    "rerank": false
   }'
 ```
 
@@ -547,7 +709,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="user authentication methods",
-    enable_reranking=False
+    rerank=False
 )
 ```
 
@@ -556,7 +718,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "user authentication methods",
-    enableReranking: false,
+    rerank: false,
   }
 );
 ```
@@ -564,11 +726,11 @@ const response = await client.collections.searchAdvanced(
 
 ### Generate AI Answers
 
-Airweave can return either raw results or a synthesized answer. When set to completion, a large language model generates a natural language response based on the top results, including sources when available.
+Airweave can return either raw results or a synthesized answer. When enabled, a large language model generates a natural language response based on the top results, including sources when available.
 
-**Options**: `response_type`
-- `raw` (default): Get the actual results, recommended when you want full control.
-- `completion`: Get a synthesized answer generated from the top search results.
+**Parameter**: `generate_answer` (boolean)
+- `true` (default): Generate an AI-synthesized answer from the top search results
+- `false`: Return only raw results
 
 <CodeBlocks>
 ```bash title="cURL" {6}
@@ -577,7 +739,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "What are our customer refund policies?",
-    "response_type": "completion"
+    "generate_answer": true
   }'
 ```
 
@@ -585,7 +747,7 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="What are our customer refund policies?",
-    response_type="completion"
+    generate_answer=True
 )
 # Access: results.completion
 ```
@@ -595,7 +757,7 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "What are our customer refund policies?",
-    responseType: "completion",
+    generateAnswer: true,
   }
 );
 // Access: response.completion
@@ -604,7 +766,7 @@ const response = await client.collections.searchAdvanced(
 
 ## Complete example
 
-Here's everything together in one search:
+Here's everything together in one search using the new API:
 
 <CodeBlocks>
 ```bash title="cURL"
@@ -613,18 +775,17 @@ curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
   -H 'Content-Type: application/json' \
   -d '{
     "query": "customer feedback about pricing",
-    "expansion_strategy": "llm",
-    "search_method": "hybrid",
+    "expand_query": true,
+    "retrieval_strategy": "hybrid",
     "filter": {
       "must": [{
         "key": "source_name",
         "match": {"any": ["Zendesk", "Slack"]}
       }]
     },
-    "recency_bias": 0.5,
-    "score_threshold": 0.7,
-    "enable_reranking": true,
-    "response_type": "raw",
+    "temporal_relevance": 0.5,
+    "rerank": true,
+    "generate_answer": false,
     "limit": 50,
     "offset": 0
   }'
@@ -639,18 +800,17 @@ client = AirweaveSDK(api_key="YOUR_API_KEY")
 results = await client.collections.search_advanced(
     readable_id="your-collection-id",
     query="customer feedback about pricing",
-    expansion_strategy="llm",
-    search_method="hybrid",
+    expand_query=True,
+    retrieval_strategy="hybrid",
     filter={
         "must": [{
             "key": "source_name",
             "match": {"any": ["Zendesk", "Slack"]}
         }]
     },
-    recency_bias=0.5,
-    score_threshold=0.7,
-    enable_reranking=True,
-    response_type="raw",
+    temporal_relevance=0.5,
+    rerank=True,
+    generate_answer=False,
     limit=50,
     offset=0
 )
@@ -665,18 +825,17 @@ const response = await client.collections.searchAdvanced(
   "your-collection-id",
   {
     query: "customer feedback about pricing",
-    expansion_strategy: "llm",
-    search_method: "hybrid",
+    expandQuery: true,
+    retrievalStrategy: "hybrid",
     filter: {
       must: [{
         key: "source_name",
         match: { any: ["Zendesk", "Slack"] }
       }]
     },
-    recency_bias: 0.5,
-    score_threshold: 0.7,
-    enable_reranking: true,
-    response_type: "raw",
+    temporalRelevance: 0.5,
+    rerank: true,
+    generateAnswer: false,
     limit: 50,
     offset: 0
   }
@@ -684,6 +843,48 @@ const response = await client.collections.searchAdvanced(
 ```
 </CodeBlocks>
 
+### Legacy API Example
+
+If you're still using the legacy API, here's how the same query looks (deprecated):
+
+<CodeBlocks>
+```bash title="Legacy cURL (Deprecated)"
+curl -X POST 'https://api.airweave.ai/collections/your-collection-id/search' \
+  -H 'x-api-key: YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "customer feedback about pricing",
+    "expansion_strategy": "auto",
+    "search_method": "hybrid",
+    "filter": {
+      "must": [{
+        "key": "source_name",
+        "match": {"any": ["Zendesk", "Slack"]}
+      }]
+    },
+    "recency_bias": 0.5,
+    "enable_reranking": true,
+    "response_type": "raw",
+    "limit": 50,
+    "offset": 0
+  }'
+# Response will include X-API-Deprecation header
+```
+
+```python title="Legacy Python (Deprecated)"
+# Using old parameter names (still works but deprecated)
+results = await client.collections.search_advanced(
+    readable_id="your-collection-id",
+    query="customer feedback about pricing",
+    expansion_strategy="auto",  # ❌ Use expand_query instead
+    search_method="hybrid",     # ❌ Use retrieval_strategy instead
+    recency_bias=0.5,           # ❌ Use temporal_relevance instead
+    enable_reranking=True,      # ❌ Use rerank instead
+    response_type="raw",        # ❌ Use generate_answer instead
+)
+```
+</CodeBlocks>
+
 <Card title="Ready to search?" icon="rocket">
-  Try these examples live in our [interactive API documentation](https://docs.airweave.ai/api-reference/collections/search-advanced-collections-readable-id-search-post). You can execute real searches and see responses instantly!
+  Try these examples live in our [interactive API documentation](https://docs.airweave.ai/api-reference/collections/search-collections-readable-id-search-post). You can execute real searches and see responses instantly!
 </Card>

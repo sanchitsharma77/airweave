@@ -1,324 +1,220 @@
-"""LLM-based reranking operation.
+"""Reranking operation.
 
-This module contains the LLM reranking operation that uses OpenAI
-to reorder search results based on relevance to the original query.
+Provider-agnostic reranking that reorders retrieval results using the
+`rerank` capability of the configured provider. The provider is responsible
+for handling its own constraints (token windows, max docs, truncation).
+This operation:
+  - Reads `results` from state (produced by `Retrieval`)
+  - Prepares provider documents from result payloads
+  - Calls provider.rerank(query, documents, top_n)
+  - Applies the returned ranking to reorder results
+  - Writes reordered list back to `state["results"]`
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
-from airweave.search.operations.base import SearchOperation
+from airweave.api.context import ApiContext
+from airweave.search.context import SearchContext
+from airweave.search.providers._base import BaseProvider
+
+from ._base import SearchOperation
 
 
-class LLMReranking(SearchOperation):
-    """Rerank search results using LLM.
+class Reranking(SearchOperation):
+    """Rerank search results using LLM for improved relevance."""
 
-    This operation sends the search results and the original query to
-    OpenAI and asks the LLM to rerank the results to ensure the most
-    relevant results appear at the top.
-    """
-
-    def __init__(self, model: str = "gpt-5-nano", max_candidates: int = 100):
-        """Initialize LLM reranking.
+    def __init__(self, provider: BaseProvider) -> None:
+        """Initialize with LLM provider.
 
         Args:
-            model: OpenAI model to use for reranking
-            max_candidates: Maximum number of top results to consider for LLM reranking
+            provider: LLM provider for reranking (guaranteed by factory)
         """
-        self.model = model
-        self.max_candidates = max(1, int(max_candidates))
+        self.provider = provider
 
-    @property
-    def name(self) -> str:
-        """Operation name."""
-        return "llm_reranking"
-
-    @property
     def depends_on(self) -> List[str]:
-        """Reranking depends on vector search."""
-        return ["vector_search"]
+        """Depends on retrieval to have results to rerank."""
+        return ["Retrieval"]
 
-    async def execute(self, context: Dict[str, Any]) -> None:  # noqa: C901
-        """Execute LLM-based reranking.
-
-        Reads from context:
-            - raw_results: Initial search results
-            - query: Original search query
-            - config: SearchConfig
-            - logger: For logging
-            - openai_api_key: API key for OpenAI
-
-        Writes to context:
-            - final_results: Reranked and limited results
-        """
-        from openai import AsyncOpenAI
-        from pydantic import BaseModel, Field
-
-        results = context.get("raw_results", [])
-        query = context["query"]
-        config = context["config"]
-        logger = context["logger"]
-        openai_api_key = context.get("openai_api_key")
-
-        if not results:
-            context["final_results"] = []
-            logger.debug(f"[{self.name}] No results to rerank")
-            return
-
-        if not openai_api_key:
-            # Fail-fast policy: reranking enabled but no key configured
-            raise RuntimeError("LLMReranking requires OPENAI_API_KEY but none is configured")
-
-        logger.debug(f"[{self.name}] Reranking {len(results)} results using LLM")
-
-        try:
-            # Prepare candidate set for the LLM
-            results_for_llm = self._prepare_candidates(results)
-
-            # Define structured output for reranking (no streaming deltas)
-            class RankedResult(BaseModel):
-                index: int = Field(description="Original index of the result")
-                relevance_score: float = Field(
-                    ge=0.0, le=1.0, description="Relevance score from 0 to 1"
-                )
-
-            class RerankedResults(BaseModel):
-                rankings: List[RankedResult] = Field(
-                    description="Results ordered by relevance, most relevant first"
-                )
-
-            # Create OpenAI client
-            client = AsyncOpenAI(api_key=openai_api_key)
-
-            # Build prompts and budget candidates for context window
-            system_prompt = self._build_system_prompt()
-            chosen, user_prompt = self._build_user_prompt_with_budget(
-                query=query, candidates=results_for_llm
-            )
-
-            request_id: Optional[str] = context.get("request_id")
-            emitter = context.get("emit") if request_id else None
-
-            # Log number of results included in the prompt
-            try:
-                logger.debug(
-                    f"\n\n[{self.name}] Prompt includes {len(chosen)} candidate(s) "
-                    f"out of {len(results_for_llm)} retrieved\n\n"
-                )
-            except Exception:
-                pass
-
-            # Log prompt stats
-            self._log_prompt_stats(logger, system_prompt, user_prompt, len(chosen))
-
-            if callable(emitter):
-                await emitter(
-                    "reranking_start",
-                    {"model": self.model, "strategy": "llm", "k": len(chosen)},
-                    op_name=self.name,
-                )
-
-            # Call OpenAI Responses API (non-streaming structured output)
-            rankings_list, reranked = await self._call_openai_responses(
-                client, system_prompt, user_prompt, RerankedResults
-            )
-
-            # Apply final ranking and enforce response limit
-            context["final_results"] = self._apply_ranking(
-                results=results,
-                reranked=reranked,
-                limit=config.limit,
-            )
-            logger.debug(
-                f"[{self.name}] Successfully reranked to {len(context['final_results'])} results"
-            )
-
-            # Emit finish events
-            await self._emit_finish_events(emitter, rankings_list)
-
-        except Exception as e:
-            logger.error(f"[{self.name}] Failed: {e}", exc_info=True)
-            # Fail-fast per policy
-            raise
-
-    def _format_results_for_prompt(self, results: List[Dict]) -> str:
-        """Format results for the LLM prompt.
-
-        Args:
-            results: List of result dictionaries with index, source, title, content
-
-        Returns:
-            Formatted string for the prompt
-        """
-        formatted = []
-        for r in results:
-            formatted.append(
-                f"[{r['index']}] Source: {r['source']}, Title: {r['title']}\n"
-                f"Content: {r['content']}\n"
-                f"Original Score: {r['score']:.3f}"
-            )
-        return "\n\n".join(formatted)
-
-    # ----------------------------- Helpers ------------------------------------
-    def _prepare_candidates(self, results: List[Dict]) -> List[Dict[str, Any]]:
-        k = min(len(results), self.max_candidates)
-        prepared: List[Dict[str, Any]] = []
-        for i, result in enumerate(results[:k]):
-            payload = result.get("payload", {})
-            content = (
-                payload.get("md_content")
-                or payload.get("content")
-                or payload.get("text", "")
-                or payload.get("embeddable_text", "")
-            )
-            prepared.append(
-                {
-                    "index": i,
-                    "source": payload.get("source_name", "Unknown"),
-                    "title": payload.get("title", "Untitled"),
-                    "content": content,
-                    "score": result.get("score", 0),
-                }
-            )
-        return prepared
-
-    def _build_system_prompt(self) -> str:
-        return (
-            "You are a search result reranking expert. Your task is to reorder search "
-            "results based on their relevance to the user's query.\n\n"
-            "Use the vector similarity score as one helpful signal, but do not rely on it "
-            "exclusively.\n"
-            "- Prioritize direct topical relevance to the user's query\n"
-            "- Prefer higher quality, complete, and specific information over vague or "
-            "boilerplate text\n"
-            "- Consider source reliability and authoritativeness\n"
-            "- When items are equally relevant, the higher vector score should break ties\n\n"
-            "Only rerank when it improves relevance. If the initial order already reflects "
-            "the best results, keep the order unchanged.\n\n"
-            "Return results ordered from most to least relevant."
-        )
-
-    def _build_user_prompt_with_budget(
-        self, *, query: str, candidates: List[Dict[str, Any]]
-    ) -> tuple[List[Dict[str, Any]], str]:
-        MAX_CONTEXT_TOKENS = 125_000
-        SAFETY_TOKENS = 2_000
-
-        def estimate_tokens(text: str) -> int:
-            try:
-                return int(len(text) / 4)
-            except Exception:
-                return int(float(len(text)) / 4)
-
-        def fmt_single(item: Dict[str, Any]) -> str:
-            try:
-                return (
-                    f"[{item['index']}] Source: {item['source']}, Title: {item['title']}\n"
-                    f"Content: {item['content']}\n"
-                    f"Original Score: {item.get('score', 0):.3f}"
-                )
-            except Exception:
-                return str(item)
-
-        system_prompt = self._build_system_prompt()
-        header = f"Query: {query}\n\nSearch Results:\n"
-        footer = "\n\nPlease rerank these results from most to least relevant to the query."
-        static_tokens = (
-            estimate_tokens(system_prompt) + estimate_tokens(header) + estimate_tokens(footer)
-        )
-
-        chosen: List[Dict[str, Any]] = []
-        running = static_tokens
-        for idx, item in enumerate(candidates):
-            part = fmt_single(item)
-            sep = estimate_tokens("\n\n") if idx > 0 else 0
-            need = estimate_tokens(part) + sep
-            if running + need + SAFETY_TOKENS <= MAX_CONTEXT_TOKENS:
-                chosen.append(item)
-                running += need
-            else:
-                break
-
-        if not chosen and candidates:
-            first = fmt_single(candidates[0])
-            if static_tokens + estimate_tokens(first) + SAFETY_TOKENS <= MAX_CONTEXT_TOKENS:
-                chosen = [candidates[0]]
-
-        formatted = self._format_results_for_prompt(chosen) if chosen else ""
-        user_prompt = f"{header}{formatted}{footer}"
-        return chosen, user_prompt
-
-    def _log_prompt_stats(
-        self, logger: Any, system_prompt: str, user_prompt: str, chosen_count: int
-    ) -> None:
-        try:
-            total_chars = len(system_prompt) + len(user_prompt)
-            estimated_tokens = total_chars / 4
-            logger.debug(
-                f"\n\n[{self.name}] Estimated input tokens: ~{estimated_tokens:.0f} "
-                f"(system={len(system_prompt)}, user={len(user_prompt)}, "
-                f"candidates={chosen_count})\n\n"
-            )
-        except Exception:
-            pass
-
-    async def _call_openai_responses(
+    async def execute(
         self,
-        client: Any,
-        system_prompt: str,
-        user_prompt: str,
-        RerankedResults: Any,
-    ) -> tuple[List[Dict[str, Any]], Any]:
-        completion = await client.responses.parse(
-            model=self.model,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            text_format=RerankedResults,
-        )
-        parsed = getattr(completion, "output_parsed", None)
-        if not parsed:
-            raise RuntimeError("LLMReranking produced no structured output")
-        if not getattr(parsed, "rankings", None):
-            raise RuntimeError("LLMReranking returned empty rankings")
-        rankings_list: List[Dict[str, Any]] = [
-            {"index": r.index, "relevance_score": r.relevance_score} for r in parsed.rankings
-        ]
-        return rankings_list, parsed
-
-    def _apply_ranking(
-        self, *, results: List[Dict[str, Any]], reranked: Any, limit: int
-    ) -> List[Dict[str, Any]]:
-        final_results: List[Dict[str, Any]] = []
-        ranked_indices = set()
-        for ranked_item in reranked.rankings:
-            if not isinstance(ranked_item.index, int) or ranked_item.index < 0:
-                raise RuntimeError("LLMReranking provided invalid index")
-            if ranked_item.index >= len(results):
-                raise RuntimeError("LLMReranking index out of bounds")
-            final_results.append(results[ranked_item.index])
-            ranked_indices.add(ranked_item.index)
-
-        for i, result in enumerate(results):
-            if i not in ranked_indices and len(final_results) < limit:
-                final_results.append(result)
-        return final_results[:limit]
-
-    async def _emit_finish_events(
-        self, emitter: Optional[Any], rankings_list: List[Dict[str, Any]]
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
     ) -> None:
-        if not callable(emitter):
+        """Rerank results using the configured provider."""
+        ctx.logger.debug("[Reranking] Reranking results")
+
+        results = state.get("results")
+
+        if results is None:
+            raise RuntimeError("Reranking requires 'results' in state from Retrieval operation")
+        if not isinstance(results, list):
+            raise ValueError(f"Expected 'results' to be a list, got {type(results)}")
+        if len(results) == 0:
+            state["results"] = []
             return
-        try:
-            if rankings_list:
-                await emitter("rankings", {"rankings": rankings_list}, op_name=self.name)
-        except Exception:
-            pass
-        try:
-            await emitter(
-                "reranking_done",
-                {"rankings": rankings_list, "applied": bool(rankings_list)},
-                op_name=self.name,
+
+        # Get offset and limit from retrieval operation
+        offset = context.retrieval.offset
+        limit = context.retrieval.limit
+
+        documents, top_n = self._prepare_inputs(context, results, ctx)
+
+        if not documents:
+            raise RuntimeError(
+                f"Document preparation produced no documents from {len(results)} results. "
+                "This indicates a bug in document extraction logic."
             )
-        except Exception:
-            pass
+
+        # Emit reranking start
+        await context.emitter.emit(
+            "reranking_start",
+            {
+                "k": top_n,
+                "model": self.provider.model_spec.rerank_model.name
+                if self.provider.model_spec.rerank_model
+                else None,
+            },
+            op_name=self.__class__.__name__,
+        )
+
+        rankings = await self.provider.rerank(context.query, documents, top_n)
+        ctx.logger.debug(f"[Reranking] Rankings: {rankings}")
+
+        if not isinstance(rankings, list) or not rankings:
+            raise RuntimeError("Provider returned empty or invalid rankings")
+
+        # Emit rankings snapshot
+        await context.emitter.emit(
+            "rankings",
+            {"rankings": rankings},
+            op_name=self.__class__.__name__,
+        )
+
+        # Apply rankings, then apply offset and limit to the reranked results
+        reranked = self._apply_rankings(results, rankings, top_n)
+
+        # Apply pagination after reranking to ensure consistent offset behavior
+        paginated = self._apply_pagination(reranked, offset, limit)
+
+        state["results"] = paginated
+
+        # Emit reranking done
+        await context.emitter.emit(
+            "reranking_done",
+            {
+                "rankings": rankings,
+                "applied": bool(rankings),
+            },
+            op_name=self.__class__.__name__,
+        )
+
+    def _prepare_inputs(
+        self, context: SearchContext, results: List[dict], ctx: ApiContext
+    ) -> tuple[List[str], int]:
+        """Prepare documents for reranking."""
+        if not results:
+            return [], 0
+
+        # Get provider's max_documents limit if configured (Cohere has this)
+        max_docs = None
+        if self.provider.model_spec.rerank_model:
+            max_docs = self.provider.model_spec.rerank_model.max_documents
+
+        # Cap results to provider's limit if specified
+        if max_docs and len(results) > max_docs:
+            results_to_rerank = results[:max_docs]
+        else:
+            results_to_rerank = results
+
+        documents = self._prepare_documents(results_to_rerank)
+
+        offset = context.retrieval.offset
+        limit = context.retrieval.limit
+        top_n = min(len(documents), offset + limit)
+
+        if top_n < 1:
+            raise ValueError("Computed top_n < 1 for reranking")
+
+        ctx.logger.debug(f"[Reranking] top_n={top_n} (offset={offset}, limit={limit})")
+        return documents, top_n
+
+    def _prepare_documents(self, results: List[dict]) -> List[str]:
+        """Create provider document strings from result payloads."""
+        documents: List[str] = []
+        for i, result in enumerate(results):
+            if not isinstance(result, dict):
+                raise ValueError(f"Result at index {i} is not a dict: {type(result)}")
+            payload = result.get("payload", {})
+            if not isinstance(payload, dict):
+                payload = {}
+
+            source = payload.get("source_name") or payload.get("source") or ""
+            title = payload.get("md_title") or payload.get("title") or payload.get("name") or ""
+            content = (
+                payload.get("embeddable_text")
+                or payload.get("md_content")
+                or payload.get("content")
+                or payload.get("text")
+                or ""
+            )
+
+            # Compose a single string; providers may add additional formatting
+            parts = []
+            if source:
+                parts.append(f"Source: {source}")
+            if title:
+                parts.append(f"Title: {title}")
+            if content:
+                parts.append(f"Content: {content}")
+            doc = "\n".join(parts) if parts else ""
+            if not doc:
+                # Keep empty string to preserve index alignment; provider will handle/raise
+                doc = ""
+            documents.append(doc)
+
+        return documents
+
+    def _apply_rankings(self, results: List[dict], rankings: List[dict], top_n: int) -> List[dict]:
+        ranked_indices = self._validate_and_extract_indices(rankings, len(results))
+
+        seen = set()
+        ordered: List[dict] = []
+        for idx in ranked_indices:
+            if idx not in seen:
+                ordered.append(results[idx])
+                seen.add(idx)
+
+        for i, r in enumerate(results):
+            if len(ordered) >= top_n:
+                break
+            if i not in seen:
+                ordered.append(r)
+
+        return ordered[:top_n]
+
+    def _validate_and_extract_indices(self, rankings: List[dict], results_len: int) -> List[int]:
+        """Extract and validate ranking indices."""
+        indices: List[int] = []
+        for item in rankings:
+            if not isinstance(item, dict):
+                raise ValueError("Ranking item must be a dict with 'index' and 'relevance_score'")
+            if "index" not in item:
+                raise ValueError("Ranking item missing 'index'")
+            idx = int(item["index"])
+            if idx < 0 or idx >= results_len:
+                raise IndexError("Ranking index out of bounds")
+            indices.append(idx)
+        return indices
+
+    def _apply_pagination(self, results: List[dict], offset: int, limit: int) -> List[dict]:
+        """Apply offset and limit to reranked results."""
+        # Apply offset
+        if offset > 0:
+            results = results[offset:] if offset < len(results) else []
+
+        # Apply limit
+        if len(results) > limit:
+            results = results[:limit]
+
+        return results

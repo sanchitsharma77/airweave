@@ -194,6 +194,12 @@ export interface VectorSearchDoneEvent extends BaseEvent {
     top_scores?: number[];
 }
 
+export interface VectorSearchNoResultsEvent extends BaseEvent {
+    type: 'vector_search_no_results';
+    reason: string;
+    has_filter: boolean;
+}
+
 // Reranking
 export interface RerankingStartEvent extends BaseEvent {
     type: 'reranking_start';
@@ -212,26 +218,28 @@ export interface RerankingDeltaEvent extends BaseEvent {
     rankings_snapshot: Array<{ index: number; relevance_score: number }>;
 }
 
+export interface RankingsEvent extends BaseEvent {
+    type: 'rankings';
+    rankings: Array<{ index: number; relevance_score: number }>;
+}
+
 export interface RerankingDoneEvent extends BaseEvent {
     type: 'reranking_done';
     rankings: Array<{ index: number; relevance_score: number }>;
     applied: boolean;
 }
 
-// Completion (answer streaming)
-export interface CompletionStartEvent extends BaseEvent {
-    type: 'completion_start';
-    model: string;
-}
-
-export interface CompletionDeltaEvent extends BaseEvent {
-    type: 'completion_delta';
-    text: string; // token fragment
+// Completion (answer generation)
+export interface AnswerContextBudgetEvent extends BaseEvent {
+    type: 'answer_context_budget';
+    total_results: number;
+    results_in_context: number;
+    excluded: number;
 }
 
 export interface CompletionDoneEvent extends BaseEvent {
     type: 'completion_done';
-    text: string; // final assembled answer
+    text: string; // final assembled answer (not streamed, sent once when complete)
 }
 
 // Results
@@ -265,12 +273,13 @@ export type SearchEvent =
     | VectorSearchStartEvent
     | VectorSearchBatchEvent
     | VectorSearchDoneEvent
+    | VectorSearchNoResultsEvent
     | RerankingStartEvent
     | RerankingReasonDeltaEvent
     | RerankingDeltaEvent
+    | RankingsEvent
     | RerankingDoneEvent
-    | CompletionStartEvent
-    | CompletionDeltaEvent
+    | AnswerContextBudgetEvent
     | CompletionDoneEvent
     | ResultsEvent
     | SummaryEvent
@@ -285,7 +294,6 @@ export type StreamPhase = 'searching' | 'answering' | 'finalized' | 'cancelled';
 // Aggregated UI update emitted along raw events
 export interface PartialStreamUpdate {
     requestId?: string | null;
-    streamingCompletion?: string;
     results?: any[]; // latest snapshot
     status?: StreamPhase;
 }
