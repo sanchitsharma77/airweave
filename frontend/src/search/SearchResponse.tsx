@@ -82,7 +82,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     const jsonViewerRef = useRef<HTMLDivElement>(null);
 
     // Extract data from response
-    const statusCode = searchResponse?.error ? 500 : 200;
+    const statusCode = searchResponse?.error ? (searchResponse?.status ?? 500) : 200;
     const responseTime = searchResponse?.responseTime || null;
     const completion = searchResponse?.completion || '';
     const results = searchResponse?.results || [];
