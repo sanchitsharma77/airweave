@@ -413,292 +413,6 @@
         ]
       }
     },
-    "/collections/{readable_id}/search": {
-      "get": {
-        "tags": [
-          "collections"
-        ],
-        "summary": "Search",
-        "description": "Search across all data sources within the specified collection.\n\nThis GET endpoint provides basic search functionality. For advanced filtering\nand options, use the POST /search endpoint.",
-        "operationId": "search_collections__readable_id__search_get",
-        "parameters": [
-          {
-            "name": "readable_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "The unique readable identifier of the collection to search",
-              "title": "Readable Id"
-            },
-            "description": "The unique readable identifier of the collection to search"
-          },
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "The search query text to find relevant documents and data",
-              "examples": [
-                "customer payment issues",
-                "Q4 revenue trends",
-                "support tickets about billing"
-              ],
-              "title": "Query"
-            },
-            "description": "The search query text to find relevant documents and data"
-          },
-          {
-            "name": "response_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/ResponseType",
-              "description": "Format of the response: 'raw' returns search results, 'completion' returns AI-generated answers",
-              "examples": [
-                "raw",
-                "completion"
-              ],
-              "default": "raw"
-            },
-            "description": "Format of the response: 'raw' returns search results, 'completion' returns AI-generated answers"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 1000,
-              "minimum": 1,
-              "description": "Maximum number of results to return",
-              "default": 100,
-              "title": "Limit"
-            },
-            "description": "Maximum number of results to return"
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Number of results to skip for pagination",
-              "default": 0,
-              "title": "Offset"
-            },
-            "description": "Number of results to skip for pagination"
-          },
-          {
-            "name": "recency_bias",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "maximum": 1.0,
-                  "minimum": 0.0
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How much to weigh recency vs similarity (0..1). 0 = no recency effect; 1 = rank by recency only.",
-              "title": "Recency Bias"
-            },
-            "description": "How much to weigh recency vs similarity (0..1). 0 = no recency effect; 1 = rank by recency only."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
-                },
-                "examples": {
-                  "raw_results_search": {
-                    "summary": "Raw search results with metadata",
-                    "value": {
-                      "results": [
-                        {
-                          "id": "f30bf505-cc33-4c74-920c-524eab49334c",
-                          "score": 0.92,
-                          "payload": {
-                            "entity_id": "1207573546742333",
-                            "breadcrumbs": [],
-                            "source_name": "Asana",
-                            "md_content": "Implement user authentication - Build secure login system with JWT tokens",
-                            "md_type": "text",
-                            "metadata": {
-                              "project_name": "Q4 Development Sprint",
-                              "assignee": "john.doe@company.com",
-                              "due_date": "2024-01-20",
-                              "priority": "high",
-                              "tags": [
-                                "authentication",
-                                "security",
-                                "backend"
-                              ]
-                            },
-                            "md_position": 0,
-                            "md_parent_title": "Authentication Module"
-                          }
-                        },
-                        {
-                          "id": "fb6c49f7-2f9a-4000-ad50-96d1047a8f10",
-                          "score": 0.87,
-                          "payload": {
-                            "entity_id": "1207921130902216",
-                            "breadcrumbs": [],
-                            "source_name": "Asana",
-                            "md_content": "Review and update API authentication documentation",
-                            "md_type": "text",
-                            "metadata": {
-                              "project_name": "Documentation Updates",
-                              "assignee": "sarah.smith@company.com",
-                              "status": "in_progress",
-                              "last_modified": "2024-01-18T14:30:00Z"
-                            },
-                            "md_position": 0,
-                            "md_parent_title": "API Documentation"
-                          }
-                        }
-                      ],
-                      "response_type": "raw",
-                      "status": "success"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "ApiKeyAuth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "collections"
-        ],
-        "summary": "Search Advanced",
-        "description": "Advanced search with comprehensive filtering and options.\n\nThis endpoint supports:\n- Metadata filtering using Qdrant's native filter syntax\n- Pagination with offset and limit\n- Score threshold filtering\n- Query expansion strategies (default: AUTO, generates up to 4 variations)\n- Automatic filter extraction from natural language (default: ON)\n- LLM-based result reranking (default: ON)\n\nDefault behavior:\n- Query expansion: ON (AUTO strategy)\n- Query interpretation: ON (extracts filters from natural language)\n- Reranking: ON (improves relevance using LLM)\n- Score threshold: None (no filtering)\n\nTo disable features, explicitly set:\n- enable_reranking: false\n- enable_query_interpretation: false\n- expansion_strategy: \"no_expansion\"",
-        "operationId": "search_advanced_collections__readable_id__search_post",
-        "parameters": [
-          {
-            "name": "readable_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "The unique readable identifier of the collection to search",
-              "title": "Readable Id"
-            },
-            "description": "The unique readable identifier of the collection to search"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
-                },
-                "examples": {
-                  "completion_response_search": {
-                    "summary": "Search with AI-generated completion",
-                    "value": {
-                      "results": [
-                        {
-                          "id": "stripe_cust_1234567890",
-                          "score": 0.94,
-                          "payload": {
-                            "entity_id": "cust_1234567890",
-                            "source_name": "Stripe",
-                            "title": "Customer Payment Record",
-                            "content": "Monthly subscription payment of $99.00 processed successfully for customer John Doe (john@company.com). Payment method: Visa ending in 4242.",
-                            "metadata": {
-                              "date": "2024-01-15T10:30:00Z",
-                              "type": "payment",
-                              "amount": 99.0,
-                              "currency": "USD",
-                              "customer_email": "john@company.com"
-                            }
-                          }
-                        },
-                        {
-                          "id": "zendesk_ticket_789",
-                          "score": 0.89,
-                          "payload": {
-                            "entity_id": "ticket_789",
-                            "source_name": "Zendesk",
-                            "title": "Billing Question - Subscription Upgrade",
-                            "content": "Customer inquiry about upgrading from Basic to Pro plan. Customer mentioned they need advanced analytics features.",
-                            "metadata": {
-                              "date": "2024-01-14T14:22:00Z",
-                              "type": "support_ticket",
-                              "status": "resolved",
-                              "priority": "medium",
-                              "agent": "support@company.com"
-                            }
-                          }
-                        }
-                      ],
-                      "completion": "Based on your recent data:\n\n## Payment Processing\nCustomer John Doe successfully processed a **$99 monthly subscription payment** on January 15th using a Visa card ending in 4242.\n\n## Customer Support Activity\nThere was a related support ticket from January 14th where a customer inquired about **upgrading from Basic to Pro plan** for advanced analytics features. This ticket has been resolved.\n\n### Summary\nThis shows strong customer engagement with your premium offerings, with successful payment processing and interest in higher-tier features.",
-                      "response_type": "completion",
-                      "status": "success"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "ApiKeyAuth": []
-          }
-        ]
-      }
-    },
     "/collections/{readable_id}/refresh_all": {
       "post": {
         "tags": [
@@ -762,6 +476,200 @@
                       }
                     ]
                   }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/collections/{readable_id}/search": {
+      "get": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Search Get Legacy",
+        "description": "Legacy GET search endpoint for backwards compatibility.\n\nDEPRECATED: This endpoint uses the old schema. Please migrate to POST with the new\nSearchRequest format for access to all features.",
+        "operationId": "search_get_legacy_collections__readable_id__search_get",
+        "deprecated": true,
+        "parameters": [
+          {
+            "name": "readable_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The unique readable identifier of the collection to search",
+              "title": "Readable Id"
+            },
+            "description": "The unique readable identifier of the collection to search"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The search query text to find relevant documents and data",
+              "title": "Query"
+            },
+            "description": "The search query text to find relevant documents and data"
+          },
+          {
+            "name": "response_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResponseType",
+              "description": "Format of the response: 'raw' returns search results, 'completion' returns AI-generated answers",
+              "default": "raw"
+            },
+            "description": "Format of the response: 'raw' returns search results, 'completion' returns AI-generated answers"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "description": "Maximum number of results to return",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Maximum number of results to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of results to skip for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Number of results to skip for pagination"
+          },
+          {
+            "name": "recency_bias",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "maximum": 1.0,
+                  "minimum": 0.0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How much to weigh recency vs similarity (0..1)",
+              "title": "Recency Bias"
+            },
+            "description": "How much to weigh recency vs similarity (0..1)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacySearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Search",
+        "description": "Search your collection.\n\nAccepts both new SearchRequest and legacy LegacySearchRequest formats\nfor backwards compatibility.",
+        "operationId": "search_collections__readable_id__search_post",
+        "parameters": [
+          {
+            "name": "readable_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The unique readable identifier of the collection",
+              "title": "Readable Id"
+            },
+            "description": "The unique readable identifier of the collection"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SearchRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LegacySearchRequest"
+                  }
+                ],
+                "title": "Search Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SearchResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/LegacySearchResponse"
+                    }
+                  ],
+                  "title": "Response Search Collections  Readable Id  Search Post"
                 }
               }
             }
@@ -4174,6 +4082,189 @@
         "title": "IsNullCondition",
         "description": "Select points with null payload for a specified field"
       },
+      "LegacySearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "The search query text"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Filter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Qdrant native filter for metadata-based filtering"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset",
+            "description": "Number of results to skip",
+            "default": 0
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "description": "Maximum number of results",
+            "default": 100
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold",
+            "description": "Minimum similarity score threshold (deprecated, will be ignored)"
+          },
+          "response_type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "description": "Type of response - 'raw' or 'completion'",
+            "default": "raw"
+          },
+          "search_method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "hybrid",
+                  "neural",
+                  "keyword"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Method",
+            "description": "Search method to use"
+          },
+          "recency_bias": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency Bias",
+            "description": "How much document age affects the similarity score (0..1)"
+          },
+          "expansion_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryExpansionStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Query expansion strategy"
+          },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "Enable LLM-based reranking to improve result relevance"
+          },
+          "enable_query_interpretation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Query Interpretation",
+            "description": "Enable automatic filter extraction from natural language query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "LegacySearchRequest",
+        "description": "Legacy search request schema for backwards compatibility."
+      },
+      "LegacySearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "Array of search result objects"
+          },
+          "response_type": {
+            "$ref": "#/components/schemas/ResponseType",
+            "description": "Indicates whether results are raw search matches or AI-generated completions"
+          },
+          "completion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion",
+            "description": "AI-generated natural language answer when response_type is 'completion'"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SearchStatus",
+            "description": "Status of the search operation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "response_type",
+          "status"
+        ],
+        "title": "LegacySearchResponse",
+        "description": "Legacy search response schema for backwards compatibility."
+      },
       "MatchAny": {
         "properties": {
           "any": {
@@ -5017,6 +5108,16 @@
         "title": "ResponseType",
         "description": "Response format options for search results."
       },
+      "RetrievalStrategy": {
+        "type": "string",
+        "enum": [
+          "hybrid",
+          "neural",
+          "keyword"
+        ],
+        "title": "RetrievalStrategy",
+        "description": "Retrieval strategies for search."
+      },
       "ScheduleConfig": {
         "properties": {
           "cron": {
@@ -5137,15 +5238,19 @@
         "properties": {
           "query": {
             "type": "string",
-            "maxLength": 1000,
-            "minLength": 1,
             "title": "Query",
-            "description": "The search query text",
-            "examples": [
-              "customer payment issues",
-              "Q4 revenue trends",
-              "support tickets about billing"
-            ]
+            "description": "The search query text"
+          },
+          "retrieval_strategy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetrievalStrategy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The retrieval strategy to use"
           },
           "filter": {
             "anyOf": [
@@ -5161,94 +5266,40 @@
           "offset": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": 0.0
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Offset",
-            "description": "Number of results to skip (DEFAULT: 0)",
-            "default": 0
+            "description": "Number of results to skip"
           },
           "limit": {
             "anyOf": [
               {
-                "type": "integer",
-                "maximum": 1000.0,
-                "minimum": 1.0
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Limit",
-            "description": "Maximum number of results to return (DEFAULT: 100)",
-            "default": 100
+            "description": "Maximum number of results to return"
           },
-          "score_threshold": {
+          "temporal_relevance": {
             "anyOf": [
               {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": 0.0
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Score Threshold",
-            "description": "Minimum similarity score threshold (DEFAULT: None - no filtering)"
+            "title": "Temporal Relevance",
+            "description": "Weight recent content higher than older content; 0 = no recency effect, 1 = only recent items matter"
           },
-          "response_type": {
-            "$ref": "#/components/schemas/ResponseType",
-            "description": "Type of response - 'raw' or 'completion' (DEFAULT: 'raw')",
-            "default": "raw"
-          },
-          "search_method": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "hybrid",
-                  "neural",
-                  "keyword"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Search Method",
-            "description": "Search method to use (DEFAULT: 'hybrid' - combines neural + BM25)"
-          },
-          "recency_bias": {
-            "anyOf": [
-              {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recency Bias",
-            "description": "How much document age penalizes the similarity score (0..1). 0 = no age penalty (pure similarity); 0.5 = old docs lose up to 50% of their score; 1 = old docs get zero score (pure recency). Applied as: score \u00d7 (1 - bias + bias \u00d7 age_factor). Works within top ~10,000 semantic matches. DEFAULT: 0.3"
-          },
-          "expansion_strategy": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/QueryExpansionStrategy"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Query expansion strategy (DEFAULT: 'auto' - generates up to 4 query variations). Options: 'auto', 'llm', 'no_expansion'"
-          },
-          "enable_reranking": {
+          "expand_query": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -5257,10 +5308,10 @@
                 "type": "null"
               }
             ],
-            "title": "Enable Reranking",
-            "description": "Enable LLM-based reranking to improve result relevance (DEFAULT: True - enabled, set to False to disable)"
+            "title": "Expand Query",
+            "description": "Generate a few query variations to improve recall"
           },
-          "enable_query_interpretation": {
+          "interpret_filters": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -5269,8 +5320,32 @@
                 "type": "null"
               }
             ],
-            "title": "Enable Query Interpretation",
-            "description": "Enable automatic filter extraction from natural language query (DEFAULT: True - enabled, set to False to disable)"
+            "title": "Interpret Filters",
+            "description": "Extract structured filters from natural-language query"
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank",
+            "description": "Reorder the top candidate results for improved relevance. Max number of results that can be reranked is capped to around 1000."
+          },
+          "generate_answer": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generate Answer",
+            "description": "Generate a natural-language answer to the query"
           }
         },
         "type": "object",
@@ -5278,36 +5353,7 @@
           "query"
         ],
         "title": "SearchRequest",
-        "description": "Comprehensive search request encapsulating all search parameters.",
-        "examples": [
-          {
-            "filter": {
-              "must": [
-                {
-                  "key": "source_name",
-                  "match": {
-                    "value": "Support"
-                  }
-                },
-                {
-                  "key": "status",
-                  "match": {
-                    "value": "open"
-                  }
-                }
-              ]
-            },
-            "limit": 10,
-            "query": "customer payment issues",
-            "response_type": "completion",
-            "score_threshold": 0.7
-          },
-          {
-            "limit": 20,
-            "query": "Q4 revenue analysis",
-            "response_type": "raw"
-          }
-        ]
+        "description": "Search request schema."
       },
       "SearchResponse": {
         "properties": {
@@ -5320,10 +5366,6 @@
             "title": "Results",
             "description": "Array of search result objects containing the found documents, records, or data entities."
           },
-          "response_type": {
-            "$ref": "#/components/schemas/ResponseType",
-            "description": "Indicates whether results are raw search matches or AI-generated completions based on the found content."
-          },
           "completion": {
             "anyOf": [
               {
@@ -5334,77 +5376,16 @@
               }
             ],
             "title": "Completion",
-            "description": "AI-generated natural language answer when response_type is 'completion'. This provides natural language answers to your query based on the content found across your connected data sources."
-          },
-          "status": {
-            "$ref": "#/components/schemas/SearchStatus",
-            "description": "Status of the search operation indicating the quality and availability of results:<br/>\u2022 **success**: Search found relevant results matching your query<br/>\u2022 **no_relevant_results**: Search completed but found no sufficiently relevant matches<br/>\u2022 **no_results**: Search found no results at all, possibly indicating empty collections or very specific queries"
+            "description": "This provides natural language answers to your query based on the content found across your connected data sources when generate_answer is true."
           }
         },
         "type": "object",
         "required": [
           "results",
-          "response_type",
-          "status"
+          "completion"
         ],
         "title": "SearchResponse",
-        "description": "Comprehensive search response containing results and metadata.",
-        "examples": [
-          {
-            "response_type": "raw",
-            "results": [
-              {
-                "payload": {
-                  "created_at": "2024-01-15T10:30:00Z",
-                  "entity_id": "trans_1234567890",
-                  "md_content": "Customer John Doe successfully processed payment of $99 for monthly subscription",
-                  "metadata": {
-                    "amount": 99,
-                    "currency": "USD",
-                    "status": "completed"
-                  },
-                  "source_name": "Payment API",
-                  "title": "Transaction Processing"
-                },
-                "score": 0.92
-              },
-              {
-                "payload": {
-                  "created_at": "2024-01-14T14:22:00Z",
-                  "entity_id": "ticket_987654321",
-                  "md_content": "Customer inquired about upgrading subscription plan for advanced analytics features",
-                  "metadata": {
-                    "priority": "medium",
-                    "status": "resolved"
-                  },
-                  "source_name": "Support Tickets",
-                  "title": "Billing Inquiry"
-                },
-                "score": 0.87
-              }
-            ],
-            "status": "success"
-          },
-          {
-            "completion": "Based on your recent data, customer John Doe successfully processed a $99 monthly subscription payment on January 15th. There was also a related support ticket from January 14th where a customer inquired about upgrading from Basic to Pro plan for advanced analytics features. This suggests strong customer engagement with your premium offerings.",
-            "response_type": "completion",
-            "results": [
-              {
-                "payload": {
-                  "entity_id": "cust_abc123",
-                  "md_content": "Premium customer account details",
-                  "metadata": {
-                    "active": true,
-                    "tier": "premium"
-                  },
-                  "source_name": "Customer Database"
-                },
-                "score": 0.95
-              }
-            ],
-            "status": "success"
-          }
-        ]
+        "description": "Comprehensive search response containing results and metadata."
       },
       "SearchStatus": {
         "type": "string",
