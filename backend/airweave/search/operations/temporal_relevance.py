@@ -249,6 +249,9 @@ class TemporalRelevance(SearchOperation):
         if isinstance(value, str):
             try:
                 dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                # Ensure timezone-aware - fromisoformat may return naive datetime
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 return dt
             except ValueError:
                 return None
