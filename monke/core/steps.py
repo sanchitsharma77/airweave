@@ -102,12 +102,16 @@ class SyncStep(TestStep):
         except Exception as e:
             msg = str(e).lower()
             if "already has a running job" in msg or "already running" in msg:
-                self.logger.warning("⚠️ Sync already running; discovering and waiting for that job.")
+                self.logger.warning(
+                    "⚠️ Sync already running; discovering and waiting for that job."
+                )
                 active_job_id = self._find_active_job_id() or self._get_latest_job_id()
                 if not active_job_id:
                     # Last resort: brief wait then re-check
                     await asyncio.sleep(2.0)
-                    active_job_id = self._find_active_job_id() or self._get_latest_job_id()
+                    active_job_id = (
+                        self._find_active_job_id() or self._get_latest_job_id()
+                    )
                 if not active_job_id:
                     raise  # nothing to wait on; re-raise original error
                 await self._wait_for_sync_completion(target_job_id=active_job_id)
@@ -126,12 +130,16 @@ class SyncStep(TestStep):
     def _get_jobs(self) -> List[Dict[str, Any]]:
         """Get list of sync jobs for the source connection, sorted by recency."""
         jobs = (
-            http_utils.http_get(f"/source-connections/{self.context.source_connection_id}/jobs")
+            http_utils.http_get(
+                f"/source-connections/{self.context.source_connection_id}/jobs"
+            )
             or []
         )
         # Sort by started_at or created_at, newest first
         return sorted(
-            jobs, key=lambda j: j.get("started_at") or j.get("created_at") or "", reverse=True
+            jobs,
+            key=lambda j: j.get("started_at") or j.get("created_at") or "",
+            reverse=True,
         )
 
     def _find_active_job_id(self) -> Optional[str]:
@@ -205,7 +213,9 @@ class SyncStep(TestStep):
             completed_at = job.get("completed_at")
             error = job.get("error")
 
-            self.logger.info(f"🔍 Job {target_job_id} status={status}, completed_at={completed_at}")
+            self.logger.info(
+                f"🔍 Job {target_job_id} status={status}, completed_at={completed_at}"
+            )
 
             # Check for failure
             if status == "failed":
@@ -267,31 +277,20 @@ async def _search_collection_async(
     search_request = {
         "query": query,
         "limit": 1000,  # Always use 1000 for comprehensive results
-        "response_type": "raw",
-        "enable_reranking": False,
-        "enable_query_interpretation": False,
-        "expansion_strategy": "no_expansion",
-        "search_method": "keyword",  # Use keyword search for exact string matching
+        "rerank": False,
+        "interpret_filters": False,
+        "expand_query": False,
+        "generate_answer": False,
+        "retrieval_strategy": "keyword",  # Use keyword search for exact string matching
     }
 
     try:
-        data = http_utils.http_post(f"/collections/{readable_id}/search", json=search_request)
+        data = http_utils.http_post(
+            f"/collections/{readable_id}/search", json=search_request
+        )
         return data.get("results", [])
     except Exception:
         return []
-
-    url = f"{api_url}/collections/{readable_id}/search"
-
-    async with httpx.AsyncClient() as http_client:
-        try:
-            response = await http_client.post(url, json=search_request, headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("results", [])
-            else:
-                return []
-        except Exception:
-            return []
 
 
 async def _token_present_in_collection(
@@ -336,7 +335,9 @@ class VerifyStep(TestStep):
         async def verify_one(entity: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
             expected_token = entity.get("token")
             if not expected_token:
-                self.logger.warning("⚠️ No token found in entity, falling back to filename")
+                self.logger.warning(
+                    "⚠️ No token found in entity, falling back to filename"
+                )
                 expected_token = (entity.get("path") or "").split("/")[-1]
 
             # Always use 1000 limit for comprehensive search
@@ -347,8 +348,12 @@ class VerifyStep(TestStep):
 
         # Retry support + optional one-time rescue resync
         attempts = int(self.config.verification_config.get("retries", 5))
-        backoff = float(self.config.verification_config.get("retry_backoff_seconds", 1.0))
-        resync_on_miss = bool(self.config.verification_config.get("resync_on_miss", True))
+        backoff = float(
+            self.config.verification_config.get("retry_backoff_seconds", 1.0)
+        )
+        resync_on_miss = bool(
+            self.config.verification_config.get("resync_on_miss", True)
+        )
 
         resync_lock = asyncio.Lock()
         resync_triggered = False
@@ -383,9 +388,13 @@ class VerifyStep(TestStep):
         errors = []
         for entity, ok in results:
             if not ok:
-                errors.append(f"Entity {self._display_name(entity)} not found in Qdrant")
+                errors.append(
+                    f"Entity {self._display_name(entity)} not found in Qdrant"
+                )
             else:
-                self.logger.info(f"✅ Entity {self._display_name(entity)} verified in Qdrant")
+                self.logger.info(
+                    f"✅ Entity {self._display_name(entity)} verified in Qdrant"
+                )
 
         if errors:
             raise Exception("; ".join(errors))
@@ -434,7 +443,9 @@ class PartialDeleteStep(TestStep):
         deleted_ids = set(deleted_paths)
 
         # Find all entities that were actually deleted (including cascade deletions)
-        actually_deleted = [e for e in self.context.created_entities if e["id"] in deleted_ids]
+        actually_deleted = [
+            e for e in self.context.created_entities if e["id"] in deleted_ids
+        ]
         actually_remaining = [
             e for e in self.context.created_entities if e["id"] not in deleted_ids
         ]
@@ -450,7 +461,9 @@ class PartialDeleteStep(TestStep):
                 f"(total {len(actually_deleted)} deleted, {len(actually_remaining)} remaining)"
             )
 
-        self.logger.info(f"✅ Partial deletion completed: {len(deleted_paths)} entities deleted")
+        self.logger.info(
+            f"✅ Partial deletion completed: {len(deleted_paths)} entities deleted"
+        )
 
     def _calculate_partial_deletion_count(self) -> int:
         return self.config.deletion.partial_delete_count
@@ -463,7 +476,9 @@ class VerifyPartialDeletionStep(TestStep):
         self.logger.info("🔍 Verifying partial deletion")
 
         if not self.config.deletion.verify_partial_deletion:
-            self.logger.info("⏭️ Skipping partial deletion verification (disabled in config)")
+            self.logger.info(
+                "⏭️ Skipping partial deletion verification (disabled in config)"
+            )
             return
 
         client = self.context.airweave_client
@@ -478,7 +493,9 @@ class VerifyPartialDeletionStep(TestStep):
             # Always use token for verification
             token = entity.get("token")
             if not token:
-                self.logger.warning(f"No token found for entity {self._display_name(entity)}")
+                self.logger.warning(
+                    f"No token found for entity {self._display_name(entity)}"
+                )
                 return entity, True  # Assume deleted if no token
 
             # Check if token is present in collection
@@ -516,7 +533,9 @@ class VerifyRemainingEntitiesStep(TestStep):
         self.logger.info("🔍 Verifying remaining entities are still present")
 
         if not self.config.deletion.verify_remaining_entities:
-            self.logger.info("⏭️ Skipping remaining entities verification (disabled in config)")
+            self.logger.info(
+                "⏭️ Skipping remaining entities verification (disabled in config)"
+            )
             return
 
         client = self.context.airweave_client
@@ -535,7 +554,9 @@ class VerifyRemainingEntitiesStep(TestStep):
             )
             return entity, present
 
-        results = await asyncio.gather(*[check_present(e) for e in self.context.remaining_entities])
+        results = await asyncio.gather(
+            *[check_present(e) for e in self.context.remaining_entities]
+        )
 
         errors = []
         for entity, is_present in results:
@@ -571,7 +592,9 @@ class CompleteDeleteStep(TestStep):
 
         deleted_paths = await bongo.delete_specific_entities(remaining_entities)
 
-        self.logger.info(f"✅ Complete deletion completed: {len(deleted_paths)} entities deleted")
+        self.logger.info(
+            f"✅ Complete deletion completed: {len(deleted_paths)} entities deleted"
+        )
 
 
 class VerifyCompleteDeletionStep(TestStep):
@@ -581,7 +604,9 @@ class VerifyCompleteDeletionStep(TestStep):
         self.logger.info("🔍 Verifying complete deletion")
 
         if not self.config.deletion.verify_complete_deletion:
-            self.logger.info("⏭️ Skipping complete deletion verification (disabled in config)")
+            self.logger.info(
+                "⏭️ Skipping complete deletion verification (disabled in config)"
+            )
             return
 
         client = self.context.airweave_client
@@ -591,7 +616,6 @@ class VerifyCompleteDeletionStep(TestStep):
         )
 
         async def check_deleted(entity: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
-
             # Get token to search for
             expected_token = entity.get("token") or (
                 (entity.get("path", "").split("/")[-1])
@@ -644,7 +668,9 @@ class VerifyCompleteDeletionStep(TestStep):
             raise Exception("; ".join(errors))
 
         # Always use 1000 limit for comprehensive search
-        collection_empty = await self._verify_collection_empty_of_test_data(client, 1000)
+        collection_empty = await self._verify_collection_empty_of_test_data(
+            client, 1000
+        )
         if not collection_empty:
             self.logger.warning(
                 "⚠️ Qdrant collection still contains some data (may be metadata entities)"
@@ -654,7 +680,9 @@ class VerifyCompleteDeletionStep(TestStep):
 
         self.logger.info("✅ Complete deletion verification completed")
 
-    async def _verify_collection_empty_of_test_data(self, client: Any, limit: int) -> bool:
+    async def _verify_collection_empty_of_test_data(
+        self, client: Any, limit: int
+    ) -> bool:
         try:
             test_patterns = ["monke-test", "Monke Test"]
 
@@ -670,18 +698,24 @@ class VerifyCompleteDeletionStep(TestStep):
                 except Exception:
                     return pattern, []
 
-            pattern_results = await asyncio.gather(*[search_one(p) for p in test_patterns])
+            pattern_results = await asyncio.gather(
+                *[search_one(p) for p in test_patterns]
+            )
 
             total = 0
             for pattern, results in pattern_results:
                 count = len(results)
                 total += count
                 if count:
-                    self.logger.info(f"🔍 Found {count} results for pattern '{pattern}'")
+                    self.logger.info(
+                        f"🔍 Found {count} results for pattern '{pattern}'"
+                    )
                     for r in results[:3]:
                         payload = r.get("payload", {})
                         score = r.get("score")
-                        self.logger.info(f"   - {payload.get('name', 'Unknown')} (score: {score})")
+                        self.logger.info(
+                            f"   - {payload.get('name', 'Unknown')} (score: {score})"
+                        )
 
             if total == 0:
                 self.logger.info("✅ No test data found in collection")
@@ -725,7 +759,9 @@ class CollectionCleanupStep(TestStep):
             test_collections = await self._find_test_collections()
 
             if test_collections:
-                self.logger.info(f"🔍 Found {len(test_collections)} test collections to clean up")
+                self.logger.info(
+                    f"🔍 Found {len(test_collections)} test collections to clean up"
+                )
 
                 for collection in test_collections:
                     try:
@@ -807,7 +843,9 @@ class TestStepFactory:
         "verify_complete_deletion": VerifyCompleteDeletionStep,
     }
 
-    def create_step(self, step_name: str, config: TestConfig, context: TestContext) -> TestStep:
+    def create_step(
+        self, step_name: str, config: TestConfig, context: TestContext
+    ) -> TestStep:
         if step_name not in self._steps:
             raise ValueError(f"Unknown test step: {step_name}")
         return self._steps[step_name](config, context)

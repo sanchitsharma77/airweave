@@ -113,20 +113,22 @@ The MCP server provides two tools:
 
 ### Advanced Search Features
 
-The search tool automatically selects the optimal endpoint based on your parameters:
+The search tool uses the **POST** endpoint for full control over search parameters.
 
-- **Basic Search**: Uses **GET** endpoint for simple queries with core parameters only
-- **Advanced Search**: Uses **POST** endpoint when advanced parameters are specified
-
-**Advanced Parameters:**
-- `score_threshold`: Filter results by similarity score (0.0-1.0)
-- `search_method`: Choose between 'hybrid', 'neural', or 'keyword' search
-- `expansion_strategy`: Control query expansion with 'auto', 'llm', or 'no_expansion'
-- `enable_reranking`: Enable/disable LLM-based result reranking
-- `enable_query_interpretation`: Enable/disable automatic filter extraction
+**Available Parameters:**
+- `retrieval_strategy`: Choose between 'hybrid', 'neural', or 'keyword' search (default: 'hybrid')
+- `expand_query`: Generate query variations for better recall (default: true)
+- `interpret_filters`: Extract filters from natural language (default: false)
+- `rerank`: LLM-based result reranking for improved relevance (default: true)
+- `generate_answer`: AI-generated completion from results (default: true)
+- `temporal_relevance`: Recency weighting from 0.0 to 1.0 (default: 0.3)
+- `limit`: Maximum number of results (default: 1000)
+- `offset`: Pagination offset (default: 0)
 
 **Natural Language Examples:**
-- "Find high-quality results about AI" → `score_threshold: 0.8`
-- "Use neural search for semantic similarity" → `search_method: "neural"`
-- "Search without expanding the query" → `expansion_strategy: "no_expansion"`
-- "Disable reranking for faster results" → `enable_reranking: false`
+- "Use neural search for semantic similarity" → `retrieval_strategy: "neural"`
+- "Search without expanding the query" → `expand_query: false`
+- "Extract filters from my query" → `interpret_filters: true`
+- "Disable reranking for faster results" → `rerank: false`
+- "Just return results, no AI summary" → `generate_answer: false`
+- "Prioritize recent documents" → `temporal_relevance: 0.8`
