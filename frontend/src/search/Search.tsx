@@ -32,9 +32,7 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
     const [requestId, setRequestId] = useState<string | null>(null);
     const [events, setEvents] = useState<any[]>([]);
 
-    // streaming completion tokens
-    const [streamingCompletion, setStreamingCompletion] = useState<string>("");
-    // final results
+    // live results while searching
     const [liveResults, setLiveResults] = useState<any[]>([]);
 
     // search state
@@ -46,8 +44,7 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
         setSearchResponse(response);
         setSearchResponseType(responseType);
         setResponseTime(responseTimeMs);
-
-    }, [streamingCompletion, isSearching]);
+    }, []);
 
     const handleSearchStart = useCallback((responseType: 'raw' | 'completion') => {
         // Open panels on first search
@@ -60,7 +57,6 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
         setResponseTime(null);
         setSearchResponseType(responseType);  // Set the response type for this search
         setEvents([]);
-        setStreamingCompletion("");
         setLiveResults([]);
         setRequestId(null);
     }, [showResponsePanel]);
@@ -92,9 +88,9 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
                     onSearchEnd={handleSearchEnd}
                     onCancel={() => {
                         setIsCancelling(true);
-                        // If we don’t yet have a final response, expose a cancelled placeholder
+                        // If we don't yet have a final response, expose a cancelled placeholder
                         setSearchResponse((prev) => {
-                            const next = prev || { results: [], completion: null, status: 'cancelled' };
+                            const next = prev || { results: [], completion: null };
                             return next;
                         });
                         setSearchResponseType((prev) => {
@@ -107,7 +103,7 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
                         if (event?.type === 'cancelled') {
                             setIsCancelling(true);
                             setIsSearching(false);
-                            setSearchResponse((prev) => prev || { results: [], completion: null, status: 'cancelled' });
+                            setSearchResponse((prev) => prev || { results: [], completion: null });
                         }
                         if (event?.type === 'connected' && event.request_id) {
                             setRequestId(event.request_id as string);
@@ -116,9 +112,6 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
                     onStreamUpdate={(partial: any) => {
                         if (partial && Object.prototype.hasOwnProperty.call(partial, 'requestId')) {
                             setRequestId(partial.requestId ?? null);
-                        }
-                        if (typeof partial?.streamingCompletion === 'string') {
-                            setStreamingCompletion(partial.streamingCompletion);
                         }
                         if (Array.isArray(partial?.results)) {
                             setLiveResults(partial.results);
@@ -132,8 +125,9 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
                 <div>
                     <SearchResponse
                         searchResponse={(() => {
+                            // While searching, show live results but no completion (not streamed)
                             const response = isSearching
-                                ? { status: 'in_progress', completion: streamingCompletion, results: liveResults }
+                                ? { results: liveResults }
                                 : searchResponse;
                             return response;
                         })()}

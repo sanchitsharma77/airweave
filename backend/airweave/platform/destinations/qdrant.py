@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 from uuid import UUID
 
 # Prefer SparseTextEmbedding (newer fastembed), fallback to SparseEmbedding (older)
@@ -42,7 +42,9 @@ from airweave.platform.destinations.collection_strategy import (
     get_physical_collection_name,
 )
 from airweave.platform.entities._base import ChunkEntity
-from airweave.search.decay import DecayConfig
+
+if TYPE_CHECKING:
+    from airweave.search.operations.temporal_relevance import DecayConfig
 
 KEYWORD_VECTOR_NAME = "bm25"
 

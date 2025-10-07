@@ -1,307 +1,137 @@
 """Query expansion operation.
 
-This operation expands the user's query into multiple variations to improve
-recall. As of this version, the operation no longer supports streaming
-structured outputs. Both streaming and non-streaming searches use the
-same non-streaming structured output path. In streaming mode, we still
-emit basic lifecycle events (expansion_start, expansion_done), but no
-incremental "delta" events.
+Expands the user's query into multiple variations to improve recall.
+Uses LLM to generate semantic alternatives that might match relevant documents
+using different terminology while preserving the original search intent.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
-from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
-from airweave.core.config import settings
-from airweave.schemas.search import QueryExpansions, QueryExpansionStrategy
-from airweave.search.operations.base import SearchOperation
+from airweave.api.context import ApiContext
+from airweave.search.context import SearchContext
+from airweave.search.prompts import QUERY_EXPANSION_SYSTEM_PROMPT
+from airweave.search.providers._base import BaseProvider
+
+from ._base import SearchOperation
+
+
+class QueryExpansions(BaseModel):
+    """Structured output schema for LLM-generated query expansions."""
+
+    alternatives: List[str] = Field(
+        description="Alternative query phrasings",
+        max_length=4,
+    )
 
 
 class QueryExpansion(SearchOperation):
-    """Expands a query into multiple variations.
+    """Expand user query into multiple variations for better recall."""
 
-    This operation takes the original query and generates variations
-    that might match relevant documents using different terminology.
-    The expanded queries are then embedded and searched in parallel.
+    MAX_EXPANSIONS = 4
 
-    Example:
-        Input: "customer payment issues"
-        Output: ["customer payment issues", "billing problems",
-                 "payment failures", "transaction errors"]
-    """
-
-    def __init__(self, strategy: str = "auto", max_expansions: int = 4):
-        """Initialize query expansion operation.
+    def __init__(self, provider: BaseProvider) -> None:
+        """Initialize with LLM provider.
 
         Args:
-            strategy: Expansion strategy ("auto", "llm", "none")
-            max_expansions: Maximum number of query variations to generate
+            provider: LLM provider for structured output (guaranteed by factory)
         """
-        self.strategy = strategy
-        self.max_expansions = max_expansions
-        self._openai_client = None
+        self.provider = provider
 
-    @property
-    def name(self) -> str:
-        """Operation name."""
-        return "query_expansion"
+    def depends_on(self) -> List[str]:
+        """No dependencies - runs first if enabled."""
+        return []
 
-    @property
-    def openai_client(self) -> Optional[AsyncOpenAI]:
-        """Lazy-load OpenAI client.
+    async def execute(
+        self,
+        context: SearchContext,
+        state: dict[str, Any],
+        ctx: ApiContext,
+    ) -> None:
+        """Expand the query into variations."""
+        ctx.logger.debug("[QueryExpansion] Expanding the query into variations")
 
-        Returns:
-            AsyncOpenAI: The OpenAI client. If OPENAI_API_KEY is not set, returns None.
-        """
-        if self._openai_client is None and settings.OPENAI_API_KEY:
-            self._openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        return self._openai_client
+        query = context.query
 
-    async def execute(self, context: Dict[str, Any]) -> None:  # noqa: C901
-        """Expand the query into multiple variations.
+        # Validate query length before sending to LLM
+        self._validate_query_length(query, ctx)
 
-        Reads from context:
-            - query: Original search query
-            - config: SearchConfig (for strategy override)
-            - logger: For logging
+        # Build prompts
+        system_prompt = QUERY_EXPANSION_SYSTEM_PROMPT.format(max_expansions=self.MAX_EXPANSIONS)
+        user_prompt = f"Original query: {query}"
 
-        Writes to context:
-            - expanded_queries: List of query variations
-        """
-        query = context["query"]
-        logger = context["logger"]
-        config = context["config"]
-
-        # Strategy can be overridden by config
-        strategy = (
-            config.expansion_strategy if hasattr(config, "expansion_strategy") else self.strategy
+        # Get structured output from provider
+        result = await self.provider.structured_output(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            schema=QueryExpansions,
         )
 
-        # Convert string strategy to enum if needed
-        if isinstance(strategy, str):
-            strategy = self._resolve_strategy(strategy)
+        # Validate and deduplicate alternatives
+        alternatives = result.alternatives or []
+        valid_alternatives = self._validate_alternatives(alternatives, query)
+        ctx.logger.debug(f"[QueryExpansion] Valid alternatives: {valid_alternatives}")
 
-        logger.debug(f"[QueryExpansion] Expanding query using strategy: {strategy}")
-
-        # If in streaming mode, emit a basic start event (no deltas)
-        emitter = context.get("emit")
-        request_id = context.get("request_id")
-        if request_id and callable(emitter):
-            try:
-                model = "gpt-5-nano" if strategy == QueryExpansionStrategy.LLM else None
-                await emitter(
-                    "expansion_start",
-                    {"model": model, "strategy": ("llm" if model else "none")},
-                    op_name=self.name,
-                )
-            except Exception:
-                pass
-
-        try:
-            # Single non-streaming path for both streaming and non-streaming searches
-            expanded_queries = await self._expand(query, strategy, logger)
-
-            # Limit the number of expansions
-            if len(expanded_queries) > self.max_expansions:
-                expanded_queries = expanded_queries[: self.max_expansions]
-                logger.debug(f"[QueryExpansion] Limited expansions to {self.max_expansions}")
-
-            context["expanded_queries"] = expanded_queries
-            logger.debug(
-                (
-                    f"[QueryExpansion] Expanded query '{query[:50]}...' to "
-                    f"{len(expanded_queries)} variations"
-                )
+        # Ensure we got exactly the expected number of alternatives
+        if len(valid_alternatives) != self.MAX_EXPANSIONS:
+            raise ValueError(
+                f"Query expansion failed: expected exactly {self.MAX_EXPANSIONS} alternatives, "
+                f"got {len(valid_alternatives)}. LLM returned wrong number of valid alternatives."
             )
 
-            if logger.isEnabledFor(10):  # DEBUG level
-                logger.debug(f"[QueryExpansion] Variations: {expanded_queries}")
+        # Write alternatives to state (original query remains in context.query)
+        state["expanded_queries"] = valid_alternatives
 
-            # In streaming mode, emit a done event with the final alternatives
-            if request_id and callable(emitter):
-                try:
-                    await emitter(
-                        "expansion_done", {"alternatives": expanded_queries}, op_name=self.name
-                    )
-                except Exception:
-                    pass
+        # Emit expansion done with alternatives
+        await context.emitter.emit(
+            "expansion_done",
+            {"alternatives": valid_alternatives},
+            op_name=self.__class__.__name__,
+        )
 
-        except Exception as e:
-            logger.error(f"[QueryExpansion] Failed: {e}", exc_info=True)
-            # Propagate error so executor can fail the search
-            if request_id and callable(emitter):
-                try:
-                    await emitter(
-                        "error", {"operation": self.name, "message": str(e)}, op_name=self.name
-                    )
-                except Exception:
-                    pass
-            raise
-
-    def _resolve_strategy(self, requested: str | QueryExpansionStrategy) -> QueryExpansionStrategy:
-        """Resolve the expansion strategy to use.
-
-        Args:
-            requested: The requested strategy (enum or string)
-
-        Returns:
-            QueryExpansionStrategy: The resolved strategy enum value
-        """
-        # Convert string to enum if needed
-        if isinstance(requested, str):
-            try:
-                requested = QueryExpansionStrategy(requested.lower())
-            except ValueError:
-                # Default to AUTO for invalid values
-                requested = QueryExpansionStrategy.AUTO
-
-        # Handle AUTO strategy
-        if requested == QueryExpansionStrategy.AUTO:
-            if settings.OPENAI_API_KEY:
-                return QueryExpansionStrategy.LLM
-            return QueryExpansionStrategy.NO_EXPANSION
-
-        return requested
-
-    async def _expand(self, query: str, strategy: QueryExpansionStrategy, logger) -> List[str]:
-        """Main expansion entry point.
-
-        Args:
-            query: The query to expand
-            strategy: The strategy to use
-            logger: The logger to use
-        Returns:
-            List of queries with original first
-        """
-        if strategy == QueryExpansionStrategy.NO_EXPANSION:
-            return [query]
-        elif strategy == QueryExpansionStrategy.LLM:
-            return await self._llm_expand(query, logger)
-
-        # Fallback
-        return [query]
-
-    async def _llm_expand(self, query: str, logger) -> List[str]:
-        """Use LLM to generate semantically similar search queries.
-
-        Prompts GPT to create alternative phrasings that could retrieve relevant
-        passages while maintaining the original search intent.
-
-        Args:
-            query: The query to expand
-            logger: The logger to use
-
-        Returns:
-            List of queries with the original query as the first item
-        """
-        if not self.openai_client:
-            return [query]
-
-        try:
-            # Generate alternatives using OpenAI (non-streaming structured output)
-            system_message = self._get_expansion_system_prompt()
-            user_message = self._get_expansion_user_prompt(query)
-
-            completion = await self.openai_client.responses.parse(
-                model="gpt-5-nano",
-                input=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message},
-                ],
-                max_output_tokens=2000,
-                text_format=QueryExpansions,
+    def _validate_query_length(self, query: str, ctx: ApiContext) -> None:
+        """Validate query fits in provider's context window."""
+        # Get LLM tokenizer from provider
+        tokenizer = getattr(self.provider, "llm_tokenizer", None)
+        if not tokenizer:
+            provider_name = self.provider.__class__.__name__
+            raise RuntimeError(
+                f"Provider {provider_name} does not have an LLM tokenizer. "
+                "Cannot validate query length."
             )
 
-            parsed_result = completion.output_parsed
-            if not parsed_result:
-                raise Exception("Structured parse result is None")
-            logger.debug(f"[QueryExpansion] Structured parse result: {parsed_result}")
-            alternatives = parsed_result.alternatives if parsed_result else []
+        token_count = self.provider.count_tokens(query, tokenizer)
+        ctx.logger.debug(f"[QueryExpansion] Token count: {token_count}")
 
-            valid_alternatives = self._validate_alternatives(alternatives, query)
-            return self._build_expansion_result(query, valid_alternatives)
+        # Estimate prompt overhead: system prompt ~500 tokens, structured output ~500 tokens
+        prompt_overhead = 1000
+        max_allowed = self.provider.model_spec.llm_model.context_window - prompt_overhead
 
-        except Exception as e:
-            logger.debug(f"[QueryExpansion] Structured parse failed: {e}")
-            # On failure, fall back to original query only
-            return [query]
+        if token_count > max_allowed:
+            raise ValueError(
+                f"Query too long: {token_count} tokens exceeds max of {max_allowed} "
+                f"for query expansion"
+            )
 
-    def _get_expansion_system_prompt(self) -> str:
-        """Get the system prompt for query expansion."""
-        return (
-            "You are a search query expansion assistant. Your job is to create "
-            "high-quality alternative phrasings that improve recall for a hybrid "
-            "keyword + vector search, while preserving the user's intent.\n\n"
-            "Core behaviors (optimize recall without changing meaning):\n"
-            "- Produce diverse paraphrases that surface different vocabulary and "
-            "phrasing.\n"
-            "- Include at least one keyword-forward variant (good for BM25).\n"
-            "- Include a normalized/literal variant that spells out implicit "
-            "constraints (e.g., role/company/location/education if present).\n"
-            "- Expand common abbreviations and acronyms to their full forms.\n"
-            "- Swap common synonyms and morphological variants "
-            "(manage→management, bill→billing).\n"
-            "- Recast questions as statements or list intents when appropriate "
-            "(e.g., 'find', 'list', 'show').\n"
-            "- Do not introduce constraints that are not implied by the query.\n"
-            "- Avoid duplicates and near-duplicates (punctuation-only or trivial "
-            "reorderings).\n\n"
-        )
-
-    def _get_expansion_user_prompt(self, query: str) -> str:
-        """Get the user prompt for query expansion."""
-        return (
-            f"Original query: {query}\n\n"
-            f"Instructions:\n"
-            f"- Generate up to {self.max_expansions} alternatives that preserve "
-            f"intent and increase recall.\n"
-            f"- Favor lexical diversity: use synonyms, category names, and "
-            f"different grammatical forms.\n"
-            f"- Include one keyword-heavy form and one normalized/literal form "
-            f"if applicable.\n"
-            f"- Expand abbreviations (e.g., 'eng'→'engineering', 'SF'→'San Francisco').\n"
-            f"- Avoid adding new constraints; avoid duplicates and trivial "
-            f"rephrasings.\n"
-        )
-
-    def _validate_alternatives(self, alternatives: list, original_query: str) -> List[str]:
-        """Validate and clean the alternatives from OpenAI.
-
-        Args:
-            alternatives: Raw alternatives from OpenAI
-            original_query: The original query to avoid duplicates
-
-        Returns:
-            List of valid, cleaned alternatives
-        """
-        valid_alternatives = []
+    def _validate_alternatives(self, alternatives: List[str], original_query: str) -> List[str]:
+        """Validate and clean alternatives from LLM."""
+        valid = []
 
         for alt in alternatives:
-            if isinstance(alt, str) and alt.strip():
-                cleaned = alt.strip()
-                # Skip if it's the same as original (case-insensitive)
-                if cleaned.lower() != original_query.lower():
-                    valid_alternatives.append(cleaned)
+            if not isinstance(alt, str) or not alt.strip():
+                continue
 
-        return valid_alternatives
+            cleaned = alt.strip()
 
-    def _build_expansion_result(
-        self, original_query: str, valid_alternatives: List[str]
-    ) -> List[str]:
-        """Build the final expansion result with original query first.
+            # Skip if same as original (case-insensitive)
+            if cleaned.lower() == original_query.lower():
+                continue
 
-        Args:
-            original_query: The original search query
-            valid_alternatives: Validated alternatives
+            # Skip duplicates
+            if cleaned not in valid:
+                valid.append(cleaned)
 
-        Returns:
-            Final list with original query first, then alternatives
-        """
-        result = [original_query]
-
-        # Add alternatives up to the limit, avoiding duplicates
-        for alt in valid_alternatives[: self.max_expansions]:
-            if alt not in result:
-                result.append(alt)
-
-        return result
+        return valid

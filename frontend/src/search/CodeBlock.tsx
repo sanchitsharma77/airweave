@@ -18,6 +18,7 @@ interface SearchConfig {
     recency_bias: number;
     enable_reranking: boolean;
     response_type: "raw" | "completion";
+    filter?: any;
 }
 
 interface ApiIntegrationDocProps {
@@ -57,17 +58,16 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
             }
         }
 
-        // Build request body with ALL parameters in specific order
+        // Build request body with ALL parameters in specific order (new schema)
         const requestBody: any = {
             query: searchQuery,  // Will be escaped when stringified
-            search_method: searchConfig?.search_method || "hybrid",
-            expansion_strategy: searchConfig?.expansion_strategy || "auto",
+            retrieval_strategy: searchConfig?.search_method || "hybrid",
+            expand_query: searchConfig?.expansion_strategy !== "no_expansion",
             ...(parsedFilter ? { filter: parsedFilter } : {}),  // Include filter only if valid
-            enable_query_interpretation: searchConfig?.enable_query_interpretation || false,
-            recency_bias: searchConfig?.recency_bias ?? 0.3,  // Use nullish coalescing for number
-            enable_reranking: searchConfig?.enable_reranking ?? true,
-            response_type: searchConfig?.response_type || "raw",
-            score_threshold: null,  // Always include, null means no filtering
+            interpret_filters: searchConfig?.enable_query_interpretation || false,
+            temporal_relevance: searchConfig?.recency_bias ?? 0.3,
+            rerank: searchConfig?.enable_reranking ?? true,
+            generate_answer: searchConfig?.response_type === "completion",
             limit: 20,
             offset: 0
         };
@@ -82,7 +82,12 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
             })
             .join('\n');
 
-        const curlSnippet = `curl -X 'POST' \\
+        // Add note about query interpretation if enabled
+        const interpretNote = searchConfig?.enable_query_interpretation
+            ? `# Note: interpret_filters is enabled, which may automatically add\n# additional filters extracted from your natural language query.\n# The filter shown below is your manual filter only.\n\n`
+            : '';
+
+        const curlSnippet = `${interpretNote}curl -X 'POST' \\
   '${apiUrl}' \\
   -H 'accept: application/json' \\
   -H 'x-api-key: ${apiKey}' \\
@@ -99,20 +104,27 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
 
         const pythonParams = [
             `    query="${escapeForPython(searchQuery)}"`,
-            `    search_method="${searchConfig?.search_method || "hybrid"}"`,
-            `    expansion_strategy="${searchConfig?.expansion_strategy || "auto"}"`,
+            `    retrieval_strategy="${searchConfig?.search_method || "hybrid"}"`,
+            `    expand_query=${searchConfig?.expansion_strategy !== "no_expansion" ? "True" : "False"}`,
             ...(pythonFilterStr ? [`    filter=${pythonFilterStr}`] : []),
-            `    enable_query_interpretation=${searchConfig?.enable_query_interpretation ? "True" : "False"}`,
-            `    recency_bias=${searchConfig?.recency_bias ?? 0.3}`,
-            `    enable_reranking=${(searchConfig?.enable_reranking ?? true) ? "True" : "False"}`,
-            `    response_type="${searchConfig?.response_type || "raw"}"`,
-            `    score_threshold=None`,  // None means no filtering
+            `    interpret_filters=${searchConfig?.enable_query_interpretation ? "True" : "False"}`,
+            `    temporal_relevance=${searchConfig?.recency_bias ?? 0.3}`,
+            `    rerank=${(searchConfig?.enable_reranking ?? true) ? "True" : "False"}`,
+            `    generate_answer=${searchConfig?.response_type === "completion" ? "True" : "False"}`,
             `    limit=20`,
             `    offset=0`
         ];
 
+        const pythonInterpretNote = searchConfig?.enable_query_interpretation
+            ? `# Note: interpret_filters is enabled, which may automatically add
+# additional filters extracted from your natural language query.
+# The filter shown below is your manual filter only.
+
+`
+            : '';
+
         const pythonSnippet =
-            `from airweave import AirweaveSDK
+            `${pythonInterpretNote}from airweave import AirweaveSDK
 
 client = AirweaveSDK(
     api_key="${apiKey}",
@@ -137,20 +149,27 @@ ${pythonParams.join(',\n')}
 
         const nodeParams = [
             `    query: "${escapeForJson(searchQuery)}"`,
-            `    searchMethod: "${searchConfig?.search_method || "hybrid"}"`,
-            `    expansionStrategy: "${nodeExpansionStrategy}"`,
+            `    retrievalStrategy: "${searchConfig?.search_method || "hybrid"}"`,
+            `    expandQuery: ${searchConfig?.expansion_strategy !== "no_expansion"}`,
             ...(nodeFilterStr ? [`    filter: ${nodeFilterStr}`] : []),
-            `    enableQueryInterpretation: ${searchConfig?.enable_query_interpretation || false}`,
-            `    recencyBias: ${searchConfig?.recency_bias ?? 0.3}`,
-            `    enableReranking: ${searchConfig?.enable_reranking ?? true}`,
-            `    responseType: "${searchConfig?.response_type || "raw"}"`,
-            `    scoreThreshold: null`,  // null means no filtering
+            `    interpretFilters: ${searchConfig?.enable_query_interpretation || false}`,
+            `    temporalRelevance: ${searchConfig?.recency_bias ?? 0.3}`,
+            `    rerank: ${searchConfig?.enable_reranking ?? true}`,
+            `    generateAnswer: ${searchConfig?.response_type === "completion"}`,
             `    limit: 20`,
             `    offset: 0`
         ];
 
+        const nodeInterpretNote = searchConfig?.enable_query_interpretation
+            ? `// Note: interpretFilters is enabled, which may automatically add
+// additional filters extracted from your natural language query.
+// The filter shown below is your manual filter only.
+
+`
+            : '';
+
         const nodeSnippet =
-            `import { AirweaveSDKClient } from "@airweave/sdk";
+            `${nodeInterpretNote}import { AirweaveSDKClient } from "@airweave/sdk";
 
 const client = new AirweaveSDKClient({ apiKey: "${apiKey}" });
 

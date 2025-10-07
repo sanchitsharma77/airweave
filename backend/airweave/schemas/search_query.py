@@ -11,27 +11,20 @@ class SearchQueryBase(BaseModel):
 
     query_text: str = Field(..., description="The search query text")
     query_length: int = Field(..., description="Length of the search query in characters")
-    search_type: str = Field(..., description="Type of search: 'basic', 'advanced', 'streaming'")
-    response_type: Optional[str] = Field(None, description="Response type: 'raw', 'completion'")
-    limit: Optional[int] = Field(None, description="Maximum number of results requested")
-    offset: Optional[int] = Field(None, description="Number of results to skip for pagination")
-    score_threshold: Optional[float] = Field(None, description="Minimum similarity score threshold")
-    recency_bias: Optional[float] = Field(None, description="Recency bias weight (0.0 to 1.0)")
-    search_method: Optional[str] = Field(
-        None, description="Search method: 'hybrid', 'neural', 'keyword'"
+    is_streaming: bool = Field(..., description="Whether this was a streaming search")
+    retrieval_strategy: str = Field(
+        ..., description="Retrieval strategy: 'hybrid', 'neural', 'keyword'"
     )
+    limit: int = Field(..., description="Maximum number of results requested")
+    offset: int = Field(..., description="Number of results to skip for pagination")
+    temporal_relevance: float = Field(..., description="Temporal relevance weight (0.0 to 1.0)")
+    filter: Optional[dict] = Field(None, description="Qdrant filter applied (if any)")
     duration_ms: int = Field(..., description="Search execution time in milliseconds")
     results_count: int = Field(..., description="Number of results returned")
-    status: str = Field(
-        ..., description="Search status: 'success', 'no_results', 'no_relevant_results', 'error'"
-    )
-    query_expansion_enabled: Optional[bool] = Field(
-        None, description="Whether query expansion was enabled"
-    )
-    reranking_enabled: Optional[bool] = Field(None, description="Whether LLM reranking was enabled")
-    query_interpretation_enabled: Optional[bool] = Field(
-        None, description="Whether query interpretation was enabled"
-    )
+    expand_query: bool = Field(..., description="Whether query expansion was enabled")
+    interpret_filters: bool = Field(..., description="Whether query interpretation was enabled")
+    rerank: bool = Field(..., description="Whether LLM reranking was enabled")
+    generate_answer: bool = Field(..., description="Whether answer generation was enabled")
 
 
 class SearchQueryCreate(SearchQueryBase):
@@ -49,22 +42,21 @@ class SearchQueryUpdate(BaseModel):
     query_length: Optional[int] = Field(
         None, description="Length of the search query in characters"
     )
-    search_type: Optional[str] = Field(None, description="Type of search")
-    response_type: Optional[str] = Field(None, description="Response type")
+    is_streaming: Optional[bool] = Field(None, description="Whether this was a streaming search")
+    retrieval_strategy: Optional[str] = Field(None, description="Retrieval strategy")
     limit: Optional[int] = Field(None, description="Maximum number of results requested")
     offset: Optional[int] = Field(None, description="Number of results to skip for pagination")
-    score_threshold: Optional[float] = Field(None, description="Minimum similarity score threshold")
-    recency_bias: Optional[float] = Field(None, description="Recency bias weight")
-    search_method: Optional[str] = Field(None, description="Search method")
+    temporal_relevance: Optional[float] = Field(None, description="Temporal relevance weight")
+    filter: Optional[dict] = Field(None, description="Qdrant filter applied (if any)")
     duration_ms: Optional[int] = Field(None, description="Search execution time in milliseconds")
     results_count: Optional[int] = Field(None, description="Number of results returned")
-    status: Optional[str] = Field(None, description="Search status")
-    query_expansion_enabled: Optional[bool] = Field(
-        None, description="Whether query expansion was enabled"
-    )
-    reranking_enabled: Optional[bool] = Field(None, description="Whether LLM reranking was enabled")
-    query_interpretation_enabled: Optional[bool] = Field(
+    expand_query: Optional[bool] = Field(None, description="Whether query expansion was enabled")
+    interpret_filters: Optional[bool] = Field(
         None, description="Whether query interpretation was enabled"
+    )
+    rerank: Optional[bool] = Field(None, description="Whether LLM reranking was enabled")
+    generate_answer: Optional[bool] = Field(
+        None, description="Whether answer generation was enabled"
     )
 
 
@@ -95,15 +87,16 @@ class SearchQueryAnalytics(BaseModel):
     """Schema for search query analytics data."""
 
     total_searches: int = Field(..., description="Total number of searches")
-    successful_searches: int = Field(..., description="Number of successful searches")
-    failed_searches: int = Field(..., description="Number of failed searches")
     average_duration_ms: float = Field(..., description="Average search duration in milliseconds")
     average_results_count: float = Field(..., description="Average number of results returned")
     most_common_queries: list[dict[str, int]] = Field(..., description="Most common search queries")
-    search_types_distribution: dict[str, int] = Field(
-        ..., description="Distribution of search types"
+    streaming_searches: int = Field(..., description="Number of streaming searches")
+    retrieval_strategy_distribution: dict[str, int] = Field(
+        ..., description="Distribution of retrieval strategies"
     )
-    status_distribution: dict[str, int] = Field(..., description="Distribution of search statuses")
+    feature_adoption: dict[str, float] = Field(
+        ..., description="Adoption rates for search features (expansion, reranking, etc.)"
+    )
 
 
 class SearchQueryInsights(BaseModel):
