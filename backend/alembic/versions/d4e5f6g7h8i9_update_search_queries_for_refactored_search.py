@@ -1,7 +1,7 @@
 """Update search_queries table for refactored search module
 
 Revision ID: d4e5f6g7h8i9
-Revises: c60291fb2129
+Revises: 9a977647c5a4
 Create Date: 2025-10-07 12:00:00.000000
 
 """
