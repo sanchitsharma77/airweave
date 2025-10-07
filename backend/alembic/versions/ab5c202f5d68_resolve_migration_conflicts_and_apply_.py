@@ -262,7 +262,7 @@ def downgrade():
 
     # Restore connection constraints
     try:
-        op.drop_constraint(None, 'connection', type_='foreignkey')
+        op.drop_constraint(op.f('connection_organization_id_fkey'), 'connection', type_='foreignkey')
         op.create_foreign_key(op.f('connection_organization_id_fkey'), 'connection', 'organization', ['organization_id'], ['id'])
     except:
         pass
