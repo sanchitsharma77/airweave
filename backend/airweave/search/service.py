@@ -52,12 +52,10 @@ class SearchService:
 
         await search_helpers.persist_search_data(
             db=db,
-            search_request=search_request,
+            search_context=search_context,
             search_response=response,
-            collection_id=collection.id,
             ctx=ctx,
             duration_ms=duration_ms,
-            collection_slug=readable_collection_id,
         )
 
         return response

@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud
 from airweave.api.context import ApiContext
-from airweave.schemas.search import SearchRequest, SearchResponse
+from airweave.schemas.search import SearchResponse
 from airweave.schemas.search_query import SearchQueryCreate
+from airweave.search.context import SearchContext
 
 
 class SearchHelpers:
@@ -19,93 +20,72 @@ class SearchHelpers:
     async def persist_search_data(
         self,
         db: AsyncSession,
-        search_request: SearchRequest,
+        search_context: SearchContext,
         search_response: SearchResponse,
-        collection_id: str,
         ctx: ApiContext,
         duration_ms: float,
-        collection_slug: str,
     ) -> None:
-        """Persist search data for analytics and user experience."""
+        """Persist search data for analytics and user experience.
+
+        Args:
+            db: Database session
+            search_context: The search context with actual executed configuration
+            search_response: The search response
+            ctx: API context
+            duration_ms: Search execution time in milliseconds
+        """
         try:
-            # Convert collection_id to UUID if it's a string
-
-            collection_uuid = (
-                UUID(collection_id) if isinstance(collection_id, str) else collection_id
-            )
-
-            # Determine search status
-            status = self._determine_search_status(search_response)
-
             # Extract API key ID from auth metadata if available
             api_key_id = None
             if ctx.is_api_key_auth and ctx.auth_metadata:
                 api_key_id = ctx.auth_metadata.get("api_key_id")
 
-            # Create search query schema following the standard pattern
+            # Extract filter from user_filter operation if it was configured
+            filter_dict = None
+            if search_context.user_filter and search_context.user_filter.filter:
+                filter_dict = search_context.user_filter.filter.model_dump(exclude_none=True)
+
+            # Create search query schema using actual values from SearchContext
+            # (which has defaults applied via factory)
             search_query_create = SearchQueryCreate(
-                collection_id=collection_uuid,
+                collection_id=search_context.collection_id,
                 organization_id=ctx.organization.id,
                 user_id=ctx.user.id if ctx.user else None,
                 api_key_id=UUID(api_key_id) if api_key_id else None,
-                query_text=search_request.query,
-                query_length=len(search_request.query),
-                search_type=self._determine_search_type(search_request),
-                response_type=(
-                    search_request.response_type.value if search_request.response_type else None
+                query_text=search_context.query,
+                query_length=len(search_context.query),
+                is_streaming=search_context.stream,
+                retrieval_strategy=search_context.retrieval.strategy.value,
+                limit=search_context.retrieval.limit,
+                offset=search_context.retrieval.offset,
+                temporal_relevance=(
+                    search_context.temporal_relevance.weight
+                    if search_context.temporal_relevance
+                    else 0.0
                 ),
-                limit=search_request.limit,
-                offset=search_request.offset,
-                score_threshold=search_request.score_threshold,
-                recency_bias=search_request.recency_bias,
-                search_method=search_request.search_method,
-                filters=search_request.filter.model_dump() if search_request.filter else None,
+                filter=filter_dict,
                 duration_ms=int(duration_ms),
                 results_count=len(search_response.results),
-                status=status,
-                query_expansion_enabled=(
-                    search_request.expansion_strategy != "no_expansion"
-                    if search_request.expansion_strategy
-                    else None
-                ),
-                reranking_enabled=(
-                    search_request.enable_reranking
-                    if search_request.enable_reranking is not None
-                    else None
-                ),
-                query_interpretation_enabled=(
-                    search_request.enable_query_interpretation
-                    if search_request.enable_query_interpretation is not None
-                    else None
-                ),
+                expand_query=search_context.query_expansion is not None,
+                interpret_filters=search_context.query_interpretation is not None,
+                rerank=search_context.reranking is not None,
+                generate_answer=search_context.generate_answer is not None,
             )
 
             # Create search query record using standard CRUD pattern
             await crud.search_query.create(db=db, obj_in=search_query_create, ctx=ctx)
 
             ctx.logger.debug(
-                f"[SearchServiceV2] Search data persisted successfully for query: "
-                f"'{search_request.query[:50]}...'"
+                f"[SearchHelpers] Search data persisted successfully for query: "
+                f"'{search_context.query[:50]}...'"
             )
 
         except Exception as e:
             # Don't fail the search if persistence fails
             ctx.logger.error(
-                f"[SearchServiceV2] Failed to persist search data: {str(e)}. "
+                f"[SearchHelpers] Failed to persist search data: {str(e)}. "
                 f"Search completed successfully but analytics data was not saved."
             )
-
-    def _determine_search_status(self, search_response: SearchResponse) -> str:
-        """Determine search status from response."""
-        if hasattr(search_response, "status") and search_response.status:
-            return search_response.status
-        return "success" if search_response.results else "no_results"
-
-    def _determine_search_type(self, search_request: SearchRequest) -> str:
-        """Determine search type from request parameters."""
-        if search_request.filter:
-            return "advanced"
-        return "basic"
 
     @staticmethod
     def load_defaults() -> dict:
