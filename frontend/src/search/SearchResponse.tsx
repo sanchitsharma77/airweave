@@ -1847,23 +1847,28 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                     {/* Show Full JSON Button */}
                                     {shouldTruncate && !showFullRawJson && (
                                         <div className={cn(
-                                            "flex justify-center px-4 py-3 border-t",
-                                            isDark ? "border-gray-800/50 bg-gray-900/50" : "border-gray-200/50 bg-gray-50/50"
+                                            "flex items-center justify-center gap-2 px-3 py-2.5 border-t",
+                                            isDark
+                                                ? "border-gray-800/40 bg-gray-900/30"
+                                                : "border-gray-200/60 bg-gray-50/40"
                                         )}>
-                                            <Button
+                                            <button
                                                 onClick={() => setShowFullRawJson(true)}
-                                                variant="outline"
-                                                size="sm"
                                                 className={cn(
-                                                    "text-xs font-medium",
+                                                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all duration-150",
                                                     isDark
-                                                        ? "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-200"
-                                                        : "bg-white hover:bg-gray-50 border-gray-300 text-gray-700"
+                                                        ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800/50"
+                                                        : "text-gray-500 hover:text-gray-700 hover:bg-gray-100/80"
                                                 )}
                                             >
-                                                <Braces className="h-3.5 w-3.5 mr-1.5" />
-                                                Show Full JSON ({jsonLines.length.toLocaleString()} lines)
-                                            </Button>
+                                                <Braces className="h-3 w-3 opacity-60" />
+                                                <span>Load remaining</span>
+                                                <span className={cn(
+                                                    "opacity-50 font-mono text-[10px]"
+                                                )}>
+                                                    +{(jsonLines.length - RAW_JSON_LINE_LIMIT).toLocaleString()} lines
+                                                </span>
+                                            </button>
                                         </div>
                                     )}
                                 </>
