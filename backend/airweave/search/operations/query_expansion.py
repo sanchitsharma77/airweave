@@ -24,7 +24,12 @@ class QueryExpansions(BaseModel):
     """Structured output schema for LLM-generated query expansions."""
 
     alternatives: List[str] = Field(
-        description=f"Exactly {_NUMBER_OF_EXPANSIONS} alternative query phrasings.",
+        description=(
+            f"Exactly {_NUMBER_OF_EXPANSIONS} UNIQUE and DISTINCT alternative query "
+            f"phrasings. Each alternative MUST be different from all others AND "
+            f"different from the original query. No duplicates, no repetitions, "
+            f"no variations that differ only in punctuation or capitalization."
+        ),
         min_items=_NUMBER_OF_EXPANSIONS,
         max_items=_NUMBER_OF_EXPANSIONS,
     )
