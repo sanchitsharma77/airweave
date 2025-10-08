@@ -305,7 +305,7 @@ class S3Destination(BaseDestination):
                     logger=self.logger,
                 )
 
-                if file_content:
+                if file_content is not None:
                     # Upload actual file content
                     blob_key = f"{base_path}/blobs/{entity_id}{extension}"
 
