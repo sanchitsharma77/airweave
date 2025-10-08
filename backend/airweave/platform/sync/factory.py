@@ -964,7 +964,11 @@ class SyncFactory:
         ctx: ApiContext,
         logger: ContextualLogger,
     ) -> list[BaseDestination]:
-        """Create destination instances.
+        """Create destination instances (supports multiple destinations).
+
+        Iterates through all destination_connection_ids and creates instances for each.
+        If a destination fails to initialize, logs a warning and continues with others.
+        At least one destination must succeed for sync to proceed.
 
         Args:
         -----
@@ -976,45 +980,73 @@ class SyncFactory:
 
         Returns:
         --------
-            list[BaseDestination]: A list of destination instances
+            list[BaseDestination]: A list of successfully created destination instances
+
+        Raises:
+        -------
+            ValueError: If no destinations could be created
         """
-        destination_connection_id = sync.destination_connection_ids[0]
+        destinations = []
 
-        destination_connection = await crud.connection.get(db, destination_connection_id, ctx)
-        if not destination_connection:
-            raise NotFoundException(
-                (
-                    f"Destination connection not found for organization "
-                    f"{ctx.organization.id}"
-                    f" and connection id {destination_connection_id}"
+        # Create all destinations from destination_connection_ids
+        for destination_connection_id in sync.destination_connection_ids:
+            try:
+                destination_connection = await crud.connection.get(
+                    db, destination_connection_id, ctx
                 )
+                if not destination_connection:
+                    logger.warning(
+                        f"Destination connection {destination_connection_id} not found, skipping"
+                    )
+                    continue
+
+                destination_model = await crud.destination.get_by_short_name(
+                    db, destination_connection.short_name
+                )
+                if not destination_model:
+                    logger.warning(
+                        f"Destination {destination_connection.short_name} not found, skipping"
+                    )
+                    continue
+
+                destination_schema = schemas.Destination.model_validate(destination_model)
+                destination_class = resource_locator.get_destination(destination_schema)
+
+                # Vector size is auto-detected based on embedding model configuration
+                destination = await destination_class.create(
+                    collection_id=collection.id,
+                    organization_id=collection.organization_id,
+                    logger=ctx.logger,
+                )
+
+                # Set contextual logger on destination
+                if hasattr(destination, "set_logger"):
+                    destination.set_logger(logger)
+
+                destinations.append(destination)
+                logger.info(
+                    f"Created destination: {destination_connection.short_name} "
+                    f"(connection_id={destination_connection_id})"
+                )
+            except Exception as e:
+                # Log error but continue to next destination
+                logger.error(
+                    f"Failed to create destination {destination_connection_id}: {e}", exc_info=True
+                )
+                continue
+
+        if not destinations:
+            raise ValueError(
+                "No valid destinations could be created for sync. "
+                f"Tried {len(sync.destination_connection_ids)} connection(s)."
             )
-        destination_model = await crud.destination.get_by_short_name(
-            db, destination_connection.short_name
+
+        logger.info(
+            f"Successfully created {len(destinations)} destination(s) "
+            f"out of {len(sync.destination_connection_ids)} configured"
         )
-        destination_schema = schemas.Destination.model_validate(destination_model)
-        if not destination_model:
-            raise NotFoundException(
-                f"Destination not found for connection {destination_connection.short_name}"
-            )
 
-        destination_class = resource_locator.get_destination(destination_schema)
-
-        # Vector size is auto-detected based on embedding model configuration
-        destination = await destination_class.create(
-            collection_id=collection.id,
-            organization_id=collection.organization_id,
-            logger=ctx.logger,
-        )
-
-        # Set contextual logger on destination
-        if hasattr(destination, "set_logger"):
-            destination.set_logger(logger)
-            logger.debug(
-                f"Set contextual logger on destination: {destination_connection.short_name}"
-            )
-
-        return [destination]
+        return destinations
 
     @classmethod
     async def _get_transformer_callables(

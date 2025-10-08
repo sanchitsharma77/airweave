@@ -989,21 +989,35 @@ class EntityProcessor:
         children_by_parent: Dict[str, List[BaseEntity]],
         sync_context: SyncContext,
     ) -> None:
+        """Update all destinations. Primary (first) must succeed; others are best-effort."""
         parent_ids_to_clear = [p.entity_id for p in updates] + [p.entity_id for p in deletes]
-        if parent_ids_to_clear:
-            for dest in sync_context.destinations:
-                if hasattr(dest, "bulk_delete_by_parent_ids"):
-                    await dest.bulk_delete_by_parent_ids(parent_ids_to_clear, sync_context.sync.id)
-                else:
-                    for pid in parent_ids_to_clear:
-                        await dest.bulk_delete_by_parent_id(pid, sync_context.sync.id)
-
         to_insert = [
             child for p in inserts + updates for child in children_by_parent.get(p.entity_id, [])
         ]
-        if to_insert:
-            for dest in sync_context.destinations:
-                await dest.bulk_insert(to_insert)
+
+        for idx, dest in enumerate(sync_context.destinations):
+            is_primary = idx == 0
+            try:
+                if parent_ids_to_clear:
+                    if hasattr(dest, "bulk_delete_by_parent_ids"):
+                        await dest.bulk_delete_by_parent_ids(
+                            parent_ids_to_clear, sync_context.sync.id
+                        )
+                    else:
+                        for pid in parent_ids_to_clear:
+                            await dest.bulk_delete_by_parent_id(pid, sync_context.sync.id)
+                if to_insert:
+                    await dest.bulk_insert(to_insert)
+            except NotImplementedError:
+                pass  # Some destinations don't support all operations
+            except Exception as e:
+                dest_name = dest.__class__.__name__
+                if is_primary:
+                    sync_context.logger.error(f"Primary destination {dest_name} failed: {e}")
+                    raise
+                sync_context.logger.warning(
+                    f"Secondary destination {dest_name} failed (continuing): {e}"
+                )
 
     async def _batch_persist_db_deletes(
         self,

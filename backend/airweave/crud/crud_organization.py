@@ -51,7 +51,11 @@ class CRUDOrganization:
 
     async def get_by_auth0_id(self, db: AsyncSession, auth0_org_id: str) -> Organization | None:
         """Get an organization by its Auth0 organization ID."""
-        stmt = select(Organization).where(Organization.auth0_org_id == auth0_org_id)
+        stmt = (
+            select(Organization)
+            .where(Organization.auth0_org_id == auth0_org_id)
+            .options(selectinload(Organization.feature_flags))
+        )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -202,7 +206,11 @@ class CRUDOrganization:
                 raise PermissionException("No context provided")
             await self._validate_organization_access(ctx, id)
 
-        query = select(self.model).where(self.model.id == id)
+        query = (
+            select(self.model)
+            .where(self.model.id == id)
+            .options(selectinload(Organization.feature_flags))
+        )
         result = await db.execute(query)
         db_obj = result.unique().scalar_one_or_none()
         if not db_obj:
@@ -228,13 +236,18 @@ class CRUDOrganization:
                 return []
 
             query = (
-                select(self.model).where(self.model.id.in_(user_org_ids)).offset(skip).limit(limit)
+                select(self.model)
+                .where(self.model.id.in_(user_org_ids))
+                .options(selectinload(Organization.feature_flags))
+                .offset(skip)
+                .limit(limit)
             )
         else:
             # For API key access, only return the key's organization
             query = (
                 select(self.model)
                 .where(self.model.id == ctx.organization.id)
+                .options(selectinload(Organization.feature_flags))
                 .offset(skip)
                 .limit(limit)
             )

@@ -22,6 +22,7 @@ from airweave.core.constants.reserved_ids import (
 )
 from airweave.core.shared_models import (
     ConnectionStatus,
+    FeatureFlag,
     SourceConnectionStatus,
     SyncJobStatus,
     SyncStatus,
@@ -51,6 +52,48 @@ from airweave.schemas.source_connection import (
 
 class SourceConnectionHelpers:
     """Helper methods for source connection service."""
+
+    async def _get_destination_connection_ids(
+        self, db: AsyncSession, ctx: ApiContext
+    ) -> list[UUID]:
+        """Get destination connection IDs based on feature flags.
+
+        Args:
+            db: Database session
+            ctx: API context with organization and feature flags
+
+        Returns:
+            List of destination connection IDs (always includes Qdrant, adds S3 if enabled)
+        """
+        from sqlalchemy import and_, select
+
+        from airweave.models.connection import Connection
+
+        destination_ids = [NATIVE_QDRANT_UUID]  # Always include Qdrant as primary
+
+        # Add S3 if feature flag enabled
+        if ctx.has_feature(FeatureFlag.S3_DESTINATION):
+            # Find S3 connection for this organization
+            stmt = select(Connection).where(
+                and_(
+                    Connection.organization_id == ctx.organization.id,
+                    Connection.short_name == "s3",
+                    Connection.integration_type == "DESTINATION",
+                )
+            )
+            result = await db.execute(stmt)
+            s3_connection = result.scalar_one_or_none()
+
+            if s3_connection:
+                destination_ids.append(s3_connection.id)
+                ctx.logger.info("S3 destination enabled for sync (feature flag active)")
+            else:
+                ctx.logger.warning(
+                    "S3_DESTINATION feature enabled but no S3 connection configured. "
+                    "Configure S3 in organization settings."
+                )
+
+        return destination_ids
 
     def _get_default_cron_schedule(self, ctx: ApiContext) -> str:
         """Generate a default daily cron schedule based on current UTC time.
@@ -415,12 +458,15 @@ class SourceConnectionHelpers:
                 f"No cron schedule provided, defaulting to daily at {hour:02d}:{minute:02d} UTC"
             )
 
+        # Get destination connection IDs based on feature flags
+        destination_ids = await self._get_destination_connection_ids(db, ctx)
+
         sync_in = schemas.SyncCreate(
             name=f"Sync for {name}",
             description=f"Auto-generated sync for {name}",
             source_connection_id=connection_id,
             embedding_model_connection_id=NATIVE_TEXT2VEC_UUID,
-            destination_connection_ids=[NATIVE_QDRANT_UUID],
+            destination_connection_ids=destination_ids,
             cron_schedule=cron_schedule,
             status=SyncStatus.ACTIVE,
             run_immediately=run_immediately,
@@ -445,12 +491,15 @@ class SourceConnectionHelpers:
         """
         from airweave.core.sync_service import sync_service
 
+        # Get destination connection IDs based on feature flags
+        destination_ids = await self._get_destination_connection_ids(db, ctx)
+
         sync_in = schemas.SyncCreate(
             name=f"Sync for {name}",
             description=f"Auto-generated sync for {name}",
             source_connection_id=connection_id,
             embedding_model_connection_id=NATIVE_TEXT2VEC_UUID,
-            destination_connection_ids=[NATIVE_QDRANT_UUID],
+            destination_connection_ids=destination_ids,
             cron_schedule=cron_schedule,
             status=SyncStatus.ACTIVE,
             run_immediately=run_immediately,

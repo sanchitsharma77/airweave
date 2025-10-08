@@ -102,7 +102,26 @@ services:
       temporal:
         condition: service_healthy
     restart: on-failure
+  minio:
+    container_name: airweave-minio
+    image: minio/minio:latest
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web Console
+    environment:
+      MINIO_ROOT_USER: airweave
+      MINIO_ROOT_PASSWORD: airweave-dev-password
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: on-failure
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  minio_data:

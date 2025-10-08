@@ -11,6 +11,7 @@ from airweave import schemas
 from airweave.core.exceptions import NotFoundException
 from airweave.crud._base_user import CRUDBaseUser
 from airweave.db.unit_of_work import UnitOfWork
+from airweave.models.organization import Organization
 from airweave.models.user import User
 from airweave.schemas.user import UserCreate, UserUpdate
 
@@ -23,7 +24,9 @@ class CRUDUser(CRUDBaseUser[User, UserCreate, UserUpdate]):
         from airweave.models.user_organization import UserOrganization
 
         return select(User).options(
-            selectinload(User.user_organizations).selectinload(UserOrganization.organization)
+            selectinload(User.user_organizations)
+            .selectinload(UserOrganization.organization)
+            .options(selectinload(Organization.feature_flags))
         )
 
     async def get_by_email(self, db: AsyncSession, *, email: str) -> Optional[User]:
