@@ -30,8 +30,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Shield, Plus, Crown, Building2, ArrowUpCircle, UserPlus, Search, ArrowUpDown, Users, Database, Activity } from 'lucide-react';
+import { Shield, Plus, Crown, Building2, ArrowUpCircle, UserPlus, Search, ArrowUpDown, Users, Database, Activity, Flag } from 'lucide-react';
 import { toast } from 'sonner';
+
+interface AvailableFeatureFlag {
+  name: string;
+  value: string;
+}
 
 interface OrganizationMetrics {
   id: string;
@@ -50,6 +55,7 @@ interface OrganizationMetrics {
   query_count: number;
   is_member: boolean;
   member_role?: string;
+  enabled_features?: string[];
 }
 
 type SortField = 'name' | 'created_at' | 'billing_plan' | 'user_count' | 'source_connection_count' | 'entity_count' | 'query_count' | 'is_member';
@@ -62,8 +68,12 @@ export function AdminDashboard() {
   const [organizations, setOrganizations] = useState<OrganizationMetrics[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedOrg, setSelectedOrg] = useState<OrganizationMetrics | null>(null);
-  const [actionType, setActionType] = useState<'join' | 'upgrade' | 'create' | null>(null);
+  const [actionType, setActionType] = useState<'join' | 'upgrade' | 'create' | 'feature-flags' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Feature flags state
+  const [availableFeatureFlags, setAvailableFeatureFlags] = useState<AvailableFeatureFlag[]>([]);
+  const [enabledFeatureFlags, setEnabledFeatureFlags] = useState<string[]>([]);
 
   // Search and sort state
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,8 +99,24 @@ export function AdminDashboard() {
 
     if (user?.is_admin) {
       loadOrganizations();
+      loadAvailableFeatureFlags();
     }
   }, [user, navigate]);
+
+  const loadAvailableFeatureFlags = async () => {
+    try {
+      const response = await apiClient.get('/admin/feature-flags');
+      if (response.ok) {
+        const flags = await response.json();
+        setAvailableFeatureFlags(flags);
+      } else {
+        throw new Error('Failed to load available feature flags');
+      }
+    } catch (error) {
+      console.error('Failed to load available feature flags:', error);
+      // Don't show error toast, this is not critical
+    }
+  };
 
   const loadOrganizations = async () => {
     try {
@@ -251,6 +277,46 @@ export function AdminDashboard() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const loadFeatureFlags = (org: OrganizationMetrics) => {
+    // Feature flags are already loaded from the organization data
+    setEnabledFeatureFlags(org.enabled_features || []);
+  };
+
+  const handleToggleFeatureFlag = async (flag: string, currentlyEnabled: boolean) => {
+    if (!selectedOrg) return;
+
+    try {
+      const action = currentlyEnabled ? 'disable' : 'enable';
+      const response = await apiClient.post(
+        `/admin/organizations/${selectedOrg.id}/feature-flags/${flag}/${action}`
+      );
+
+      if (response.ok) {
+        toast.success(`Feature ${flag} ${currentlyEnabled ? 'disabled' : 'enabled'}`);
+        // Update local state
+        if (currentlyEnabled) {
+          setEnabledFeatureFlags(enabledFeatureFlags.filter(f => f !== flag));
+        } else {
+          setEnabledFeatureFlags([...enabledFeatureFlags, flag]);
+        }
+        // Reload organizations to get fresh data
+        loadOrganizations();
+      } else {
+        const error = await response.json();
+        throw new Error(error.detail || `Failed to ${action} feature flag`);
+      }
+    } catch (error: any) {
+      console.error('Failed to toggle feature flag:', error);
+      toast.error(error.message || 'Failed to update feature flag');
+    }
+  };
+
+  const openFeatureFlagsDialog = (org: OrganizationMetrics) => {
+    setSelectedOrg(org);
+    setActionType('feature-flags');
+    loadFeatureFlags(org);
   };
 
   const formatDate = (dateString: string) => {
@@ -613,6 +679,15 @@ export function AdminDashboard() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => openFeatureFlagsDialog(org)}
+                            className="h-7 gap-1.5 text-xs"
+                          >
+                            <Flag className="h-3 w-3" />
+                            Features
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => {
                               setSelectedOrg(org);
                               setActionType('upgrade');
@@ -764,6 +839,60 @@ export function AdminDashboard() {
             </Button>
             <Button onClick={handleCreateEnterpriseOrg} disabled={isSubmitting}>
               {isSubmitting ? 'Creating...' : 'Create Organization'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Feature Flags Dialog */}
+      <Dialog open={actionType === 'feature-flags'} onOpenChange={(open) => !open && setActionType(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Feature Flags</DialogTitle>
+            <DialogDescription>
+              Manage feature flags for {selectedOrg?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {availableFeatureFlags.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Loading available features...
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {availableFeatureFlags.map((flag) => {
+                  const isEnabled = enabledFeatureFlags.includes(flag.value);
+                  return (
+                    <div
+                      key={flag.value}
+                      className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Flag className={`h-4 w-4 ${isEnabled ? 'text-brand-lime' : 'text-muted-foreground'}`} />
+                        <div>
+                          <div className="font-medium text-sm">{flag.name.replace(/_/g, ' ')}</div>
+                          <div className="text-xs text-muted-foreground">{flag.value}</div>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={isEnabled ? 'default' : 'outline'}
+                        onClick={() => handleToggleFeatureFlag(flag.value, isEnabled)}
+                        className="h-7 px-3"
+                      >
+                        {isEnabled ? 'Enabled' : 'Disabled'}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setActionType(null)}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

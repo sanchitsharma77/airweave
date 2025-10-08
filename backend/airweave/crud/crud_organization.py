@@ -5,11 +5,14 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from airweave.api.context import ApiContext
 from airweave.core.exceptions import NotFoundException, PermissionException
 from airweave.core.logging import logger
+from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 from airweave.db.unit_of_work import UnitOfWork
+from airweave.models.feature_flag import FeatureFlag
 from airweave.models.organization import Organization
 from airweave.models.user import User
 from airweave.models.user_organization import UserOrganization
@@ -31,6 +34,20 @@ class CRUDOrganization:
     def __init__(self):
         """Initialize the Organization CRUD."""
         self.model = Organization
+
+    def _extract_enabled_features(self, org: Organization) -> List[FeatureFlagEnum]:
+        """Extract enabled features from organization model.
+
+        Args:
+            org: Organization model with feature_flags loaded
+
+        Returns:
+            List of enabled FeatureFlag enums
+        """
+        # feature_flags should be loaded via selectin, check __dict__ to avoid lazy loading
+        if "feature_flags" in org.__dict__:
+            return [FeatureFlagEnum(ff.flag) for ff in org.__dict__["feature_flags"] if ff.enabled]
+        return []
 
     async def get_by_auth0_id(self, db: AsyncSession, auth0_org_id: str) -> Organization | None:
         """Get an organization by its Auth0 organization ID."""
@@ -311,6 +328,7 @@ class CRUDOrganization:
             select(Organization, UserOrganization.role, UserOrganization.is_primary)
             .join(UserOrganization, Organization.id == UserOrganization.organization_id)
             .where(UserOrganization.user_id == user_id)
+            .options(selectinload(Organization.feature_flags))
             .order_by(UserOrganization.is_primary.desc(), Organization.name)
         )
 
@@ -326,6 +344,9 @@ class CRUDOrganization:
                 modified_at=org.modified_at,
                 role=role,
                 is_primary=is_primary,
+                auth0_org_id=org.auth0_org_id,
+                org_metadata=org.org_metadata,
+                enabled_features=self._extract_enabled_features(org),
             )
             for org, role, is_primary in rows
         ]
@@ -363,7 +384,8 @@ class CRUDOrganization:
 
         if not user_org or user_org.role not in ["owner", "admin"]:
             raise HTTPException(
-                status_code=403, detail="You must be an admin or owner to perform this action"
+                status_code=403,
+                detail="You must be an admin or owner to perform this action",
             )
 
         return user_org
@@ -387,7 +409,8 @@ class CRUDOrganization:
 
         # Query the membership
         stmt = select(UserOrganization).where(
-            UserOrganization.user_id == user_id, UserOrganization.organization_id == organization_id
+            UserOrganization.user_id == user_id,
+            UserOrganization.organization_id == organization_id,
         )
         result = await db.execute(stmt)
         db_obj = result.scalar_one_or_none()
@@ -419,7 +442,8 @@ class CRUDOrganization:
         await self._validate_organization_access(ctx, organization_id)
 
         stmt = select(UserOrganization).where(
-            UserOrganization.organization_id == organization_id, UserOrganization.role == "owner"
+            UserOrganization.organization_id == organization_id,
+            UserOrganization.role == "owner",
         )
 
         if exclude_user_id:
@@ -492,7 +516,8 @@ class CRUDOrganization:
             await self._validate_admin_access(ctx, organization_id)
 
         stmt = delete(UserOrganization).where(
-            UserOrganization.user_id == user_id, UserOrganization.organization_id == organization_id
+            UserOrganization.user_id == user_id,
+            UserOrganization.organization_id == organization_id,
         )
 
         result = await db.execute(stmt)
@@ -538,7 +563,10 @@ class CRUDOrganization:
             is_primary = True
 
         user_org = UserOrganization(
-            user_id=user_id, organization_id=organization_id, role=role, is_primary=is_primary
+            user_id=user_id,
+            organization_id=organization_id,
+            role=role,
+            is_primary=is_primary,
         )
 
         db.add(user_org)
@@ -606,6 +634,104 @@ class CRUDOrganization:
         await db.commit()
 
         return org_to_delete
+
+    # Feature Flag Management Methods
+
+    async def enable_feature(
+        self, db: AsyncSession, organization_id: UUID, flag: FeatureFlagEnum
+    ) -> FeatureFlag:
+        """Enable a feature flag for an organization.
+
+        Args:
+            db: Database session
+            organization_id: Organization ID
+            flag: Feature flag to enable
+
+        Returns:
+            FeatureFlag instance
+        """
+        # Check if flag already exists
+        stmt = select(FeatureFlag).where(
+            FeatureFlag.organization_id == organization_id,
+            FeatureFlag.flag == flag.value,
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update to enabled if it was disabled
+            if not existing.enabled:
+                existing.enabled = True
+                await db.commit()
+                await db.refresh(existing)
+            return existing
+
+        # Create new flag
+        flag_obj = FeatureFlag(organization_id=organization_id, flag=flag.value, enabled=True)
+        db.add(flag_obj)
+        await db.commit()
+        await db.refresh(flag_obj)
+        return flag_obj
+
+    async def disable_feature(
+        self, db: AsyncSession, organization_id: UUID, flag: FeatureFlagEnum
+    ) -> None:
+        """Disable a feature flag for an organization.
+
+        Args:
+            db: Database session
+            organization_id: Organization ID
+            flag: Feature flag to disable
+        """
+        stmt = select(FeatureFlag).where(
+            FeatureFlag.organization_id == organization_id,
+            FeatureFlag.flag == flag.value,
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.enabled = False
+            await db.commit()
+
+    async def get_org_features(
+        self, db: AsyncSession, organization_id: UUID
+    ) -> List[FeatureFlagEnum]:
+        """Get all enabled feature flags for an organization.
+
+        Args:
+            db: Database session
+            organization_id: Organization ID
+
+        Returns:
+            List of enabled FeatureFlag enums
+        """
+        stmt = select(FeatureFlag).where(
+            FeatureFlag.organization_id == organization_id,
+            FeatureFlag.enabled == True,  # noqa: E712
+        )
+        result = await db.execute(stmt)
+        flags = result.scalars().all()
+        return [FeatureFlagEnum(f.flag) for f in flags]
+
+    async def bulk_enable_features(
+        self, db: AsyncSession, organization_id: UUID, flags: List[FeatureFlagEnum]
+    ) -> List[FeatureFlag]:
+        """Enable multiple feature flags for an organization.
+
+        Args:
+            db: Database session
+            organization_id: Organization ID
+            flags: List of feature flags to enable
+
+        Returns:
+            List of FeatureFlag model instances
+        """
+        results = []
+        for flag in flags:
+            result = await self.enable_feature(db, organization_id, flag)
+            results.append(result)
+        return results
 
 
 # Create the instance with the updated class name

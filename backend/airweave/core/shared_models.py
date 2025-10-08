@@ -66,3 +66,13 @@ class ActionType(str, Enum):
     QUERIES = "queries"
     SOURCE_CONNECTIONS = "source_connections"
     TEAM_MEMBERS = "team_members"
+
+
+class FeatureFlag(str, Enum):
+    """Available feature flags in Airweave.
+
+    Add new flags here to enable feature gating at the organization level.
+    """
+
+    S3_DESTINATION = "s3_destination"
+    PRIORITY_SUPPORT = "priority_support"

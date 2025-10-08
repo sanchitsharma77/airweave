@@ -13,6 +13,7 @@ interface Organization {
   is_primary: boolean;
   created_at?: string;
   modified_at?: string;
+  enabled_features?: string[]; // List of enabled feature flags
   org_metadata?: {
     onboarding?: {
       organizationSize: string;
@@ -70,6 +71,9 @@ interface OrganizationState {
   inviteUserToOrganization: (orgId: string, email: string, role: string) => Promise<boolean>;
   removeUserFromOrganization: (orgId: string, userId: string) => Promise<boolean>;
   leaveOrganization: (orgId: string) => Promise<boolean>;
+
+  // Feature flag actions
+  hasFeature: (flag: string) => boolean;
 }
 
 // Helper function to select the best organization
@@ -446,6 +450,11 @@ export const useOrganizationStore = create<OrganizationState>()(
           set({ isLoading: false });
           throw error;
         }
+      },
+
+      hasFeature: (flag: string) => {
+        const org = get().currentOrganization;
+        return org?.enabled_features?.includes(flag) ?? false;
       },
 
       leaveOrganization: async (orgId: string): Promise<boolean> => {
