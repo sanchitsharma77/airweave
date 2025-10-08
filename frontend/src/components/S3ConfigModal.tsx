@@ -125,10 +125,10 @@ export function S3ConfigModal({ isOpen, onClose, onSuccess }: S3ConfigModalProps
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CloudUpload className="h-5 w-5 text-blue-500" />
-            Configure S3 Event Streaming
+            Configure S3
           </DialogTitle>
           <DialogDescription>
-            Set up S3-compatible storage for real-time event streaming and archival
+            Set up S3-compatible storage for streaming and archival
           </DialogDescription>
         </DialogHeader>
 
