@@ -5151,6 +5151,87 @@
         "title": "RetrievalStrategy",
         "description": "Retrieval strategies for search."
       },
+      "S3ConfigRequest": {
+        "properties": {
+          "aws_access_key_id": {
+            "type": "string",
+            "title": "Aws Access Key Id",
+            "description": "AWS access key ID"
+          },
+          "aws_secret_access_key": {
+            "type": "string",
+            "title": "Aws Secret Access Key",
+            "description": "AWS secret access key"
+          },
+          "bucket_name": {
+            "type": "string",
+            "title": "Bucket Name",
+            "description": "S3 bucket name"
+          },
+          "bucket_prefix": {
+            "type": "string",
+            "title": "Bucket Prefix",
+            "description": "Prefix for Airweave data",
+            "default": "airweave-outbound/"
+          },
+          "aws_region": {
+            "type": "string",
+            "title": "Aws Region",
+            "description": "AWS region",
+            "default": "us-east-1"
+          },
+          "endpoint_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Url",
+            "description": "Custom S3 endpoint"
+          },
+          "use_ssl": {
+            "type": "boolean",
+            "title": "Use Ssl",
+            "description": "Use SSL/TLS",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "aws_access_key_id",
+          "aws_secret_access_key",
+          "bucket_name"
+        ],
+        "title": "S3ConfigRequest",
+        "description": "Request to configure S3 destination."
+      },
+      "S3ConfigResponse": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "title": "Connection Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id",
+          "status",
+          "message"
+        ],
+        "title": "S3ConfigResponse",
+        "description": "Response after configuring S3 destination."
+      },
       "ScheduleConfig": {
         "properties": {
           "cron": {
