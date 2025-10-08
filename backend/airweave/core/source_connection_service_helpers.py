@@ -932,6 +932,8 @@ class SourceConnectionHelpers:
                 from airweave.platform.destinations.qdrant import QdrantDestination
 
                 destination = await QdrantDestination.create(
+                    credentials=None,  # Native Qdrant uses settings
+                    config=None,
                     collection_id=collection.id,
                     organization_id=collection.organization_id,
                     # vector_size auto-detected based on embedding model configuration

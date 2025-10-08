@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 KEYWORD_VECTOR_NAME = "bm25"
 
 
-@destination("Qdrant", "qdrant", config_class=QdrantAuthConfig, supports_vector=True)
+@destination("Qdrant", "qdrant", auth_config_class=QdrantAuthConfig, supports_vector=True)
 class QdrantDestination(VectorDBDestination):
     """Qdrant destination with multi-tenant support and legacy compatibility."""
 
@@ -78,9 +78,11 @@ class QdrantDestination(VectorDBDestination):
         collection_id: UUID,
         organization_id: Optional[UUID] = None,
         vector_size: Optional[int] = None,
+        credentials: Optional[QdrantAuthConfig] = None,
+        config: Optional[dict] = None,
         logger: Optional[ContextualLogger] = None,
     ) -> "QdrantDestination":
-        """Create and return a connected destination.
+        """Create and return a connected destination (matches source pattern).
 
         Args:
             collection_id: SQL collection UUID
@@ -88,6 +90,8 @@ class QdrantDestination(VectorDBDestination):
             vector_size: Vector dimensions - auto-detected if not provided:
                          - 1536 if OpenAI API key is set (text-embedding-3-small)
                          - 384 otherwise (MiniLM-L6-v2)
+            credentials: Optional QdrantAuthConfig with url and api_key (None for native)
+            config: Unused (kept for interface consistency with sources)
             logger: Logger instance
 
         Returns:
@@ -107,19 +111,17 @@ class QdrantDestination(VectorDBDestination):
         instance.collection_name = get_physical_collection_name(vector_size=instance.vector_size)
         instance.logger.info(f"Mapped collection {collection_id} → {instance.collection_name}")
 
-        credentials = await cls.get_credentials()
+        # Extract from credentials (contains both auth and config)
         if credentials:
             instance.url = credentials.url
             instance.api_key = credentials.api_key
+        else:
+            # Fall back to settings for native connection
+            instance.url = None  # Will use settings.qdrant_url in connect_to_qdrant()
+            instance.api_key = None
 
         await instance.connect_to_qdrant()
         return instance
-
-    @classmethod
-    async def get_credentials(cls) -> QdrantAuthConfig | None:
-        """Optionally provide credentials (override in your deployment)."""
-        # TODO: hook to your creds provider
-        return None
 
     async def connect_to_qdrant(self) -> None:
         """Initialize the AsyncQdrantClient and verify connectivity."""

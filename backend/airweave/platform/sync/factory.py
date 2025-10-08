@@ -11,7 +11,7 @@ from airweave import crud, schemas
 from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.config import settings
-from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
+from airweave.core.constants.reserved_ids import NATIVE_QDRANT_UUID, RESERVED_TABLE_ENTITY_ID
 from airweave.core.exceptions import NotFoundException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
@@ -964,11 +964,11 @@ class SyncFactory:
         ctx: ApiContext,
         logger: ContextualLogger,
     ) -> list[BaseDestination]:
-        """Create destination instances (supports multiple destinations).
+        """Create destination instances with unified credentials pattern (matches sources).
 
-        Iterates through all destination_connection_ids and creates instances for each.
-        If a destination fails to initialize, logs a warning and continues with others.
-        At least one destination must succeed for sync to proceed.
+        Handles two special cases:
+        1. NATIVE_QDRANT_UUID: Uses settings, no credentials needed
+        2. Org-specific destinations (e.g., S3): Loads credentials from Connection
 
         Args:
         -----
@@ -991,6 +991,31 @@ class SyncFactory:
         # Create all destinations from destination_connection_ids
         for destination_connection_id in sync.destination_connection_ids:
             try:
+                # Special case: Native Qdrant (uses settings, no DB connection)
+                if destination_connection_id == NATIVE_QDRANT_UUID:
+                    logger.info("Using native Qdrant destination (settings-based)")
+                    destination_model = await crud.destination.get_by_short_name(db, "qdrant")
+                    if not destination_model:
+                        logger.warning("Qdrant destination model not found")
+                        continue
+
+                    destination_schema = schemas.Destination.model_validate(destination_model)
+                    destination_class = resource_locator.get_destination(destination_schema)
+
+                    # Native Qdrant: no credentials (uses settings)
+                    destination = await destination_class.create(
+                        credentials=None,
+                        config=None,
+                        collection_id=collection.id,
+                        organization_id=collection.organization_id,
+                        logger=logger,
+                    )
+
+                    destinations.append(destination)
+                    logger.info("Created native Qdrant destination")
+                    continue
+
+                # Regular case: Load connection from database
                 destination_connection = await crud.connection.get(
                     db, destination_connection_id, ctx
                 )
@@ -1009,19 +1034,37 @@ class SyncFactory:
                     )
                     continue
 
+                # Load credentials (contains both auth and config)
+                destination_credentials = None
+                if (
+                    destination_model.auth_config_class
+                    and destination_connection.integration_credential_id
+                ):
+                    credential = await crud.integration_credential.get(
+                        db, destination_connection.integration_credential_id, ctx
+                    )
+                    if credential:
+                        decrypted_credential = credentials.decrypt(credential.encrypted_credentials)
+                        auth_config_class = resource_locator.get_auth_config(
+                            destination_model.auth_config_class
+                        )
+                        destination_credentials = auth_config_class.model_validate(
+                            decrypted_credential
+                        )
+
+                # Create destination instance with credentials (config=None)
                 destination_schema = schemas.Destination.model_validate(destination_model)
                 destination_class = resource_locator.get_destination(destination_schema)
 
-                # Vector size is auto-detected based on embedding model configuration
                 destination = await destination_class.create(
+                    credentials=destination_credentials,
+                    config=None,  # Everything is in credentials for now
                     collection_id=collection.id,
                     organization_id=collection.organization_id,
-                    logger=ctx.logger,
+                    logger=logger,
+                    collection_readable_id=collection.readable_id,
+                    sync_id=sync.id,
                 )
-
-                # Set contextual logger on destination
-                if hasattr(destination, "set_logger"):
-                    destination.set_logger(logger)
 
                 destinations.append(destination)
                 logger.info(

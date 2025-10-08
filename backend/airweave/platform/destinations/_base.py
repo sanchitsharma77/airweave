@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import ClassVar, List, Optional
 from uuid import UUID
 
-from airweave import schemas
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.entities._base import ChunkEntity
@@ -37,9 +36,22 @@ class BaseDestination(ABC):
     @classmethod
     @abstractmethod
     async def create(
-        cls, collection_id: UUID, logger: Optional[ContextualLogger] = None
+        cls,
+        credentials: Optional[any],
+        config: Optional[dict],
+        collection_id: UUID,
+        organization_id: Optional[UUID] = None,
+        logger: Optional[ContextualLogger] = None,
     ) -> "BaseDestination":
-        """Create a new destination."""
+        """Create a new destination with credentials and config (matches source pattern).
+
+        Args:
+            credentials: Authentication credentials (e.g., S3AuthConfig, QdrantAuthConfig)
+            config: Configuration parameters (e.g., bucket_name, url)
+            collection_id: Collection UUID
+            organization_id: Organization UUID
+            logger: Logger instance
+        """
         pass
 
     @abstractmethod
@@ -89,12 +101,6 @@ class BaseDestination(ABC):
     @abstractmethod
     async def search(self, query_vector: list[float]) -> None:
         """Search for a sync_id in the destination."""
-        pass
-
-    @classmethod
-    @abstractmethod
-    async def get_credentials(cls, user: schemas.User | None = None):
-        """Get credentials for the destination (class-level hook)."""
         pass
 
     @abstractmethod

@@ -61,9 +61,10 @@ class Retrieval(SearchOperation):
             op_name=self.__class__.__name__,
         )
 
-        # Connect to Qdrant
         destination = await QdrantDestination.create(
-            collection_id=context.collection_id, vector_size=context.vector_size, logger=None
+            collection_id=context.collection_id,
+            vector_size=context.vector_size,
+            logger=ctx.logger,
         )
 
         has_reranking = context.reranking is not None

@@ -1,12 +1,15 @@
 """S3 destination configuration endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID as PyUUID
+
+from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud
 from airweave.api import deps
 from airweave.api.context import ApiContext
+from airweave.api.router import TrailingSlashRouter
 from airweave.core.credentials import encrypt
 from airweave.core.shared_models import ConnectionStatus, FeatureFlag
 from airweave.models.connection import Connection
@@ -14,7 +17,7 @@ from airweave.models.integration_credential import IntegrationCredential
 from airweave.platform.configs.auth import S3AuthConfig
 from airweave.platform.destinations.s3 import S3Destination
 
-router = APIRouter()
+router = TrailingSlashRouter()
 
 
 class S3ConfigRequest(BaseModel):
@@ -37,7 +40,7 @@ class S3ConfigResponse(BaseModel):
     message: str
 
 
-@router.post("/s3/configure", response_model=S3ConfigResponse)
+@router.post("/configure", response_model=S3ConfigResponse)
 async def configure_s3_destination(
     config: S3ConfigRequest,
     db: AsyncSession = Depends(deps.get_db),
@@ -58,21 +61,17 @@ async def configure_s3_destination(
 
     # Validate credentials by testing connection
     try:
-        test_config = S3AuthConfig(**config.model_dump())
-        test_dest = S3Destination()
-        test_dest.set_logger(ctx.logger)
-        test_dest.bucket_name = test_config.bucket_name
-        test_dest.bucket_prefix = test_config.bucket_prefix
-        test_dest._endpoint_url = test_config.endpoint_url
-        test_dest._access_key_id = test_config.aws_access_key_id
-        test_dest._secret_access_key = test_config.aws_secret_access_key
-        test_dest._region = test_config.aws_region
-        test_dest._use_ssl = test_config.use_ssl
+        # Build full auth config (contains everything for S3)
+        auth_config = S3AuthConfig(**config.model_dump())
 
-        import aioboto3
-
-        test_dest.session = aioboto3.Session()
-        await test_dest._test_connection()
+        # Test connection using new create() pattern
+        _ = await S3Destination.create(
+            credentials=auth_config,
+            config=None,  # Everything is in credentials
+            collection_id=PyUUID("00000000-0000-0000-0000-000000000000"),  # Dummy for test
+            organization_id=ctx.organization.id,
+            logger=ctx.logger,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"S3 connection test failed: {str(e)}") from e
 
@@ -90,14 +89,14 @@ async def configure_s3_destination(
     existing_connection = result.scalar_one_or_none()
 
     if existing_connection:
-        # Update existing connection
+        # Update existing connection credentials (contains everything)
         if existing_connection.integration_credential_id:
             cred = await crud.integration_credential.get(
                 db, existing_connection.integration_credential_id
             )
             if cred:
-                # Update encrypted credentials
-                cred.encrypted_data = encrypt(config.model_dump())
+                # Update encrypted credentials (contains auth + config)
+                cred.encrypted_data = encrypt(auth_config.model_dump())
                 await db.commit()
                 await db.refresh(cred)
 
@@ -108,9 +107,18 @@ async def configure_s3_destination(
         )
 
     # Create new S3 connection
-    encrypted_creds = encrypt(config.model_dump())
+    encrypted_creds = encrypt(auth_config.model_dump())  # Contains everything
     credential = IntegrationCredential(
-        organization_id=ctx.organization.id, encrypted_data=encrypted_creds
+        organization_id=ctx.organization.id,
+        name="S3 Event Stream Credentials",
+        integration_short_name="s3",
+        description="S3-compatible storage for event streaming",
+        integration_type="DESTINATION",
+        authentication_method="direct",
+        encrypted_credentials=encrypted_creds,
+        auth_config_class="S3AuthConfig",
+        created_by_email=ctx.user.email if ctx.user else None,
+        modified_by_email=ctx.user.email if ctx.user else None,
     )
     db.add(credential)
     await db.flush()
@@ -143,7 +151,7 @@ async def configure_s3_destination(
     )
 
 
-@router.post("/s3/test", response_model=dict)
+@router.post("/test", response_model=dict)
 async def test_s3_connection(
     config: S3ConfigRequest,
     ctx: ApiContext = Depends(deps.get_context),
@@ -160,21 +168,17 @@ async def test_s3_connection(
         )
 
     try:
-        test_config = S3AuthConfig(**config.model_dump())
-        test_dest = S3Destination()
-        test_dest.set_logger(ctx.logger)
-        test_dest.bucket_name = test_config.bucket_name
-        test_dest.bucket_prefix = test_config.bucket_prefix
-        test_dest._endpoint_url = test_config.endpoint_url
-        test_dest._access_key_id = test_config.aws_access_key_id
-        test_dest._secret_access_key = test_config.aws_secret_access_key
-        test_dest._region = test_config.aws_region
-        test_dest._use_ssl = test_config.use_ssl
+        # Build full auth config (contains everything for S3)
+        auth_config = S3AuthConfig(**config.model_dump())
 
-        import aioboto3
-
-        test_dest.session = aioboto3.Session()
-        await test_dest._test_connection()
+        # Test connection using new create() pattern
+        _ = await S3Destination.create(
+            credentials=auth_config,
+            config=None,  # Everything is in credentials
+            collection_id=PyUUID("00000000-0000-0000-0000-000000000000"),  # Dummy for test
+            organization_id=ctx.organization.id,
+            logger=ctx.logger,
+        )
 
         return {
             "status": "success",
@@ -186,7 +190,7 @@ async def test_s3_connection(
         raise HTTPException(status_code=400, detail=f"Connection test failed: {str(e)}") from e
 
 
-@router.delete("/s3/configure")
+@router.delete("/configure")
 async def delete_s3_configuration(
     db: AsyncSession = Depends(deps.get_db),
     ctx: ApiContext = Depends(deps.get_context),
