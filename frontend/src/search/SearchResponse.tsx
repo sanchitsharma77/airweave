@@ -26,7 +26,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { materialOceanic, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { JsonViewer } from '@textea/json-viewer';
 import { DESIGN_SYSTEM } from '@/lib/design-system';
 import { CollapsibleCard } from '@/components/ui/CollapsibleCard';
 import { FiLayers, FiFilter, FiSliders, FiList, FiClock, FiGitMerge, FiType } from "react-icons/fi";
@@ -73,10 +72,11 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     // Track if we've auto-switched tabs after search completion to avoid overriding manual user selection
     const hasAutoSwitchedRef = useRef(false);
 
-    // Reset visible results count when new search starts
+    // Reset visible results count and raw JSON view when new search starts
     useEffect(() => {
         if (isSearching) {
             setVisibleResultsCount(INITIAL_RESULTS_LIMIT);
+            setShowFullRawJson(false);
         }
     }, [isSearching]);
 
@@ -92,6 +92,10 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     const INITIAL_RESULTS_LIMIT = 25;
     const LOAD_MORE_INCREMENT = 25;
     const [visibleResultsCount, setVisibleResultsCount] = useState(INITIAL_RESULTS_LIMIT);
+
+    // Raw tab truncation state (show 500 lines initially for performance)
+    const RAW_JSON_LINE_LIMIT = 500;
+    const [showFullRawJson, setShowFullRawJson] = useState(false);
 
     // Extract data from response
     const statusCode = searchResponse?.error ? (searchResponse?.status ?? 500) : 200;
@@ -225,12 +229,17 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
             }
             return;
         }
+        if (activeTab === 'raw' && searchResponse) {
+            // Always copy the FULL JSON, regardless of truncation state
+            await navigator.clipboard.writeText(JSON.stringify(searchResponse, null, 2));
+            return;
+        }
         if (responseType === 'completion' && activeTab === 'answer' && completion) {
             await handleCopyCompletion();
         } else if (activeTab === 'entities' && results.length > 0) {
             await handleCopyJson();
         }
-    }, [activeTab, responseType, completion, results, handleCopyCompletion, handleCopyJson]);
+    }, [activeTab, responseType, completion, results, searchResponse, handleCopyCompletion, handleCopyJson]);
 
     // Auto-scroll Trace to bottom on new events while searching, unless user scrolled up
     useEffect(() => {
@@ -1789,25 +1798,77 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         )}
 
                         {/* Raw Tab Content */}
-                        {activeTab === 'raw' && (
-                            <div className={cn(
-                                "overflow-auto max-h-[700px] raw-data-scrollbar p-4",
-                                isDark ? "bg-gray-950" : "bg-gray-50"
-                            )}>
-                                <JsonViewer
-                                    value={searchResponse}
-                                    theme={isDark ? 'dark' : 'light'}
-                                    displayDataTypes={false}
-                                    enableClipboard={true}
-                                    defaultInspectDepth={10}
-                                    style={{
-                                        fontSize: '12px',
-                                        fontFamily: 'monospace',
-                                        backgroundColor: 'transparent'
-                                    }}
-                                />
-                            </div>
-                        )}
+                        {activeTab === 'raw' && (() => {
+                            const fullJsonString = JSON.stringify(searchResponse, null, 2);
+                            const jsonLines = fullJsonString.split('\n');
+                            const shouldTruncate = jsonLines.length > RAW_JSON_LINE_LIMIT;
+                            const displayString = showFullRawJson || !shouldTruncate
+                                ? fullJsonString
+                                : jsonLines.slice(0, RAW_JSON_LINE_LIMIT).join('\n') + '\n...';
+
+                            // Use plain text for large JSON (>1000 lines) to avoid freezing
+                            // SyntaxHighlighter chokes on huge JSON (37k+ lines can freeze for 15+ seconds)
+                            const usePlainText = jsonLines.length > 1000;
+
+                            return (
+                                <>
+                                    <div className={cn(
+                                        "overflow-auto max-h-[700px] raw-data-scrollbar",
+                                        isDark ? "bg-gray-950" : "bg-gray-50"
+                                    )}>
+                                        {usePlainText ? (
+                                            // Plain text for large JSON - instant render, no coloring overhead
+                                            <pre className={cn(
+                                                "font-mono text-[11px] p-4 m-0 leading-relaxed whitespace-pre",
+                                                isDark ? "text-gray-300" : "text-gray-800"
+                                            )}>
+                                                {displayString}
+                                            </pre>
+                                        ) : (
+                                            // SyntaxHighlighter for small JSON - pretty colors
+                                            <SyntaxHighlighter
+                                                language="json"
+                                                style={syntaxStyle}
+                                                customStyle={{
+                                                    margin: 0,
+                                                    borderRadius: 0,
+                                                    fontSize: '11px',
+                                                    padding: '1rem',
+                                                    background: 'transparent',
+                                                    lineHeight: '1.5'
+                                                }}
+                                                showLineNumbers={false}
+                                            >
+                                                {displayString}
+                                            </SyntaxHighlighter>
+                                        )}
+                                    </div>
+
+                                    {/* Show Full JSON Button */}
+                                    {shouldTruncate && !showFullRawJson && (
+                                        <div className={cn(
+                                            "flex justify-center px-4 py-3 border-t",
+                                            isDark ? "border-gray-800/50 bg-gray-900/50" : "border-gray-200/50 bg-gray-50/50"
+                                        )}>
+                                            <Button
+                                                onClick={() => setShowFullRawJson(true)}
+                                                variant="outline"
+                                                size="sm"
+                                                className={cn(
+                                                    "text-xs font-medium",
+                                                    isDark
+                                                        ? "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-200"
+                                                        : "bg-white hover:bg-gray-50 border-gray-300 text-gray-700"
+                                                )}
+                                            >
+                                                <Braces className="h-3.5 w-3.5 mr-1.5" />
+                                                Show Full JSON ({jsonLines.length.toLocaleString()} lines)
+                                            </Button>
+                                        </div>
+                                    )}
+                                </>
+                            );
+                        })()}
                     </div>
                 )
                 }
