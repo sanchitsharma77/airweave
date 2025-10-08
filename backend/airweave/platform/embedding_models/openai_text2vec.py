@@ -19,6 +19,10 @@ _openai_semaphore: Optional[asyncio.Semaphore] = None
 # One limiter for the whole process – 5M TPM, 0.5M TP10s gives big smoothing buffer
 _tpm_limiter: AsyncLimiter | None = None
 
+# Cache the encoding at module level to avoid duplicate registration errors
+# when called concurrently from multiple async tasks
+_ENCODING = get_encoding("cl100k_base")
+
 
 @embedding_model(
     "OpenAI Text2Vec Simple",
@@ -69,8 +73,7 @@ class OpenAIText2Vec(BaseEmbeddingModel):
 
     @staticmethod
     def _count_tokens(txt: str) -> int:  # ~1 µs – negligible
-        enc = get_encoding("cl100k_base")
-        return len(enc.encode(txt))
+        return len(_ENCODING.encode(txt))
 
     async def _rate_limited_embed(self, batch: list[str], model: str, encoding_format: str):
         """Single OpenAI call, guarded by concurrency AND token bucket."""

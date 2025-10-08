@@ -105,7 +105,7 @@ const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
     onEntityIdClick
 }) => {
     const [isPropertiesExpanded, setIsPropertiesExpanded] = useState(false);
-    const [isPreviewExpanded, setIsPreviewExpanded] = useState(true); // Expanded by default
+    const [isPreviewExpanded, setIsPreviewExpanded] = useState(false); // Collapsed by default for performance
     const [isMetadataExpanded, setIsMetadataExpanded] = useState(false);
     const [isContentExpanded, setIsContentExpanded] = useState(false);
     const [isRawExpanded, setIsRawExpanded] = useState(false);

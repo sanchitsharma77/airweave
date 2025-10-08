@@ -73,6 +73,13 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     // Track if we've auto-switched tabs after search completion to avoid overriding manual user selection
     const hasAutoSwitchedRef = useRef(false);
 
+    // Reset visible results count when new search starts
+    useEffect(() => {
+        if (isSearching) {
+            setVisibleResultsCount(INITIAL_RESULTS_LIMIT);
+        }
+    }, [isSearching]);
+
     // State for tooltip management
     const [openTooltip, setOpenTooltip] = useState<string | null>(null);
     const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -80,6 +87,11 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
 
     // Ref for JSON viewer container for scrolling to entities
     const jsonViewerRef = useRef<HTMLDivElement>(null);
+
+    // Pagination state for entities tab (show 25 initially for performance)
+    const INITIAL_RESULTS_LIMIT = 25;
+    const LOAD_MORE_INCREMENT = 25;
+    const [visibleResultsCount, setVisibleResultsCount] = useState(INITIAL_RESULTS_LIMIT);
 
     // Extract data from response
     const statusCode = searchResponse?.error ? (searchResponse?.status ?? 500) : 200;
@@ -1733,20 +1745,45 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                         <div className="h-4 w-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
                                     </div>
                                 ) : (
-                                    <div className={cn(
-                                        "px-4 py-3 space-y-5 raw-data-scrollbar",
-                                        DESIGN_SYSTEM.typography.sizes.label
-                                    )}>
-                                        {results.map((result: any, index: number) => (
-                                            <EntityResultCard
-                                                key={result.payload?.entity_id || result.id || index}
-                                                result={result}
-                                                index={index}
-                                                isDark={isDark}
-                                                onEntityIdClick={handleEntityClick}
-                                            />
-                                        ))}
-                                    </div>
+                                    <>
+                                        <div className={cn(
+                                            "px-4 py-3 space-y-5 raw-data-scrollbar",
+                                            DESIGN_SYSTEM.typography.sizes.label
+                                        )}>
+                                            {results.slice(0, visibleResultsCount).map((result: any, index: number) => (
+                                                <EntityResultCard
+                                                    key={result.payload?.entity_id || result.id || index}
+                                                    result={result}
+                                                    index={index}
+                                                    isDark={isDark}
+                                                    onEntityIdClick={handleEntityClick}
+                                                />
+                                            ))}
+                                        </div>
+
+                                        {/* Load More Button */}
+                                        {results.length > visibleResultsCount && (
+                                            <div className={cn(
+                                                "flex justify-center px-4 py-3 border-t",
+                                                isDark ? "border-gray-800/50 bg-gray-900/50" : "border-gray-200/50 bg-gray-50/50"
+                                            )}>
+                                                <Button
+                                                    onClick={() => setVisibleResultsCount(prev => Math.min(prev + LOAD_MORE_INCREMENT, results.length))}
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className={cn(
+                                                        "text-xs font-medium",
+                                                        isDark
+                                                            ? "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-200"
+                                                            : "bg-white hover:bg-gray-50 border-gray-300 text-gray-700"
+                                                    )}
+                                                >
+                                                    <Layers className="h-3.5 w-3.5 mr-1.5" />
+                                                    Load More ({visibleResultsCount} of {results.length})
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         )}
