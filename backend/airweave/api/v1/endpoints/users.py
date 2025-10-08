@@ -47,12 +47,14 @@ async def read_user(
 @router.get("/me/organizations", response_model=List[OrganizationWithRole])
 async def read_user_organizations(
     *,
+    db: AsyncSession = Depends(deps.get_db),
     current_user: schemas.User = Depends(deps.get_user),
 ) -> List[OrganizationWithRole]:
     """Get all organizations that the current user is a member of.
 
     Args:
     ----
+        db: Database session
         current_user (schemas.User): The authenticated user.
 
     Returns:
@@ -60,22 +62,8 @@ async def read_user_organizations(
         List[OrganizationWithRole]: List of organizations with the user's role and primary status.
 
     """
-    organizations = []
-
-    for user_org in current_user.user_organizations:
-        org_with_role = OrganizationWithRole(
-            id=user_org.organization.id,
-            name=user_org.organization.name,
-            description=user_org.organization.description or "",
-            created_at=user_org.organization.created_at,
-            modified_at=user_org.organization.modified_at,
-            role=user_org.role,
-            is_primary=user_org.is_primary,
-            auth0_org_id=user_org.organization.auth0_org_id,
-        )
-        organizations.append(org_with_role)
-
-    return organizations
+    # Use CRUD method which properly loads feature_flags
+    return await crud.organization.get_user_organizations_with_roles(db=db, user_id=current_user.id)
 
 
 @router.post("/create_or_update", response_model=User)

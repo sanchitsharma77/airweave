@@ -97,6 +97,7 @@ async def list_user_organizations(
             modified_at=org.modified_at,
             role=org.role,
             is_primary=org.is_primary,
+            enabled_features=org.enabled_features or [],
         )
         for org in organizations
     ]
@@ -148,6 +149,7 @@ async def get_organization(
         modified_at=organization.modified_at,
         role=user_role,
         is_primary=user_is_primary,
+        enabled_features=organization.enabled_features or [],
     )
 
 
@@ -216,6 +218,7 @@ async def update_organization(
         modified_at=updated_organization.modified_at,
         role=user_role,
         is_primary=user_is_primary,
+        enabled_features=updated_organization.enabled_features or [],
     )
 
 

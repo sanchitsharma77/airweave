@@ -87,19 +87,20 @@ def source(
 def destination(
     name: str,
     short_name: str,
+    auth_config_class: Optional[Type[BaseModel]] = None,
     config_class: Optional[Type[BaseModel]] = None,
     supports_upsert: bool = True,
     supports_delete: bool = True,
     supports_vector: bool = False,
     max_batch_size: int = 1000,
 ) -> Callable[[type], type]:
-    """Decorator for destination connectors.
+    """Decorator for destination connectors with separated auth and config.
 
     Args:
         name: Display name for the destination
         short_name: Unique identifier for the destination type
-        config_class: Pydantic model for destination configuration
-        labels: Tags for categorization
+        auth_config_class: Pydantic model for authentication credentials (secrets)
+        config_class: Pydantic model for destination configuration (parameters)
         supports_upsert: Whether destination supports upsert operations
         supports_delete: Whether destination supports delete operations
         supports_vector: Whether destination supports vector storage
@@ -110,6 +111,7 @@ def destination(
         cls._is_destination = True
         cls._name = name
         cls._short_name = short_name
+        cls._auth_config_class = auth_config_class
         cls._config_class = config_class
 
         # Capability metadata

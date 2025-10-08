@@ -11,7 +11,7 @@ from airweave import crud, schemas
 from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.config import settings
-from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
+from airweave.core.constants.reserved_ids import NATIVE_QDRANT_UUID, RESERVED_TABLE_ENTITY_ID
 from airweave.core.exceptions import NotFoundException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
@@ -964,7 +964,11 @@ class SyncFactory:
         ctx: ApiContext,
         logger: ContextualLogger,
     ) -> list[BaseDestination]:
-        """Create destination instances.
+        """Create destination instances with unified credentials pattern (matches sources).
+
+        Handles two special cases:
+        1. NATIVE_QDRANT_UUID: Uses settings, no credentials needed
+        2. Org-specific destinations (e.g., S3): Loads credentials from Connection
 
         Args:
         -----
@@ -976,45 +980,116 @@ class SyncFactory:
 
         Returns:
         --------
-            list[BaseDestination]: A list of destination instances
+            list[BaseDestination]: A list of successfully created destination instances
+
+        Raises:
+        -------
+            ValueError: If no destinations could be created
         """
-        destination_connection_id = sync.destination_connection_ids[0]
+        destinations = []
 
-        destination_connection = await crud.connection.get(db, destination_connection_id, ctx)
-        if not destination_connection:
-            raise NotFoundException(
-                (
-                    f"Destination connection not found for organization "
-                    f"{ctx.organization.id}"
-                    f" and connection id {destination_connection_id}"
+        # Create all destinations from destination_connection_ids
+        for destination_connection_id in sync.destination_connection_ids:
+            try:
+                # Special case: Native Qdrant (uses settings, no DB connection)
+                if destination_connection_id == NATIVE_QDRANT_UUID:
+                    logger.info("Using native Qdrant destination (settings-based)")
+                    destination_model = await crud.destination.get_by_short_name(db, "qdrant")
+                    if not destination_model:
+                        logger.warning("Qdrant destination model not found")
+                        continue
+
+                    destination_schema = schemas.Destination.model_validate(destination_model)
+                    destination_class = resource_locator.get_destination(destination_schema)
+
+                    # Native Qdrant: no credentials (uses settings)
+                    destination = await destination_class.create(
+                        credentials=None,
+                        config=None,
+                        collection_id=collection.id,
+                        organization_id=collection.organization_id,
+                        logger=logger,
+                    )
+
+                    destinations.append(destination)
+                    logger.info("Created native Qdrant destination")
+                    continue
+
+                # Regular case: Load connection from database
+                destination_connection = await crud.connection.get(
+                    db, destination_connection_id, ctx
                 )
+                if not destination_connection:
+                    logger.warning(
+                        f"Destination connection {destination_connection_id} not found, skipping"
+                    )
+                    continue
+
+                destination_model = await crud.destination.get_by_short_name(
+                    db, destination_connection.short_name
+                )
+                if not destination_model:
+                    logger.warning(
+                        f"Destination {destination_connection.short_name} not found, skipping"
+                    )
+                    continue
+
+                # Load credentials (contains both auth and config)
+                destination_credentials = None
+                if (
+                    destination_model.auth_config_class
+                    and destination_connection.integration_credential_id
+                ):
+                    credential = await crud.integration_credential.get(
+                        db, destination_connection.integration_credential_id, ctx
+                    )
+                    if credential:
+                        decrypted_credential = credentials.decrypt(credential.encrypted_credentials)
+                        auth_config_class = resource_locator.get_auth_config(
+                            destination_model.auth_config_class
+                        )
+                        destination_credentials = auth_config_class.model_validate(
+                            decrypted_credential
+                        )
+
+                # Create destination instance with credentials (config=None)
+                destination_schema = schemas.Destination.model_validate(destination_model)
+                destination_class = resource_locator.get_destination(destination_schema)
+
+                destination = await destination_class.create(
+                    credentials=destination_credentials,
+                    config=None,  # Everything is in credentials for now
+                    collection_id=collection.id,
+                    organization_id=collection.organization_id,
+                    logger=logger,
+                    collection_readable_id=collection.readable_id,
+                    sync_id=sync.id,
+                )
+
+                destinations.append(destination)
+                logger.info(
+                    f"Created destination: {destination_connection.short_name} "
+                    f"(connection_id={destination_connection_id})"
+                )
+            except Exception as e:
+                # Log error but continue to next destination
+                logger.error(
+                    f"Failed to create destination {destination_connection_id}: {e}", exc_info=True
+                )
+                continue
+
+        if not destinations:
+            raise ValueError(
+                "No valid destinations could be created for sync. "
+                f"Tried {len(sync.destination_connection_ids)} connection(s)."
             )
-        destination_model = await crud.destination.get_by_short_name(
-            db, destination_connection.short_name
+
+        logger.info(
+            f"Successfully created {len(destinations)} destination(s) "
+            f"out of {len(sync.destination_connection_ids)} configured"
         )
-        destination_schema = schemas.Destination.model_validate(destination_model)
-        if not destination_model:
-            raise NotFoundException(
-                f"Destination not found for connection {destination_connection.short_name}"
-            )
 
-        destination_class = resource_locator.get_destination(destination_schema)
-
-        # Vector size is auto-detected based on embedding model configuration
-        destination = await destination_class.create(
-            collection_id=collection.id,
-            organization_id=collection.organization_id,
-            logger=ctx.logger,
-        )
-
-        # Set contextual logger on destination
-        if hasattr(destination, "set_logger"):
-            destination.set_logger(logger)
-            logger.debug(
-                f"Set contextual logger on destination: {destination_connection.short_name}"
-            )
-
-        return [destination]
+        return destinations
 
     @classmethod
     async def _get_transformer_callables(

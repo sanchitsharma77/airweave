@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 
@@ -55,6 +55,21 @@ class Organization(OrganizationInDBBase):
         description="List of enabled feature flags for this organization",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_enabled_features(cls, data: Any) -> Any:
+        """Extract enabled_features from feature_flags relationship."""
+        if isinstance(data, dict):
+            return data
+        # Handle SQLAlchemy model
+        if hasattr(data, "__dict__"):
+            if "feature_flags" in data.__dict__:
+                enabled = [
+                    FeatureFlagEnum(ff.flag) for ff in data.__dict__["feature_flags"] if ff.enabled
+                ]
+                data.enabled_features = enabled
+        return data
+
 
 class OrganizationWithRole(BaseModel):
     """Organization schema with user's role information."""
@@ -74,3 +89,20 @@ class OrganizationWithRole(BaseModel):
         default_factory=list,
         description="List of enabled feature flags for this organization",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_enabled_features(cls, data: Any) -> Any:
+        """Extract enabled_features from feature_flags relationship if not already set."""
+        if isinstance(data, dict):
+            # If it's already a dict with enabled_features, return as is
+            return data
+        # Handle SQLAlchemy model or other object
+        if hasattr(data, "__dict__"):
+            # Check if we have feature_flags relationship loaded
+            if "feature_flags" in data.__dict__ and not hasattr(data, "enabled_features"):
+                enabled = [
+                    FeatureFlagEnum(ff.flag) for ff in data.__dict__["feature_flags"] if ff.enabled
+                ]
+                data.enabled_features = enabled
+        return data

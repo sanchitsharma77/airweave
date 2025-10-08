@@ -617,6 +617,8 @@ class OrganizationService:
                 # Note: In multi-tenant mode, we don't delete the shared collection,
                 # just the points for this collection
                 destination = await QdrantDestination.create(
+                    credentials=None,  # Native Qdrant uses settings
+                    config=None,
                     collection_id=collection.id,
                     organization_id=collection.organization_id,
                     # vector_size auto-detected based on embedding model configuration
