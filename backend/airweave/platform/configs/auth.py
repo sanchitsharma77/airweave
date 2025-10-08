@@ -667,6 +667,11 @@ class S3AuthConfig(AuthConfig):
     @model_validator(mode="after")
     def validate_credentials(self):
         """Ensure required credentials are provided."""
+        # Strip whitespace from all credential fields
+        self.aws_access_key_id = self.aws_access_key_id.strip()
+        self.aws_secret_access_key = self.aws_secret_access_key.strip()
+        self.bucket_name = self.bucket_name.strip()
+
         if not self.aws_access_key_id or not self.aws_secret_access_key:
             raise ValueError("S3 requires aws_access_key_id and aws_secret_access_key")
         if not self.bucket_name:
