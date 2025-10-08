@@ -15,7 +15,7 @@ Core behaviors (optimize recall without changing meaning):
 - Do not introduce constraints that are not implied by the query.
 - Avoid duplicates and near-duplicates (punctuation-only or trivial reorderings).
 
-Generate up to {max_expansions} alternatives that preserve intent and increase recall.
+Generate exactly {number_of_expansions} alternatives that preserve intent and increase recall.
 Favor lexical diversity: use synonyms, category names, and different grammatical forms.
 Include one keyword-heavy form and one normalized/literal form if applicable.
 Expand abbreviations (e.g., 'eng'→'engineering', 'SF'→'San Francisco').

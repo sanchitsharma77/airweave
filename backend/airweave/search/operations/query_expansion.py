@@ -16,20 +16,25 @@ from airweave.search.providers._base import BaseProvider
 
 from ._base import SearchOperation
 
+# Number of query expansion alternatives to generate (module-level for Pydantic model)
+_NUMBER_OF_EXPANSIONS = 4
+
 
 class QueryExpansions(BaseModel):
     """Structured output schema for LLM-generated query expansions."""
 
     alternatives: List[str] = Field(
-        description="Alternative query phrasings",
-        max_length=4,
+        description=f"Exactly {_NUMBER_OF_EXPANSIONS} alternative query phrasings.",
+        min_items=_NUMBER_OF_EXPANSIONS,
+        max_items=_NUMBER_OF_EXPANSIONS,
     )
 
 
 class QueryExpansion(SearchOperation):
     """Expand user query into multiple variations for better recall."""
 
-    MAX_EXPANSIONS = 4
+    # Number of query expansion alternatives to generate
+    NUMBER_OF_EXPANSIONS = _NUMBER_OF_EXPANSIONS
 
     def __init__(self, provider: BaseProvider) -> None:
         """Initialize with LLM provider.
@@ -58,7 +63,9 @@ class QueryExpansion(SearchOperation):
         self._validate_query_length(query, ctx)
 
         # Build prompts
-        system_prompt = QUERY_EXPANSION_SYSTEM_PROMPT.format(max_expansions=self.MAX_EXPANSIONS)
+        system_prompt = QUERY_EXPANSION_SYSTEM_PROMPT.format(
+            number_of_expansions=self.NUMBER_OF_EXPANSIONS
+        )
         user_prompt = f"Original query: {query}"
 
         # Get structured output from provider
@@ -76,10 +83,11 @@ class QueryExpansion(SearchOperation):
         ctx.logger.debug(f"[QueryExpansion] Valid alternatives: {valid_alternatives}")
 
         # Ensure we got exactly the expected number of alternatives
-        if len(valid_alternatives) != self.MAX_EXPANSIONS:
+        if len(valid_alternatives) != self.NUMBER_OF_EXPANSIONS:
             raise ValueError(
-                f"Query expansion failed: expected exactly {self.MAX_EXPANSIONS} alternatives, "
-                f"got {len(valid_alternatives)}. LLM returned wrong number of valid alternatives."
+                f"Query expansion failed: expected exactly {self.NUMBER_OF_EXPANSIONS} "
+                f"alternatives, got {len(valid_alternatives)}. "
+                f"LLM returned wrong number of valid alternatives."
             )
 
         # Write alternatives to state (original query remains in context.query)
