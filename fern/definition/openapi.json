@@ -3341,6 +3341,15 @@
         "title": "EntityTypeStats",
         "description": "Statistics for a specific entity type."
       },
+      "FeatureFlag": {
+        "type": "string",
+        "enum": [
+          "s3_destination",
+          "priority_support"
+        ],
+        "title": "FeatureFlag",
+        "description": "Available feature flags in Airweave.\n\nAdd new flags here to enable feature gating at the organization level."
+      },
       "FieldCondition": {
         "properties": {
           "key": {
@@ -4723,6 +4732,14 @@
               }
             ],
             "title": "Org Metadata"
+          },
+          "enabled_features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureFlag"
+            },
+            "type": "array",
+            "title": "Enabled Features",
+            "description": "List of enabled feature flags for this organization"
           }
         },
         "type": "object",
@@ -4929,6 +4946,14 @@
             ],
             "title": "Member Role",
             "description": "Admin's role in this organization (if member)"
+          },
+          "enabled_features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureFlag"
+            },
+            "type": "array",
+            "title": "Enabled Features",
+            "description": "List of enabled feature flags for this organization"
           }
         },
         "type": "object",
@@ -5003,6 +5028,14 @@
               }
             ],
             "title": "Org Metadata"
+          },
+          "enabled_features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureFlag"
+            },
+            "type": "array",
+            "title": "Enabled Features",
+            "description": "List of enabled feature flags for this organization"
           }
         },
         "type": "object",
