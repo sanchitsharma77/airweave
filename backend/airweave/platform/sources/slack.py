@@ -211,14 +211,17 @@ class SlackSource(BaseSource):
         self, message_matches: List[Dict], limit: int, results_fetched: int
     ) -> AsyncGenerator[ChunkEntity, None]:
         """Process message matches and yield entities."""
+        yielded = 0
         for message in message_matches:
-            if results_fetched >= limit:
+            # Stop once we've reached the total limit
+            if results_fetched + yielded >= limit:
                 break
 
             try:
                 entity = await self._create_message_entity(message)
                 if entity:
                     yield entity
+                    yielded += 1
             except Exception as e:
                 self.logger.error(f"Error creating message entity: {e}")
                 continue

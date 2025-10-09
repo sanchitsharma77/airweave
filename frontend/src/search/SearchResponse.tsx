@@ -711,6 +711,8 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                     numSources: 0,
                     sourceNames: [] as string[],
                     numQueries: 1,
+                    numKeywords: 0,
+                    keywords: [] as string[],
                     federatedCount: 0,
                     vectorCount: 0,
                     mergedCount: 0,
@@ -723,6 +725,8 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         federatedSearchData.numSources = nextEvent.num_sources || 0;
                         federatedSearchData.sourceNames = nextEvent.source_names || [];
                         federatedSearchData.numQueries = nextEvent.num_queries || 1;
+                        federatedSearchData.numKeywords = nextEvent.num_keywords || 0;
+                        federatedSearchData.keywords = nextEvent.keywords || [];
                     } else if (nextEvent.type === 'federated_search_done') {
                         federatedSearchData.federatedCount = nextEvent.federated_count || 0;
                         federatedSearchData.vectorCount = nextEvent.vector_count || 0;
@@ -751,6 +755,22 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         )}
                     </div>
                 );
+
+                // Show extracted keywords
+                if (federatedSearchData.keywords.length > 0) {
+                    rows.push(
+                        <div key={`${key}-keywords-header`} className="py-0.5 px-2 text-[11px] opacity-90">
+                            Searching with {federatedSearchData.numKeywords} keyword{federatedSearchData.numKeywords !== 1 ? 's' : ''}:
+                        </div>
+                    );
+                    federatedSearchData.keywords.forEach((keyword, idx) => {
+                        rows.push(
+                            <div key={`${key}-keyword-${idx}`} className="py-0.5 px-2 pl-4 text-[11px] opacity-80">
+                                • {keyword}
+                            </div>
+                        );
+                    });
+                }
 
                 if (federatedSearchData.noResults) {
                     rows.push(

@@ -122,12 +122,13 @@ Result payload includes: `entity_id`, `source_name`, `md_content`, `metadata`, `
 
 1. **QueryExpansion** (`query_expansion.py`): Generates query variants using LLM
 2. **QueryInterpretation** (`query_interpretation.py`): LLM-based filter extraction from natural language
-3. **EmbedQuery** (`embed_query.py`): Generates dense (neural) and sparse (BM25) embeddings
+3. **EmbedQuery** (`embed_query.py`): Generates dense (neural) and sparse (BM25) embeddings (optional for federated-only collections)
 4. **UserFilter** (`user_filter.py`): Applies and merges user-provided Qdrant filters
 5. **TemporalRelevance** (`temporal_relevance.py`): Dynamic time-based decay configuration
-6. **Retrieval** (`retrieval.py`): Executes vector search in Qdrant (hybrid/neural/keyword)
-7. **Reranking** (`reranking.py`): Post-retrieval reranking using LLM providers
-8. **GenerateAnswer** (`generate_answer.py`): AI-generated completions from search results
+6. **Retrieval** (`retrieval.py`): Executes vector search in Qdrant (hybrid/neural/keyword) (optional for federated-only collections)
+7. **FederatedSearch** (`federated_search.py`): Searches federated sources (e.g., Slack) at query time and merges with vector results using RRF
+8. **Reranking** (`reranking.py`): Post-retrieval reranking using LLM providers
+9. **GenerateAnswer** (`generate_answer.py`): AI-generated completions from search results
 
 ### Hybrid Search
 
@@ -136,6 +137,33 @@ True hybrid search combining:
 - **BM25 sparse embeddings**: Keyword matching
 - **Fusion**: Reciprocal Rank Fusion (RRF)
 - Default: `"hybrid"` for optimal quality
+
+### Federated Search
+
+For sources with strict rate limits or massive data volumes (e.g., Slack), **federated search** queries the source's API at search time instead of syncing all data:
+
+**How It Works:**
+1. Collection contains both vector-synced sources and federated sources
+2. User submits search query
+3. LLM extracts 8-10 keywords from query and expansions
+4. Federated sources are searched in parallel with vector database
+5. Each federated source searches with all keywords concurrently
+6. Results are deduplicated by entity_id across keywords
+7. Federated and vector results are merged using Reciprocal Rank Fusion (RRF)
+8. Final merged results returned to user
+
+**Key Features:**
+- Parallel execution across all federated sources
+- Concurrent keyword searches per source
+- Automatic deduplication (1.5x padding for ~33% duplication rate)
+- RRF scoring for fair ranking across source types
+- Graceful degradation (continues if one source fails)
+- Real-time progress events via SSE
+
+**Configuration:**
+- Factory automatically detects federated sources in collection
+- Conditionally omits EmbedQuery/Retrieval for federated-only collections
+- Adds FederatedSearch operation when federated sources present
 
 ### Dynamic Temporal Relevance
 

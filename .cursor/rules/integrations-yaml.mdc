@@ -19,7 +19,8 @@ integrations:
     client_secret: "client_secret_here"
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"  # or "header"
-    scope: "scope1 scope2 scope3"  # service-specific permissions
+    scope: "scope1 scope2 scope3"  # service-specific bot/app permissions
+    user_scope: "user_scope1 user_scope2"  # optional, user-specific permissions (Slack, etc.)
     requires_pkce: false  # optional, default false. Set true for PKCE-required providers (e.g., Airtable)
     additional_frontend_params:  # optional service-specific parameters
       param1: "value1"

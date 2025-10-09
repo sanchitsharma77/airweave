@@ -703,12 +703,24 @@ const Collections = () => {
 
         // Federated sources have simpler status logic
         if (isFederated) {
-            if (connection.status === 'pending_auth' || !connection.is_authenticated) {
-                colorClass = "bg-cyan-500";
-                status = "Authentication required";
-            } else {
-                colorClass = "bg-green-500";
-                status = "Ready for real-time search";
+            switch (connection.status) {
+                case 'pending_auth':
+                    colorClass = "bg-cyan-500";
+                    status = "Authentication required";
+                    break;
+                case 'error':
+                    colorClass = "bg-red-500";
+                    status = "Connection error";
+                    break;
+                case 'inactive':
+                    colorClass = "bg-gray-400";
+                    status = "Inactive";
+                    break;
+                case 'active':
+                default:
+                    colorClass = "bg-green-500";
+                    status = "Ready for real-time search";
+                    break;
             }
         } else {
             // Map the backend SourceConnectionStatus enum values for regular sources
