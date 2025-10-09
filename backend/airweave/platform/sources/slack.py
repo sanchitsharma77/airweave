@@ -111,7 +111,7 @@ class SlackSource(BaseSource):
             self.logger.error(f"Unexpected error accessing Slack API: {url}, {str(e)}")
             raise
 
-    async def search(self, query: str, limit: int) -> AsyncGenerator[ChunkEntity, None]:
+    async def search(self, query: str, limit: int) -> List[ChunkEntity]:
         """Search Slack for messages matching the query with pagination support.
 
         Uses Slack's search.messages API endpoint with pagination to retrieve
@@ -123,20 +123,16 @@ class SlackSource(BaseSource):
             query: Search query string
             limit: Maximum number of message results to return
 
-        Yields:
-            SlackMessageEntity objects
+        Returns:
+            List of SlackMessageEntity objects
         """
         self.logger.info(f"Searching Slack messages for query: '{query}' (limit: {limit})")
 
         async with self.http_client() as client:
-            results_fetched = 0
-
             try:
-                async for entity in self._paginate_search_results(client, query, limit):
-                    yield entity
-                    results_fetched += 1
-
-                self.logger.info(f"Slack search complete: returned {results_fetched} results")
+                results = await self._paginate_search_results(client, query, limit)
+                self.logger.info(f"Slack search complete: returned {len(results)} results")
+                return results
 
             except httpx.HTTPStatusError as e:
                 self.logger.error(f"HTTP error during Slack search: {e}")
@@ -147,11 +143,12 @@ class SlackSource(BaseSource):
 
     async def _paginate_search_results(
         self, client: httpx.AsyncClient, query: str, limit: int
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> List[ChunkEntity]:
         """Paginate through Slack search results."""
         page = 1
         results_fetched = 0
         max_results_per_page = 100  # Slack's hard limit per page
+        all_entities = []
 
         while results_fetched < limit:
             count = min(max_results_per_page, limit - results_fetched)
@@ -172,17 +169,17 @@ class SlackSource(BaseSource):
             if not message_matches:
                 break
 
-            async for entity in self._process_message_matches(
-                message_matches, limit, results_fetched
-            ):
-                yield entity
-                results_fetched += 1
+            entities = await self._process_message_matches(message_matches, limit, results_fetched)
+            all_entities.extend(entities)
+            results_fetched += len(entities)
 
             # Check if there are more pages
             if page >= paging_info.get("pages", 1):
                 break
 
             page += 1
+
+        return all_entities
 
     async def _fetch_search_page(
         self, client: httpx.AsyncClient, query: str, count: int, page: int
@@ -209,22 +206,23 @@ class SlackSource(BaseSource):
 
     async def _process_message_matches(
         self, message_matches: List[Dict], limit: int, results_fetched: int
-    ) -> AsyncGenerator[ChunkEntity, None]:
-        """Process message matches and yield entities."""
-        yielded = 0
+    ) -> List[ChunkEntity]:
+        """Process message matches and return entities."""
+        entities = []
         for message in message_matches:
             # Stop once we've reached the total limit
-            if results_fetched + yielded >= limit:
+            if results_fetched + len(entities) >= limit:
                 break
 
             try:
                 entity = await self._create_message_entity(message)
                 if entity:
-                    yield entity
-                    yielded += 1
+                    entities.append(entity)
             except Exception as e:
                 self.logger.error(f"Error creating message entity: {e}")
                 continue
+
+        return entities
 
     async def _create_message_entity(self, message: Dict[str, Any]) -> Optional[SlackMessageEntity]:
         """Create a SlackMessageEntity from search result.

@@ -315,9 +315,8 @@ class FederatedSearch(SearchOperation):
             f"{keyword_idx + 1}/{total_keywords}: '{keyword}'"
         )
 
-        entities = []
-        async for entity in source.search(keyword, limit=limit):
-            entities.append(entity)
+        # Direct await - no async iteration needed
+        entities = await source.search(keyword, limit=limit)
 
         ctx.logger.debug(
             f"[FederatedSearch] Keyword {keyword_idx + 1} fetched {len(entities)} results"
