@@ -267,11 +267,11 @@ integrations:
     url: "https://slack.com/oauth/v2/authorize"
     backend_url: "https://slack.com/api/oauth.v2.access"
     grant_type: "authorization_code"
-    client_id: "6769618979345.8891055640118"
+    client_id: "6769618979345.9662661123892"
     client_secret: "slack-client-secret-key"
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"
-    scope: "app_mentions:read,channels:history,channels:join,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read"
+    user_scope: "search:read"
 
   stripe:
 

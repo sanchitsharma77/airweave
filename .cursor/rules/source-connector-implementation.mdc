@@ -4,6 +4,11 @@
 
 A **source connector** in Airweave is a Python module that extracts data from an external service and transforms it into searchable entities. This guide covers everything you need to build a production-ready connector.
 
+There are two types of source connectors:
+
+1. **Standard (Sync-Based)**: Extracts and syncs all data from the source to Airweave's vector database
+2. **Federated Search**: Searches the source's API at query time without syncing data
+
 ## Core Components
 
 Every source connector requires three main components:
@@ -731,6 +736,142 @@ Reference the auth config in your source decorator:
     labels=["Category"],
 )
 ```
+
+---
+
+## Part 3.75: Federated Search Sources
+
+Some source APIs have strict rate limits or massive data volumes that make full synchronization impractical. For these sources, use **federated search** to query the source's API at search time instead of syncing all data.
+
+### When to Use Federated Search
+
+Use federated search when:
+- The source has strict rate limits (e.g., Slack's search API)
+- The data volume is too large to sync efficiently
+- The source provides a search API that's fast enough for real-time queries
+- Data changes too frequently to keep synced
+
+### Implementing a Federated Search Source
+
+#### 1. Mark the Source as Federated
+
+Add `federated_search=True` to the `@source` decorator:
+
+```python
+@source(
+    name="Slack",
+    short_name="slack",
+    auth_methods=[...],
+    oauth_type=OAuthType.ACCESS_ONLY,
+    auth_config_class=None,
+    config_class="SlackConfig",
+    labels=["Communication", "Messaging"],
+    supports_continuous=False,
+    federated_search=True,  # This source uses federated search
+)
+class SlackSource(BaseSource):
+    """Slack source connector using federated search."""
+```
+
+#### 2. Implement the `search()` Method
+
+Federated sources must implement `search()` instead of `generate_entities()`:
+
+```python
+async def search(self, query: str, limit: int) -> AsyncGenerator[ChunkEntity, None]:
+    """Search the source at query time.
+
+    Args:
+        query: Search query from the user
+        limit: Maximum number of results to return
+
+    Yields:
+        ChunkEntity instances matching the query
+    """
+    async with self.http_client() as client:
+        # Search the external API
+        async for entity in self._search_messages(client, query, limit):
+            yield entity
+```
+
+#### 3. Implement `generate_entities()` as No-Op
+
+For federated sources, `generate_entities()` should raise an error:
+
+```python
+async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    """Not used for federated search sources."""
+    self.logger.error("generate_entities() called on federated search source")
+    raise NotImplementedError(
+        "This source uses federated search. Use the search() method instead."
+    )
+```
+
+#### 4. Handle Pagination in `search()`
+
+Implement pagination to respect the limit:
+
+```python
+async def _search_messages(
+    self, client: httpx.AsyncClient, query: str, limit: int
+) -> AsyncGenerator[ChunkEntity, None]:
+    """Paginate through search results."""
+    results_fetched = 0
+    page = 1
+
+    while results_fetched < limit:
+        # Fetch page
+        response = await self._fetch_search_page(client, query, limit - results_fetched, page)
+
+        if not response or not response.get("matches"):
+            break
+
+        # Process results
+        for match in response["matches"]:
+            if results_fetched >= limit:
+                break
+
+            entity = await self._create_entity(match)
+            if entity:
+                yield entity
+                results_fetched += 1
+
+        # Check if more pages exist
+        if page >= response.get("pages", 1):
+            break
+
+        page += 1
+```
+
+### Federated Search Entities
+
+Entities for federated sources follow the same patterns as sync-based sources:
+- Use `AirweaveField(..., embeddable=True)` for searchable content
+- Include breadcrumbs for context
+- Add scores if the source API provides relevance scores
+
+```python
+class SlackMessageEntity(ChunkEntity):
+    """Message from Slack search."""
+
+    text: str = AirweaveField(..., embeddable=True)
+    channel_name: str = AirweaveField(..., embeddable=True)
+    user: Optional[str] = AirweaveField(None, embeddable=True)
+    score: Optional[float] = Field(None)  # From source API
+    permalink: Optional[str] = Field(None)
+    created_at: Optional[datetime] = AirweaveField(
+        None, embeddable=True, is_created_at=True
+    )
+```
+
+### Integration with Search Pipeline
+
+When a collection contains federated sources:
+1. User submits search query
+2. Search pipeline extracts keywords from query using LLM
+3. Federated sources are searched in parallel with vector database
+4. Results are merged using Reciprocal Rank Fusion (RRF)
+5. Final results are returned to user
 
 ---
 

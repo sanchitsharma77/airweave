@@ -336,6 +336,7 @@ from airweave.platform.entities.{short_name} import *
     config_class="{ConnectorName}Config",
     labels=["Category"],
     supports_continuous=False,
+    federated_search=False,  # Set to True for federated search sources (e.g., Slack)
 )
 class MyConnectorSource(BaseSource):
     """Source connector for {Connector Name}."""

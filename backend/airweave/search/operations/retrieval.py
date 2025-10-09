@@ -45,6 +45,13 @@ class Retrieval(SearchOperation):
         filter_dict = state.get("filter")
         decay_config = state.get("decay_config")
 
+        # Ensure we have at least one type of embedding
+        if dense_embeddings is None and sparse_embeddings is None:
+            raise RuntimeError(
+                "Retrieval requires embeddings. Ensure EmbedQuery ran or disable Retrieval "
+                "for federated-only collections."
+            )
+
         # Determine search method from strategy
         search_method = self._get_search_method()
 

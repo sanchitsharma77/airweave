@@ -771,6 +771,15 @@ class SourceConnectionHelpers:
         if sync_details and sync_details.last_job:
             last_job_status = sync_details.last_job.status
 
+        # Get federated_search from source model
+        federated_search = False
+        try:
+            source_model = await crud.source.get_by_short_name(db, source_conn.short_name)
+            if source_model:
+                federated_search = getattr(source_model, "federated_search", False)
+        except Exception as e:
+            ctx.logger.warning(f"Failed to get federated_search for {source_conn.short_name}: {e}")
+
         # Build and return the complete response
         return schemas.SourceConnection(
             id=source_conn.id,
@@ -785,7 +794,9 @@ class SourceConnectionHelpers:
             config=source_conn.config_fields if hasattr(source_conn, "config_fields") else None,
             schedule=schedule,
             sync=sync_details,
+            sync_id=getattr(source_conn, "sync_id", None),
             entities=entities,
+            federated_search=federated_search,
         )
 
     def compute_status_from_data(
@@ -1250,10 +1261,12 @@ class SourceConnectionHelpers:
 
         # Use existing state from init session
         state = init_session.state
+
         api_callback = (
             init_session.overrides.get("oauth_redirect_uri")
             or f"{core_settings.api_url}/source-connections/callback"
         )
+
         # Extract template configs from overrides
         template_configs = init_session.overrides.get("template_configs")
         provider_auth_url, code_verifier = await oauth2_service.generate_auth_url_with_redirect(
@@ -1480,55 +1493,80 @@ class SourceConnectionHelpers:
             await db.flush()
             await db.refresh(connection)
 
-            # Use the create_sync helper to ensure default schedule is applied
-            # Note: We temporarily skip Temporal schedule creation here because
-            # the source_connection hasn't been updated with sync_id yet
-            cron_schedule = (
-                payload.get("schedule", {}).get("cron")
-                if isinstance(payload.get("schedule"), dict)
-                else payload.get("cron_schedule")
-            )
-            if cron_schedule is None:
-                # Generate default daily schedule
-                from datetime import timezone
+            # Check if this is a federated search source - these don't need syncs
+            source_class = resource_locator.get_source(source)
+            is_federated = getattr(source_class, "_federated_search", False)
 
-                now_utc = datetime.now(timezone.utc)
-                minute = now_utc.minute
-                hour = now_utc.hour
-                cron_schedule = f"{minute} {hour} * * *"
+            if is_federated:
                 ctx.logger.info(
-                    f"No cron schedule provided, defaulting to daily at {hour:02d}:{minute:02d} UTC"
+                    f"Skipping sync creation for federated search source '{source.short_name}'. "
+                    "Federated search sources are searched at query time."
+                )
+                # Update shell source connection without sync
+                sc_update = {
+                    "config_fields": validated_config,
+                    "readable_collection_id": collection.readable_id,
+                    "sync_id": None,
+                    "connection_id": connection.id,
+                    "is_authenticated": True,
+                }
+                source_conn = await crud.source_connection.update(
+                    uow.session,
+                    db_obj=source_conn_shell,
+                    obj_in=sc_update,
+                    ctx=ctx,
+                    uow=uow,
+                )
+            else:
+                # Use the create_sync helper to ensure default schedule is applied
+                # Note: We temporarily skip Temporal schedule creation here because
+                # the source_connection hasn't been updated with sync_id yet
+                cron_schedule = (
+                    payload.get("schedule", {}).get("cron")
+                    if isinstance(payload.get("schedule"), dict)
+                    else payload.get("cron_schedule")
+                )
+                if cron_schedule is None:
+                    # Generate default daily schedule
+                    from datetime import timezone
+
+                    now_utc = datetime.now(timezone.utc)
+                    minute = now_utc.minute
+                    hour = now_utc.hour
+                    cron_schedule = f"{minute} {hour} * * *"
+                    ctx.logger.info(
+                        f"No cron schedule provided, defaulting to daily at "
+                        f"{hour:02d}:{minute:02d} UTC"
+                    )
+
+                sync, sync_job = await self.create_sync_without_schedule(
+                    uow.session,
+                    name=payload.get("name") or source.name,
+                    connection_id=connection.id,
+                    collection_id=collection.id,
+                    cron_schedule=cron_schedule,
+                    run_immediately=True,
+                    ctx=ctx,
+                    uow=uow,
                 )
 
-            sync, sync_job = await self.create_sync_without_schedule(
-                uow.session,
-                name=payload.get("name") or source.name,
-                connection_id=connection.id,
-                collection_id=collection.id,
-                cron_schedule=cron_schedule,
-                run_immediately=True,
-                ctx=ctx,
-                uow=uow,
-            )
+                # Update shell source connection with sync
+                sc_update = {
+                    "config_fields": validated_config,
+                    "readable_collection_id": collection.readable_id,
+                    "sync_id": sync.id,
+                    "connection_id": connection.id,
+                    "is_authenticated": True,
+                }
+                source_conn = await crud.source_connection.update(
+                    uow.session,
+                    db_obj=source_conn_shell,
+                    obj_in=sc_update,
+                    ctx=ctx,
+                    uow=uow,
+                )
 
-            # Update shell source connection
-            sc_update = {
-                "config_fields": validated_config,
-                "readable_collection_id": collection.readable_id,
-                "sync_id": sync.id,
-                "connection_id": connection.id,
-                "is_authenticated": True,
-            }
-            source_conn = await crud.source_connection.update(
-                uow.session,
-                db_obj=source_conn_shell,
-                obj_in=sc_update,
-                ctx=ctx,
-                uow=uow,
-            )
-
-            # Now that source_connection is linked to sync, create the Temporal schedule
-            if cron_schedule and sync.id:
+                # Now that source_connection is linked to sync, create the Temporal schedule
                 await uow.session.flush()  # Ensure the source_connection update is visible
                 from airweave.platform.temporal.schedule_service import temporal_schedule_service
 

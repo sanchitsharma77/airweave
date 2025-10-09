@@ -260,17 +260,16 @@ integrations:
       response_type: "code"
       response_mode: "query"
 
-
   slack:
     oauth_type: "access_only"
     url: "https://slack.com/oauth/v2/authorize"
     backend_url: "https://slack.com/api/oauth.v2.access"
     grant_type: "authorization_code"
-    client_id: "6769618979345.8909908171303"
-    client_secret: "bb2d468190471933fe358d53a1e4ac2d"
+    client_id: "6769618979345.9662661123892"
+    client_secret: "5a8e5dacfa26f4c99b6c36333ca019a8"
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"
-    scope: "app_mentions:read,channels:history,channels:join,channels:read,groups:history,groups:read,im:history,im:read,mpim:history,mpim:read,users:read"
+    user_scope: "search:read"
 
   stripe:
 

@@ -88,6 +88,9 @@ class OAuth2Service:
         if oauth2_settings.scope:
             params["scope"] = oauth2_settings.scope
 
+        if oauth2_settings.user_scope:
+            params["user_scope"] = oauth2_settings.user_scope
+
         if state is not None:
             params["state"] = state
 
@@ -222,6 +225,8 @@ class OAuth2Service:
             params["state"] = state
         if oauth2_settings.scope:
             params["scope"] = oauth2_settings.scope
+        if oauth2_settings.user_scope:
+            params["user_scope"] = oauth2_settings.user_scope
 
         # Generate PKCE parameters if required by the provider
         code_verifier = None
@@ -704,6 +709,49 @@ class OAuth2Service:
         return code_verifier, code_challenge
 
     @staticmethod
+    def _normalize_token_response(
+        response_data: dict, integration_short_name: str, logger: ContextualLogger
+    ) -> dict:
+        """Normalize non-standard OAuth2 token responses to standard format.
+
+        Some OAuth providers return tokens in non-standard nested structures.
+        This method detects and normalizes them to the standard OAuth2 format.
+
+        Args:
+            response_data: Raw OAuth2 token response from provider
+            integration_short_name: Provider identifier for logging
+            logger: Logger for debugging
+
+        Returns:
+            Normalized token response in standard OAuth2 format with access_token at top level
+
+        Examples of non-standard formats:
+            - Slack user tokens: {"authed_user": {"access_token": "..."}}
+            - Standard format: {"access_token": "...", "token_type": "Bearer"}
+        """
+        # Handle nested authed_user format (e.g., Slack's user token flow)
+        # Pattern: {"authed_user": {"access_token": "..."}} instead of {"access_token": "..."}
+        if "authed_user" in response_data and isinstance(response_data.get("authed_user"), dict):
+            authed_user = response_data["authed_user"]
+            # Only normalize if access_token is nested rather than at top level
+            if "access_token" in authed_user and "access_token" not in response_data:
+                logger.debug(
+                    f"Normalized nested authed_user token format for {integration_short_name}"
+                )
+                return {
+                    "access_token": authed_user.get("access_token"),
+                    "token_type": authed_user.get("token_type", "Bearer"),
+                    "scope": authed_user.get("scope", response_data.get("scope")),
+                    "refresh_token": authed_user.get("refresh_token"),
+                }
+
+        # Add more non-standard patterns here as needed
+        # Example: if "credentials" in response_data and isinstance(...)
+
+        # Return as-is if already in standard format
+        return response_data
+
+    @staticmethod
     def _get_redirect_url(integration_short_name: str) -> str:
         """Private method to generate the appropriate redirect URI based on environment.
 
@@ -812,7 +860,14 @@ class OAuth2Service:
                 status_code=400, detail="Failed to exchange authorization code"
             ) from e
 
-        return OAuth2TokenResponse(**response.json())
+        response_data = response.json()
+
+        # Normalize non-standard OAuth responses to standard format
+        normalized_data = OAuth2Service._normalize_token_response(
+            response_data, integration_config.integration_short_name, logger
+        )
+
+        return OAuth2TokenResponse(**normalized_data)
 
     @staticmethod
     def _supports_oauth2(oauth_type: Optional[str]) -> bool:

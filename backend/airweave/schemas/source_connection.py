@@ -257,6 +257,9 @@ class SourceConnectionListItem(BaseModel):
     # Stats
     entity_count: int = 0
 
+    # Source configuration
+    federated_search: bool = Field(False, description="Whether this source uses federated search")
+
     # Internal fields for computation (excluded from API response)
     authentication_method: Optional[str] = Field(None, exclude=True)
     is_active: bool = Field(True, exclude=True)
@@ -423,9 +426,13 @@ class SourceConnection(BaseModel):
 
     # Sync information
     sync: Optional[SyncDetails] = None
+    sync_id: Optional[UUID] = Field(None, description="ID of the associated sync")
 
     # Entity information
     entities: Optional[EntitySummary] = None
+
+    # Source configuration
+    federated_search: bool = Field(False, description="Whether this source uses federated search")
 
 
 class SourceConnectionJob(BaseModel):
