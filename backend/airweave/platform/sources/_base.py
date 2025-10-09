@@ -393,6 +393,32 @@ class BaseSource:
         """Validate that this source is reachable and credentials are usable."""
         raise NotImplementedError
 
+    async def search(self, query: str, limit: int) -> AsyncGenerator[ChunkEntity, None]:
+        """Search the source for entities matching the query.
+
+        This method is used for federated search where the source provides search
+        functionality instead of syncing all data. Sources with federated_search=True
+        must implement this method.
+
+        Args:
+            query: Search query string
+            limit: Maximum number of results to return
+
+        Returns:
+            AsyncGenerator yielding ChunkEntity objects matching the query
+
+        Raises:
+            NotImplementedError: If source does not support federated search
+        """
+        if not getattr(self.__class__, "_federated_search", False):
+            raise NotImplementedError(
+                f"Source {self.__class__.__name__} does not support federated search"
+            )
+        raise NotImplementedError(
+            f"Source {self.__class__.__name__} has federated_search=True but "
+            "search() method is not implemented"
+        )
+
     def clean_content_for_embedding(self, content: str) -> str:
         """Clean content for embedding by removing huge URLs and cleaning up formatting.
 

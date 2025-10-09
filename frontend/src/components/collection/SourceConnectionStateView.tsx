@@ -88,6 +88,8 @@ interface SourceConnection {
   schedule?: Schedule;
   last_sync_job?: LastSyncJob;
   entities?: EntitySummary;  // Changed from entity_states array to entities object
+  // Source configuration
+  federated_search?: boolean;  // Whether this source uses federated search
   // Legacy fields that may still exist
   sync_id?: string;
   organization_id?: string;
@@ -140,6 +142,9 @@ const SourceConnectionStateView: React.FC<Props> = ({
 
   // Use source connection data as primary source, with store for real-time updates
   const connectionState = sourceConnection || storeConnection;
+
+  // Detect federated search sources based on the federated_search field from the source
+  const isFederatedSource = sourceConnection?.federated_search === true;
 
   // Format time ago display
   const formatTimeAgo = useCallback((dateStr: string | undefined) => {
@@ -363,7 +368,7 @@ const SourceConnectionStateView: React.FC<Props> = ({
 
   // Clear local cancelling state when appropriate
   useEffect(() => {
-    const syncStatus = storeConnection?.last_sync_job?.status;
+    const syncStatus = storeConnection?.last_sync_job?.status as unknown as string | undefined;
 
     if (isLocalCancelling) {
       // Clear when:
@@ -586,6 +591,10 @@ const SourceConnectionStateView: React.FC<Props> = ({
     if (sourceConnection?.status === 'pending_auth' || !sourceConnection?.auth?.authenticated) {
       return { text: 'Not Authenticated', color: 'bg-cyan-500', icon: null };
     }
+    // Federated sources are always "Ready for search" when authenticated
+    if (isFederatedSource) {
+      return { text: 'Ready', color: 'bg-green-500', icon: null };
+    }
     if (syncState === 'CANCELLING') return { text: 'Cancelling', color: 'bg-orange-500 animate-pulse', icon: 'loader' };
     if (currentSyncJob?.status === 'failed') return { text: 'Failed', color: 'bg-red-500', icon: null };
     if (currentSyncJob?.status === 'completed') return { text: 'Completed', color: 'bg-green-500', icon: null };
@@ -617,18 +626,20 @@ const SourceConnectionStateView: React.FC<Props> = ({
       {!isNotAuthorized && (
         <div className="flex items-center justify-between">
           <div className="flex gap-2 flex-wrap items-center">
-            {/* Entities Card */}
-            <div className={cn("h-8 px-3 py-1.5 border border-border rounded-md shadow-sm flex items-center gap-2 min-w-[90px]", isDark ? "bg-gray-900" : "bg-white")}>
-              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">ENTITIES</span>
-              <span className="text-xs font-semibold text-foreground">
-                {/* Calculate total from real-time store data or fall back to source connection */}
-                {(
-                  storeConnection?.entity_states?.reduce((sum, state) => sum + (state.total_count || 0), 0) ||
-                  sourceConnection?.entities?.total_entities ||
-                  0
-                ).toLocaleString()}
-              </span>
-            </div>
+            {/* Entities Card - Only show for non-federated sources */}
+            {!isFederatedSource && (
+              <div className={cn("h-8 px-3 py-1.5 border border-border rounded-md shadow-sm flex items-center gap-2 min-w-[90px]", isDark ? "bg-gray-900" : "bg-white")}>
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">ENTITIES</span>
+                <span className="text-xs font-semibold text-foreground">
+                  {/* Calculate total from real-time store data or fall back to source connection */}
+                  {(
+                    storeConnection?.entity_states?.reduce((sum, state) => sum + (state.total_count || 0), 0) ||
+                    sourceConnection?.entities?.total_entities ||
+                    0
+                  ).toLocaleString()}
+                </span>
+              </div>
+            )}
 
             {/* Status Card */}
             <div className={cn(
@@ -656,66 +667,68 @@ const SourceConnectionStateView: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Schedule Card */}
-            <TooltipProvider delayDuration={100}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className={cn("h-8 px-3 py-1.5 border border-border rounded-md shadow-sm flex items-center gap-2 min-w-[100px] cursor-help", isDark ? "bg-gray-900" : "bg-white")}>
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">SCHEDULE</span>
-                    <div className="flex items-center gap-1">
-                      <Clock className="h-3 w-3 text-muted-foreground" />
-                      <span
-                        className="text-xs font-medium text-foreground"
-                        title={(() => {
-                          const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
-                          return parsed ? `${parsed.shortDescription} UTC` : 'Manual sync only';
-                        })()}
-                      >
+            {/* Schedule Card - Only show for non-federated sources */}
+            {!isFederatedSource && (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className={cn("h-8 px-3 py-1.5 border border-border rounded-md shadow-sm flex items-center gap-2 min-w-[100px] cursor-help", isDark ? "bg-gray-900" : "bg-white")}>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">SCHEDULE</span>
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-muted-foreground" />
+                        <span
+                          className="text-xs font-medium text-foreground"
+                          title={(() => {
+                            const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
+                            return parsed ? `${parsed.shortDescription} UTC` : 'Manual sync only';
+                          })()}
+                        >
+                          {(() => {
+                            const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
+                            if (parsed) {
+                              const nextRunStr = formatTimeUntil(sourceConnection?.schedule?.next_run);
+                              return nextRunStr ? `${parsed.shortDescriptionLocal} (${nextRunStr})` : parsed.shortDescriptionLocal;
+                            }
+                            return 'Manual';
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div className="text-xs space-y-1">
+                      <p className="font-medium">
                         {(() => {
                           const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
-                          if (parsed) {
-                            const nextRunStr = formatTimeUntil(sourceConnection?.schedule?.next_run);
-                            return nextRunStr ? `${parsed.shortDescriptionLocal} (${nextRunStr})` : parsed.shortDescriptionLocal;
-                          }
-                          return 'Manual';
+                          return parsed ? parsed.descriptionLocal : 'Manual sync only';
                         })()}
-                      </span>
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <div className="text-xs space-y-1">
-                    <p className="font-medium">
+                      </p>
                       {(() => {
                         const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
-                        return parsed ? parsed.descriptionLocal : 'Manual sync only';
+                        return parsed && parsed.description !== parsed.descriptionLocal ? (
+                          <p className="text-muted-foreground text-[10px]">
+                            ({parsed.description})
+                          </p>
+                        ) : null;
                       })()}
-                    </p>
-                    {(() => {
-                      const parsed = parseCronExpression(sourceConnection?.schedule?.cron);
-                      return parsed && parsed.description !== parsed.descriptionLocal ? (
-                        <p className="text-muted-foreground text-[10px]">
-                          ({parsed.description})
+                      {sourceConnection?.schedule?.next_run && (
+                        <p className="text-muted-foreground">
+                          Next run: {new Date(sourceConnection.schedule.next_run).toISOString().replace('T', ', ').replace('.000Z', '')} UTC
                         </p>
-                      ) : null;
-                    })()}
-                    {sourceConnection?.schedule?.next_run && (
-                      <p className="text-muted-foreground">
-                        Next run: {new Date(sourceConnection.schedule.next_run).toISOString().replace('T', ', ').replace('.000Z', '')} UTC
-                      </p>
-                    )}
-                    {sourceConnection?.schedule?.cron && (
-                      <p className="text-muted-foreground font-mono text-[10px]">
-                        {sourceConnection.schedule.cron}
-                      </p>
-                    )}
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                      )}
+                      {sourceConnection?.schedule?.cron && (
+                        <p className="text-muted-foreground font-mono text-[10px]">
+                          {sourceConnection.schedule.cron}
+                        </p>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
 
-            {/* Last Sync Card - Only show when not actively syncing AND there's sync history */}
-            {!(isRunning || isPending || isCancellingStatus) && lastRanDisplay && (
+            {/* Last Sync Card - Only show for non-federated sources when not actively syncing AND there's sync history */}
+            {!isFederatedSource && !(isRunning || isPending || isCancellingStatus) && lastRanDisplay && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -740,70 +753,99 @@ const SourceConnectionStateView: React.FC<Props> = ({
                 </Tooltip>
               </TooltipProvider>
             )}
+
+            {/* Federated Search Indicator - Only show for federated sources */}
+            {isFederatedSource && (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className={cn(
+                      "h-8 px-3 py-1.5 border border-border rounded-md shadow-sm flex items-center gap-2 cursor-help",
+                      isDark ? "bg-blue-900/20 border-blue-800/30" : "bg-blue-50 border-blue-200"
+                    )}>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">MODE</span>
+                      <div className="flex items-center gap-1">
+                        <Send className="h-3 w-3 text-blue-500" />
+                        <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                          Federated search
+                        </span>
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs max-w-[240px]">
+                      This source uses federated search. Data is queried in real-time when you search instead of being synced and indexed.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
 
           {/* Settings and Action Buttons */}
           <div className="flex gap-1.5 items-center">
-            {/* Refresh/Cancel Button */}
-            <TooltipProvider delayDuration={100}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      console.log('BUTTON CLICKED, syncState:', syncState);
-                      if (syncState === 'IDLE') {
-                        if (!entitiesAllowed || isCheckingUsage) return;
-                        handleRunSync();
-                      } else if (syncState === 'SYNCING') {
-                        console.log('Calling handleCancelSync');
-                        handleCancelSync();
-                      }
-                      // Do nothing if CANCELLING
-                    }}
-                    disabled={syncState === 'CANCELLING' || (!entitiesAllowed && syncState === 'IDLE')}
-                    className={cn(
-                      "h-8 w-8 rounded-md border shadow-sm flex items-center justify-center transition-all duration-200",
-                      syncState !== 'IDLE'
-                        ? syncState === 'CANCELLING'
-                          ? isDark
-                            ? "bg-orange-900/30 border-orange-700 hover:bg-orange-900/50 cursor-not-allowed"
-                            : "bg-orange-50 border-orange-200 hover:bg-orange-100 cursor-not-allowed"
-                          : isDark
-                            ? "bg-red-900/30 border-red-700 hover:bg-red-900/50 cursor-pointer"
-                            : "bg-red-50 border-red-200 hover:bg-red-100 cursor-pointer"
-                        : (!entitiesAllowed && syncState === 'IDLE') || isCheckingUsage
-                          ? "bg-muted border-border cursor-not-allowed opacity-50"
-                          : isDark
-                            ? "bg-gray-900 border-border hover:bg-muted cursor-pointer"
-                            : "bg-white border-border hover:bg-muted cursor-pointer"
-                    )}
-                    title={syncState === 'CANCELLING' ? "Cancelling sync..." : syncState === 'SYNCING' ? "Cancel sync" : (!entitiesAllowed ? "Entity limit reached" : "Refresh data")}
-                  >
-                    {syncState === 'CANCELLING' ? (
-                      <Loader2 className="h-3 w-3 animate-spin text-orange-500" />
-                    ) : syncState === 'SYNCING' ? (
-                      <Square className="h-3 w-3 text-red-500" />
-                    ) : (
-                      <RefreshCw className="h-3 w-3 text-muted-foreground" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="text-xs">
-                    {syncState === 'CANCELLING'
-                      ? "Cancelling sync..."
-                      : syncState === 'SYNCING'
-                        ? "Cancel sync"
-                        : !entitiesAllowed && entitiesCheckDetails?.reason === 'usage_limit_exceeded'
-                          ? "Entity processing limit reached. Upgrade your plan to sync more data."
-                          : !entitiesAllowed && entitiesCheckDetails?.reason === 'payment_required'
-                            ? "Billing issue detected. Update billing to sync data."
-                            : "Refresh data"}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            {/* Refresh/Cancel Button - Hide for federated sources */}
+            {!isFederatedSource && (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        console.log('BUTTON CLICKED, syncState:', syncState);
+                        if (syncState === 'IDLE') {
+                          if (!entitiesAllowed || isCheckingUsage) return;
+                          handleRunSync();
+                        } else if (syncState === 'SYNCING') {
+                          console.log('Calling handleCancelSync');
+                          handleCancelSync();
+                        }
+                        // Do nothing if CANCELLING
+                      }}
+                      disabled={syncState === 'CANCELLING' || (!entitiesAllowed && syncState === 'IDLE')}
+                      className={cn(
+                        "h-8 w-8 rounded-md border shadow-sm flex items-center justify-center transition-all duration-200",
+                        syncState !== 'IDLE'
+                          ? syncState === 'CANCELLING'
+                            ? isDark
+                              ? "bg-orange-900/30 border-orange-700 hover:bg-orange-900/50 cursor-not-allowed"
+                              : "bg-orange-50 border-orange-200 hover:bg-orange-100 cursor-not-allowed"
+                            : isDark
+                              ? "bg-red-900/30 border-red-700 hover:bg-red-900/50 cursor-pointer"
+                              : "bg-red-50 border-red-200 hover:bg-red-100 cursor-pointer"
+                          : (!entitiesAllowed && syncState === 'IDLE') || isCheckingUsage
+                            ? "bg-muted border-border cursor-not-allowed opacity-50"
+                            : isDark
+                              ? "bg-gray-900 border-border hover:bg-muted cursor-pointer"
+                              : "bg-white border-border hover:bg-muted cursor-pointer"
+                      )}
+                      title={syncState === 'CANCELLING' ? "Cancelling sync..." : syncState === 'SYNCING' ? "Cancel sync" : (!entitiesAllowed ? "Entity limit reached" : "Refresh data")}
+                    >
+                      {syncState === 'CANCELLING' ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-orange-500" />
+                      ) : syncState === 'SYNCING' ? (
+                        <Square className="h-3 w-3 text-red-500" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3 text-muted-foreground" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs">
+                      {syncState === 'CANCELLING'
+                        ? "Cancelling sync..."
+                        : syncState === 'SYNCING'
+                          ? "Cancel sync"
+                          : !entitiesAllowed && entitiesCheckDetails?.reason === 'usage_limit_exceeded'
+                            ? "Entity processing limit reached. Upgrade your plan to sync more data."
+                            : !entitiesAllowed && entitiesCheckDetails?.reason === 'payment_required'
+                              ? "Billing issue detected. Update billing to sync data."
+                              : "Refresh data"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
 
             {/* Settings Menu */}
             {sourceConnection && (
@@ -831,30 +873,49 @@ const SourceConnectionStateView: React.FC<Props> = ({
       {/* Only show sync-related UI when authenticated */}
       {!isNotAuthorized && (
         <>
-          {/* Show error card if sync failed or there's an error */}
-          {(currentSyncJob?.status === 'failed') && (
+          {/* Show error card if sync failed or there's an error - Only for non-federated sources */}
+          {!isFederatedSource && (currentSyncJob?.status === 'failed') && (
             <SyncErrorCard
               error={currentSyncJob?.error || sourceConnection?.last_sync_job?.error || "The last sync failed. Check the logs for more details."}
               isDark={isDark}
             />
           )}
 
-          {/* Show Entity State List only when authenticated */}
-          <EntityStateList
-            state={storeConnection}  // Pass store connection for real-time updates
-            sourceShortName={sourceConnection?.short_name || ''}
-            isDark={isDark}
-            onStartSync={handleRunSync}
-            isRunning={isRunning}
-            isPending={isPending}
-            entityStates={sourceConnection?.entities ?
-              Object.entries(sourceConnection.entities.by_type).map(([type, stats]) => ({
-                entity_type: type,
-                total_count: stats.count,
-                last_updated_at: stats.last_updated,
-                sync_status: stats.sync_status as 'pending' | 'syncing' | 'synced' | 'failed'
-              })) : undefined}  // Convert entities to entity_states format for EntityStateList
-          />
+          {/* Federated Search Info Card - Only show for federated sources */}
+          {isFederatedSource && (
+            <div className={cn(
+              "border rounded-lg p-4",
+              isDark ? "bg-blue-900/10 border-blue-800/30" : "bg-blue-50 border-blue-200"
+            )}>
+              <div className="flex items-start gap-3">
+                <Send className={cn("h-5 w-5 mt-0.5", isDark ? "text-blue-400" : "text-blue-600")} />
+                <div className="flex-1 space-y-2">
+                  <p className={cn("text-sm", isDark ? "text-blue-200/80" : "text-blue-800/80")}>
+                    This source searches the data at query time instead of syncing and indexing it beforehand.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Show Entity State List only for non-federated sources */}
+          {!isFederatedSource && (
+            <EntityStateList
+              state={storeConnection}  // Pass store connection for real-time updates
+              sourceShortName={sourceConnection?.short_name || ''}
+              isDark={isDark}
+              onStartSync={handleRunSync}
+              isRunning={isRunning}
+              isPending={isPending}
+              entityStates={sourceConnection?.entities ?
+                Object.entries(sourceConnection.entities.by_type).map(([type, stats]) => ({
+                  entity_type: type,
+                  total_count: stats.count,
+                  last_updated_at: stats.last_updated,
+                  sync_status: stats.sync_status as 'pending' | 'syncing' | 'synced' | 'failed'
+                })) : undefined}  // Convert entities to entity_states format for EntityStateList
+            />
+          )}
         </>
       )}
     </div>

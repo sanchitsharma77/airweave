@@ -498,6 +498,7 @@ async def _sync_sources(
             output_entity_definition_ids=output_entity_ids,
             labels=getattr(source_class, "_labels", []),
             supports_continuous=getattr(source_class, "_supports_continuous", False),
+            federated_search=getattr(source_class, "_federated_search", False),
         )
         source_definitions.append(source_def)
 

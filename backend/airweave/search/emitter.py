@@ -89,6 +89,7 @@ class EventEmitter:
             "TemporalRelevance": "recency",
             "UserFilter": "qdrant_filter",
             "Retrieval": "vector_search",
+            "FederatedSearch": "federated_search",
         }
 
         if name in mappings:

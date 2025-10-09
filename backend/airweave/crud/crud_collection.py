@@ -56,11 +56,16 @@ class CRUDCollection(CRUDBaseOrganization[Collection, CollectionCreate, Collecti
             return CollectionStatus.NEEDS_SOURCE
 
         # Count connections by their sync status
-        working_count = 0  # Connections with completed or in-progress syncs
+        working_count = 0  # Connections with completed or in-progress syncs (or federated)
         failing_count = 0  # Connections with failed syncs
 
         for conn in active_connections:
-            # Get last job status to compute connection status
+            # Federated sources are always "working" when authenticated
+            if conn.get("federated_search", False):
+                working_count += 1
+                continue
+
+            # Get last job status to compute connection status for non-federated sources
             last_job = conn.get("last_job", {})
             last_job_status = last_job.get("status") if last_job else None
 
