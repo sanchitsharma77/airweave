@@ -132,6 +132,7 @@ class SearchOrchestrator:
                 context.user_filter,
                 context.temporal_relevance,
                 context.retrieval,
+                context.federated_search,
                 context.reranking,
                 context.generate_answer,
             ]

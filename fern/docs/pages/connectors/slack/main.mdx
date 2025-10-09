@@ -7,28 +7,18 @@ description: "Slack integration with Airweave"
 
 
 
-<div className="connector-header">
-  <img src="icon.svg" alt="Slack logo" width="72" height="72" className="connector-icon" />
-  <div className="connector-info">
-    <h1>Slack</h1>
-    <p>Connect your Slack data to Airweave</p>
-  </div>
+<div className="connector-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+  <img src="icon.svg" alt="Slack logo" width="48" height="48" className="connector-icon" />
+  <h1 style={{ margin: 0 }}>Slack</h1>
 </div>
-
-## Overview
-
-The Slack connector allows you to sync data from Slack into Airweave, making it available for search and retrieval by your agents.
 
 ## Configuration
 
+Slack source connector using federated search.
 
-### SlackSource
-
-Slack source implementation.
-
-This connector retrieves data from Slack such as Channels, Users, and Messages,
-then yields them as entities using their respective Slack entity schemas.
-
+Instead of syncing all messages and files, this source searches Slack at query time
+using the search.all API endpoint. This is necessary because Slack's rate limits
+are too restrictive for full synchronization.
 
 <Card
   title="View Source Code"
@@ -40,88 +30,42 @@ then yields them as entities using their respective Slack entity schemas.
 
 ### Authentication
 
-This connector uses **OAuth 2.0 authentication flow**.
+This connector uses **OAuth 2.0 authentication**. You can connect through the Airweave UI or API using the OAuth flow.
 
-<Card
-  title="Authentication Configuration"
-  className="auth-config-card"
-  style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)', padding: '16px', marginBottom: '24px' }}
->
+**Supported authentication methods:**
+- OAuth Browser Flow (recommended for UI)
+- OAuth Token (for programmatic access)
+- Auth Provider (enterprise SSO)
 
-Slack authentication credentials schema.
-<ParamField
-  path="access_token"
-  type="str"
-  required={true}
->
-  The access token for your Slack app.
-</ParamField>
-</Card>
+### Configuration Options
 
+This connector does not have any additional configuration options.
 
-## Entities
+## Data Models
 
 The following data models are available for this connector:
 
-<Accordion title="SlackChannelEntity">
-
-Schema for Slack channel entities.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| channel_id | str | Unique identifier for the channel |
-| name | Optional[str] | Human-readable name of the channel |
-| is_channel | bool | Whether this is a public channel |
-| is_group | bool | Whether this is a private channel/group |
-| is_im | bool | Whether this is a direct message (IM) |
-| is_mpim | bool | Whether this is a multi-person direct message |
-| is_archived | bool | Whether the channel has been archived |
-| created | Optional[datetime] | Timestamp when the channel was created |
-| creator | Optional[str] | User ID of the channel creator |
-| members | List[str] | List of user IDs who are members of this channel |
-| topic | Optional[Dict] | Information about the channel topic including value and creator |
-| purpose | Optional[Dict] | Information about the channel purpose including value and creator |
-
-</Accordion>
-<Accordion title="SlackUserEntity">
-
-Schema for Slack user entities.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | str | Unique identifier for the user |
-| team_id | Optional[str] | Identifier for the team/workspace the user belongs to |
-| name | Optional[str] | The username/handle of the user |
-| real_name | Optional[str] | The user's real/full name |
-| display_name | Optional[str] | The display name set by the user |
-| is_bot | bool | Whether the user is a bot |
-| is_admin | bool | Whether the user has admin privileges |
-| is_owner | bool | Whether the user is an owner of the workspace |
-| is_primary_owner | bool | Whether the user is the primary owner of the workspace |
-| is_restricted | bool | Whether the user is a restricted user (guest) |
-| is_ultra_restricted | bool | Whether the user is an ultra-restricted user (single-channel guest) |
-| updated | Optional[datetime] | Timestamp when the user profile was last updated |
-
-</Accordion>
 <Accordion title="SlackMessageEntity">
 
-Schema for Slack message entities.
+Schema for Slack message entities from federated search.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| channel_id | str | ID of the channel the message was posted in |
-| user_id | Optional[str] | ID of the user who sent the message |
-| text | Optional[str] | The message text content |
-| ts | Optional[str] | Unique timestamp identifier for the message (format: '1664998373.018700') |
-| thread_ts | Optional[str] | Timestamp of the parent message in a thread |
-| team | Optional[str] | Team/workspace ID the message belongs to |
-| attachments | List[Dict] | Legacy message attachments |
-| blocks | List[Dict] | Block Kit blocks in the message |
-| files | List[Dict] | Files attached to the message |
-| reactions | List[Dict] | Emoji reactions added to the message |
-| is_bot | bool | Whether the message was sent by a bot |
-| subtype | Optional[str] | Message subtype for special messages (like joins, leaves) |
-| edited | Optional[Dict] | Information about message edits including timestamp and user |
+| text | str | The text content of the message |
+| user | Optional[str] | User ID of the message author |
+| username | Optional[str] | Username of the message author |
+| ts | str | Message timestamp (unique identifier) |
+| channel_id | str | ID of the channel containing this message |
+| channel_name | Optional[str] | Name of the channel |
+| channel_is_private | Optional[bool] | Whether the channel is private |
+| type | str | Type of the message |
+| permalink | Optional[str] | Permalink to the message in Slack |
+| team | Optional[str] | Team/workspace ID |
+| previous_message | Optional[Dict[str, Any]] | Previous message for context |
+| next_message | Optional[Dict[str, Any]] | Next message for context |
+| score | Optional[float] | Search relevance score from Slack |
+| iid | Optional[str] | Internal search ID |
+| created_at | Optional[datetime] | When the message was created |
 
 </Accordion>
 
@@ -132,43 +76,79 @@ Schema for Slack message entities.
 
 -------
 
-# Integrate with Slack on localhost
+# Federated Search
 
-This guide will walk you through connecting your Slack workspace to Airweave when run locally. Slack does not allow OAuth2 flows for `http://localhost`, so this is a workaround.
+<Callout intent="info">
+**Real-Time Search Without Syncing**
+
+The Slack connector uses **federated search** to query your Slack workspace in real-time at search time, rather than syncing all messages into Airweave's database. This approach:
+- Avoids hitting Slack's strict rate limits
+- Keeps your data in Slack (nothing synced to Airweave)
+- Returns fresh, up-to-date results at query time
+- Searches across all channels you have access to
+
+When you search in Airweave, your query is automatically sent to Slack's search API, and results are merged with data from your other connected sources.
+</Callout>
+
+## How It Works
+
+1. **Connect your Slack workspace** using OAuth (one-time setup)
+2. **Search in Airweave** - your queries are automatically sent to Slack's search API in real-time
+3. **Results are merged** with data from your other sources using intelligent ranking
+
+No data is synced or stored in Airweave - everything happens at search time.
 
 ## Prerequisites
 
 - Access to a Slack workspace where you have permissions to add apps
 - Administrator access to your Airweave instance
 
-## Steps to Connect
+## Setup Steps
 
-### 1. Create a Slack App
+### Option A: Production Setup (OAuth Flow)
+
+When running Airweave in production (non-localhost), simply:
+
+1. Navigate to your Airweave collection
+2. Click "Add Source" and select "Slack"
+3. Follow the OAuth flow to authorize Airweave
+4. That's it! Your Slack workspace is now searchable
+
+The OAuth flow will request the `search:read` user scope, which allows Airweave to search on your behalf.
+
+### Option B: Local Development Setup (Manual Token)
+
+Slack does not allow OAuth2 flows for `http://localhost`, so for local development you'll need to manually create a token.
+
+#### 1. Create a Slack App
 
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps)
 2. Click the "Create New App" button
 3. Choose "From scratch"
-4. Enter a name for your app (e.g., "Airweave")
+4. Enter a name for your app (e.g., "Airweave Local Dev")
 5. Select the workspace you want to connect
-6. Click "Create App"'
+6. Click "Create App"
 
 <img src="create-app.png" alt="Create app in Slack" width="600" />
 
-### 2. Configure OAuth Permissions
+#### 2. Configure OAuth Permissions
 
 1. In your Slack app settings, navigate to "OAuth & Permissions" in the sidebar
 2. Scroll down to the "Scopes" section
-3. Under "User Token Scopes", add the following scopes:
-   - `channels:history`
-   - `channels:read`
-   - `groups:read`
-   - `im:read`
-   - `mpim:read`
-   - `users:read`
+3. Under "User Token Scopes", add the following scope:
+   - `search:read` (required for federated search)
 
   <img src="user-token-scopes.png" alt="User Token Scopes" width="600" />
 
-### 3. Install the App to Your Workspace
+<Callout intent="warning">
+**Scope Requirements**
+
+For federated search, you only need the `search:read` user scope. This allows Airweave to search Slack on your behalf at query time.
+
+If you see scopes like `channels:history`, `channels:read`, `users:read` in older documentation, those were for the legacy sync-based approach and are no longer needed.
+</Callout>
+
+#### 3. Install the App to Your Workspace
 
 1. Scroll back to the top of the "OAuth & Permissions" page
 2. Click the **Install to Workspace** button
@@ -178,22 +158,22 @@ This guide will walk you through connecting your Slack workspace to Airweave whe
 
 <img src="oauth2-token.png" alt="OAuth2 User token in Slack" width="600" />
 
-### 4. Add the Token to Airweave
+#### 4. Add the Token to Airweave
 
 1. In your Airweave application, navigate to the integrations section
 2. Select "Slack" from the available integrations
-3. Paste the Bot User OAuth Token you copied in the previous step
-4. Complete any additional configuration required by Airweave
+3. Choose "Direct Token Injection"
+4. Paste the User OAuth Token you copied in the previous step
 5. Save your changes
 
 <img src="add-token-in-airweave.png" alt="Add Slack token in Airweave" width="600" />
 
 ## Verification
 
-After completing these steps, Airweave should be connected to your Slack workspace. You can verify this by checking the status of the integration in Airweave's dashboard.
+After completing these steps, try searching in your Airweave collection. Your search query will be automatically sent to Slack, and relevant messages will appear in your search results alongside data from your other sources.
 
 ## Troubleshooting
 
-- If you encounter permission errors, ensure you've added all required scopes to your Slack app
-- If the connection fails, verify that the token was copied correctly and hasn't expired
-- For workspace connection issues, ensure you have the appropriate admin permissions in your Slack workspace
+- **No Slack results appearing**: Verify the token was copied correctly and hasn't expired
+- **Permission errors**: Ensure you've added the `search:read` user scope to your Slack app
+- **Authentication failed**: Try regenerating the token in Slack and updating it in Airweave

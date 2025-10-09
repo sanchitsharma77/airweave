@@ -63,6 +63,8 @@ class CollectionService:
         # Create Qdrant destination with organization context
         # Vector size is auto-detected based on embedding model configuration
         qdrant_destination = await QdrantDestination.create(
+            credentials=None,  # Native Qdrant uses settings
+            config=None,
             collection_id=collection.id,
             organization_id=ctx.organization.id,
             logger=ctx.logger,

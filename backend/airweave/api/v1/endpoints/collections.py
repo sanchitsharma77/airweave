@@ -140,6 +140,8 @@ async def delete(
         from airweave.platform.destinations.qdrant import QdrantDestination
 
         destination = await QdrantDestination.create(
+            credentials=None,  # Native Qdrant uses settings
+            config=None,
             collection_id=db_obj.id,
             organization_id=db_obj.organization_id,
             # vector_size auto-detected based on embedding model configuration

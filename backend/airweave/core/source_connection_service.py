@@ -683,6 +683,7 @@ class SourceConnectionService:
         import secrets
 
         state = secrets.token_urlsafe(24)
+
         api_callback = f"{core_settings.api_url}/source-connections/callback"
 
         # Use custom consumer credentials if provided (BYOC), otherwise platform defaults
@@ -827,6 +828,7 @@ class SourceConnectionService:
         import secrets
 
         state = secrets.token_urlsafe(24)
+
         api_callback = f"{core_settings.api_url}/source-connections/callback"
 
         # Use custom client if provided
@@ -1220,6 +1222,15 @@ class SourceConnectionService:
         Returns:
             Tuple of (sync_id, sync_schema, sync_job_schema) where schemas may be None
         """
+        # Check if this is a federated search source - these don't need syncs
+        source_class = self._get_source_class(source.class_name)
+        if getattr(source_class, "_federated_search", False):
+            ctx.logger.info(
+                f"Skipping sync creation for federated search source '{source.short_name}'. "
+                "Federated search sources are searched at query time."
+            )
+            return None, None, None
+
         # Determine schedule based on source type and input
         cron_schedule = self._determine_schedule_for_source(obj_in, source, ctx)
 

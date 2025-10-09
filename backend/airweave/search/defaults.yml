@@ -114,3 +114,14 @@ operation_preferences:
         llm: llm_small
         embedding: null
         rerank: null
+
+  federated_search:
+    order:
+      - provider: groq
+        llm: llm_big
+        embedding: null
+        rerank: null
+      - provider: openai
+        llm: llm_small
+        embedding: null
+        rerank: null

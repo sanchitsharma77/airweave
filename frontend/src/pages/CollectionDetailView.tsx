@@ -212,6 +212,7 @@ interface SourceConnection {
     last_sync_job_started_at?: string;
     last_sync_job_completed_at?: string;
     cron_schedule?: string;
+    federated_search?: boolean;  // Whether this source uses federated search
 }
 
 const Collections = () => {
@@ -692,38 +693,64 @@ const Collections = () => {
 
     // Get connection status indicator based on connection state
     const getConnectionStatusIndicator = (connection: SourceConnection) => {
+        // Detect federated sources based on the federated_search field
+        const isFederated = connection.federated_search === true;
+
         // Use the connection's status directly from the API response
         let colorClass = "bg-gray-400";
         let status = "unknown";
         let isAnimated = false;
 
-        // Map the backend SourceConnectionStatus enum values
-        switch (connection.status) {
-            case 'pending_auth':
-                colorClass = "bg-cyan-500";
-                status = "Authentication required";
-                break;
-            case 'syncing':
-                colorClass = "bg-blue-500";
-                status = "Syncing";
-                isAnimated = true;
-                break;
-            case 'error':
-                colorClass = "bg-red-500";
-                status = "Sync failed";
-                break;
-            case 'active':
-                colorClass = "bg-green-500";
-                status = "Active";
-                break;
-            case 'inactive':
-                colorClass = "bg-gray-400";
-                status = "Inactive";
-                break;
-            default:
-                // Fallback for unknown status
-                colorClass = "bg-gray-400";
-                status = "Unknown";
+        // Federated sources have simpler status logic
+        if (isFederated) {
+            switch (connection.status) {
+                case 'pending_auth':
+                    colorClass = "bg-cyan-500";
+                    status = "Authentication required";
+                    break;
+                case 'error':
+                    colorClass = "bg-red-500";
+                    status = "Connection error";
+                    break;
+                case 'inactive':
+                    colorClass = "bg-gray-400";
+                    status = "Inactive";
+                    break;
+                case 'active':
+                default:
+                    colorClass = "bg-green-500";
+                    status = "Ready for real-time search";
+                    break;
+            }
+        } else {
+            // Map the backend SourceConnectionStatus enum values for regular sources
+            switch (connection.status) {
+                case 'pending_auth':
+                    colorClass = "bg-cyan-500";
+                    status = "Authentication required";
+                    break;
+                case 'syncing':
+                    colorClass = "bg-blue-500";
+                    status = "Syncing";
+                    isAnimated = true;
+                    break;
+                case 'error':
+                    colorClass = "bg-red-500";
+                    status = "Sync failed";
+                    break;
+                case 'active':
+                    colorClass = "bg-green-500";
+                    status = "Active";
+                    break;
+                case 'inactive':
+                    colorClass = "bg-gray-400";
+                    status = "Inactive";
+                    break;
+                default:
+                    // Fallback for unknown status
+                    colorClass = "bg-gray-400";
+                    status = "Unknown";
+            }
         }
 
         return (

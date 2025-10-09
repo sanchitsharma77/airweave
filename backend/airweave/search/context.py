@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from airweave.search.emitter import EventEmitter
     from airweave.search.operations import (
         EmbedQuery,
+        FederatedSearch,
         GenerateAnswer,
         QueryExpansion,
         QueryInterpretation,
@@ -31,6 +32,9 @@ class SearchContext(BaseModel):
     readable_collection_id: str = Field()
     stream: bool = Field()
     vector_size: int = Field()
+    # Pagination config available even if Retrieval operation is disabled
+    offset: int = Field()
+    limit: int = Field()
 
     query: str = Field()
 
@@ -38,9 +42,10 @@ class SearchContext(BaseModel):
 
     query_expansion: Optional[QueryExpansion] = Field()
     query_interpretation: Optional[QueryInterpretation] = Field()
-    embed_query: EmbedQuery = Field()
+    embed_query: Optional[EmbedQuery] = Field()
     user_filter: Optional[UserFilter] = Field()
     temporal_relevance: Optional[TemporalRelevance] = Field()
-    retrieval: Retrieval = Field()
+    retrieval: Optional[Retrieval] = Field()
+    federated_search: Optional[FederatedSearch] = Field()
     reranking: Optional[Reranking] = Field()
     generate_answer: Optional[GenerateAnswer] = Field()

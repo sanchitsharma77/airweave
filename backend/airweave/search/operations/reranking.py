@@ -32,8 +32,8 @@ class Reranking(SearchOperation):
         self.provider = provider
 
     def depends_on(self) -> List[str]:
-        """Depends on retrieval to have results to rerank."""
-        return ["Retrieval"]
+        """Depends on Retrieval and FederatedSearch (if enabled) to have all results merged."""
+        return ["Retrieval", "FederatedSearch"]
 
     async def execute(
         self,
@@ -47,16 +47,18 @@ class Reranking(SearchOperation):
         results = state.get("results")
 
         if results is None:
-            raise RuntimeError("Reranking requires 'results' in state from Retrieval operation")
+            raise RuntimeError(
+                "Reranking requires results produced by Retrieval or FederatedSearch"
+            )
         if not isinstance(results, list):
             raise ValueError(f"Expected 'results' to be a list, got {type(results)}")
         if len(results) == 0:
             state["results"] = []
             return
 
-        # Get offset and limit from retrieval operation
-        offset = context.retrieval.offset
-        limit = context.retrieval.limit
+        # Get offset and limit from retrieval operation if present, otherwise from context
+        offset = context.retrieval.offset if context.retrieval else context.offset
+        limit = context.retrieval.limit if context.retrieval else context.limit
 
         documents, top_n = self._prepare_inputs(context, results, ctx)
 
@@ -129,8 +131,8 @@ class Reranking(SearchOperation):
 
         documents = self._prepare_documents(results_to_rerank)
 
-        offset = context.retrieval.offset
-        limit = context.retrieval.limit
+        offset = context.retrieval.offset if context.retrieval else context.offset
+        limit = context.retrieval.limit if context.retrieval else context.limit
         top_n = min(len(documents), offset + limit)
 
         if top_n < 1:

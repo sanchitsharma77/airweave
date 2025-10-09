@@ -460,6 +460,23 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
 
         for (let i = 0; i < src.length; i++) {
             const event = src[i] as any;
+            // Operation skipped notices (backend emits for Qdrant-only ops when no vector sources)
+            if (event.type === 'operation_skipped') {
+                const op = (event as any).operation || 'operation';
+                const reason = (event as any).reason || 'skipped';
+                rows.push(
+                    <div key={`skipped-${i}`} className="py-0.5 px-2 text-[11px] opacity-80">
+                        Skipped {op} ({reason})
+                    </div>
+                );
+                rows.push(
+                    <div key={`skipped-${i}-separator`} className="py-1">
+                        <div className="mx-2 border-t border-border/30"></div>
+                    </div>
+                );
+                continue;
+            }
+
 
             if (event.type === 'operator_start' && event.op === 'qdrant_filter') {
                 let filterData = null;
@@ -734,6 +751,103 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 continue;
             }
 
+            if (event.type === 'operator_start' && event.op === 'federated_search') {
+                const federatedSearchData = {
+                    numSources: 0,
+                    sourceNames: [] as string[],
+                    numQueries: 1,
+                    numKeywords: 0,
+                    keywords: [] as string[],
+                    federatedCount: 0,
+                    vectorCount: 0,
+                    mergedCount: 0,
+                    noResults: false
+                };
+                let j = i + 1;
+                while (j < src.length && (src[j] as any).type !== 'operator_end') {
+                    const nextEvent = src[j] as any;
+                    if (nextEvent.type === 'federated_search_start') {
+                        federatedSearchData.numSources = nextEvent.num_sources || 0;
+                        federatedSearchData.sourceNames = nextEvent.source_names || [];
+                        federatedSearchData.numQueries = nextEvent.num_queries || 1;
+                        federatedSearchData.numKeywords = nextEvent.num_keywords || 0;
+                        federatedSearchData.keywords = nextEvent.keywords || [];
+                    } else if (nextEvent.type === 'federated_search_done') {
+                        federatedSearchData.federatedCount = nextEvent.federated_count || 0;
+                        federatedSearchData.vectorCount = nextEvent.vector_count || 0;
+                        federatedSearchData.mergedCount = nextEvent.merged_count || 0;
+                    } else if (nextEvent.type === 'federated_search_no_results') {
+                        federatedSearchData.noResults = true;
+                        federatedSearchData.vectorCount = nextEvent.vector_count || 0;
+                    }
+                    j++;
+                }
+
+                const key = `federated-${i}`;
+                rows.push(
+                    <div key={`${key}-start`} className="px-2 py-1 text-[11px] flex items-center gap-1.5">
+                        <FiSliders className="h-3 w-3 opacity-80" />
+                        <span className="opacity-90">Federated Search</span>
+                        <span className={cn(
+                            "ml-1 px-1 py-0 rounded text-[10px]",
+                            isDark ? "bg-gray-800 text-gray-300" : "bg-gray-100 text-gray-700"
+                        )}>{federatedSearchData.sourceNames.join(', ')}</span>
+                        {federatedSearchData.numQueries > 1 && (
+                            <span className={cn(
+                                "ml-1 px-1 py-0 rounded text-[10px]",
+                                isDark ? "bg-blue-900/40 text-blue-300" : "bg-blue-100 text-blue-700"
+                            )}>{federatedSearchData.numQueries} queries</span>
+                        )}
+                    </div>
+                );
+
+                // Show extracted keywords
+                if (federatedSearchData.keywords.length > 0) {
+                    rows.push(
+                        <div key={`${key}-keywords-header`} className="py-0.5 px-2 text-[11px] opacity-90">
+                            Searching with {federatedSearchData.numKeywords} keyword{federatedSearchData.numKeywords !== 1 ? 's' : ''}:
+                        </div>
+                    );
+                    federatedSearchData.keywords.forEach((keyword, idx) => {
+                        rows.push(
+                            <div key={`${key}-keyword-${idx}`} className="py-0.5 px-2 pl-4 text-[11px] opacity-80">
+                                • {keyword}
+                            </div>
+                        );
+                    });
+                }
+
+                if (federatedSearchData.noResults) {
+                    rows.push(
+                        <div key={`${key}-no-results`} className="py-0.5 px-2 text-[11px] opacity-80">
+                            No results from federated sources
+                        </div>
+                    );
+                } else if (federatedSearchData.mergedCount > 0) {
+                    rows.push(
+                        <div key={`${key}-merged`} className="py-0.5 px-2 text-[11px] opacity-80">
+                            Merged {federatedSearchData.federatedCount} federated + {federatedSearchData.vectorCount} vector = {federatedSearchData.mergedCount} results
+                        </div>
+                    );
+                }
+
+                rows.push(
+                    <div key={`${key}-end`} className="py-0.5 px-2 text-[11px] opacity-70">
+                        Federated search complete
+                    </div>
+                );
+                rows.push(
+                    <div key={`${key}-separator`} className="py-1">
+                        <div className="mx-2 border-t border-border/30"></div>
+                    </div>
+                );
+
+                while (i < src.length && !((src[i] as any).type === 'operator_end' && (src[i] as any).op === 'federated_search')) {
+                    i++;
+                }
+                continue;
+            }
+
             if (event.type === 'operator_start' && event.op === 'vector_search') {
                 const vectorSearchData = {
                     method: null as string | null,
@@ -792,10 +906,10 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 if (vectorSearchData.noResults) {
                     // Special message for zero results
                     const noResultsMessage = vectorSearchData.hasFilter
-                        ? "No documents match the search query and applied filters"
-                        : "No documents match the search query";
+                        ? "No documents in the database match the search query and applied filters"
+                        : "No documents in the database match the search query";
                     rows.push(
-                        <div key={`${key}-no-results`} className="py-0.5 px-2 text-[11px] text-amber-500">
+                        <div key={`${key}-no-results`} className="py-0.5 px-2 text-[11px] opacity-80">
                             {noResultsMessage}
                         </div>
                     );

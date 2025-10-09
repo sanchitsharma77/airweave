@@ -498,6 +498,7 @@ async def _sync_sources(
             output_entity_definition_ids=output_entity_ids,
             labels=getattr(source_class, "_labels", []),
             supports_continuous=getattr(source_class, "_supports_continuous", False),
+            federated_search=getattr(source_class, "_federated_search", False),
         )
         source_definitions.append(source_def)
 
@@ -521,7 +522,7 @@ async def _sync_destinations(db: AsyncSession, destinations: list[Type[BaseDesti
             description=dest_class.__doc__,
             short_name=dest_class._short_name,
             class_name=dest_class.__name__,
-            auth_config_class=getattr(dest_class, "_auth_config_class", None),
+            auth_config_class=getattr(dest_class._auth_config_class, "__name__", None),
             labels=getattr(dest_class, "_labels", []),
         )
         destination_definitions.append(dest_def)

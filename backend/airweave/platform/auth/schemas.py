@@ -85,7 +85,8 @@ class OAuth2Settings(BaseAuthSettings):
         content_type (str): The content type.
         client_credential_location (str): The client credential location.
         additional_frontend_params (Optional[dict[str, str]]): Additional frontend params.
-        scope (Optional[str]): The scope.
+        scope (Optional[str]): The scope for bot tokens (OAuth2).
+        user_scope (Optional[str]): The scope for user tokens (OAuth2, used by Slack).
         url_template (bool): Whether url contains template variables (default: False).
         backend_url_template (bool): Whether backend_url has templates (default: False).
         requires_pkce (bool): Whether this OAuth provider requires PKCE
@@ -105,6 +106,7 @@ class OAuth2Settings(BaseAuthSettings):
     client_credential_location: str
     additional_frontend_params: Optional[dict[str, str]] = None
     scope: Optional[str] = None
+    user_scope: Optional[str] = None
     requires_pkce: bool = False
 
     # Template support for instance-specific OAuth URLs

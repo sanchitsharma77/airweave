@@ -19,6 +19,7 @@ def source(
     config_class: Optional[Type[BaseModel]] = None,
     labels: Optional[List[str]] = None,
     supports_continuous: bool = False,
+    federated_search: bool = False,
 ) -> Callable[[type], type]:
     """Enhanced source decorator with OAuth type tracking.
 
@@ -32,6 +33,7 @@ def source(
         config_class: Pydantic model for source configuration
         labels: Tags for categorization (e.g., "CRM", "Database")
         supports_continuous: Whether source supports cursor-based continuous syncing (default False)
+        federated_search: Whether source uses federated search instead of syncing (default False)
 
     Example:
         # OAuth source (no auth config)
@@ -69,6 +71,7 @@ def source(
         cls._config_class = config_class
         cls._labels = labels or []
         cls._supports_continuous = supports_continuous
+        cls._federated_search = federated_search
 
         # Add validation method if not present
         if not hasattr(cls, "validate"):
@@ -87,19 +90,20 @@ def source(
 def destination(
     name: str,
     short_name: str,
+    auth_config_class: Optional[Type[BaseModel]] = None,
     config_class: Optional[Type[BaseModel]] = None,
     supports_upsert: bool = True,
     supports_delete: bool = True,
     supports_vector: bool = False,
     max_batch_size: int = 1000,
 ) -> Callable[[type], type]:
-    """Decorator for destination connectors.
+    """Decorator for destination connectors with separated auth and config.
 
     Args:
         name: Display name for the destination
         short_name: Unique identifier for the destination type
-        config_class: Pydantic model for destination configuration
-        labels: Tags for categorization
+        auth_config_class: Pydantic model for authentication credentials (secrets)
+        config_class: Pydantic model for destination configuration (parameters)
         supports_upsert: Whether destination supports upsert operations
         supports_delete: Whether destination supports delete operations
         supports_vector: Whether destination supports vector storage
@@ -110,6 +114,7 @@ def destination(
         cls._is_destination = True
         cls._name = name
         cls._short_name = short_name
+        cls._auth_config_class = auth_config_class
         cls._config_class = config_class
 
         # Capability metadata

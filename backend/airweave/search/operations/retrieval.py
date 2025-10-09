@@ -45,6 +45,13 @@ class Retrieval(SearchOperation):
         filter_dict = state.get("filter")
         decay_config = state.get("decay_config")
 
+        # Ensure we have at least one type of embedding
+        if dense_embeddings is None and sparse_embeddings is None:
+            raise RuntimeError(
+                "Retrieval requires embeddings. Ensure EmbedQuery ran or disable Retrieval "
+                "for federated-only collections."
+            )
+
         # Determine search method from strategy
         search_method = self._get_search_method()
 
@@ -61,9 +68,10 @@ class Retrieval(SearchOperation):
             op_name=self.__class__.__name__,
         )
 
-        # Connect to Qdrant
         destination = await QdrantDestination.create(
-            collection_id=context.collection_id, vector_size=context.vector_size, logger=None
+            collection_id=context.collection_id,
+            vector_size=context.vector_size,
+            logger=ctx.logger,
         )
 
         has_reranking = context.reranking is not None

@@ -26,8 +26,8 @@ class GenerateAnswer(SearchOperation):
         self.provider = provider
 
     def depends_on(self) -> List[str]:
-        """Depends on retrieval and reranking to have results."""
-        return ["Retrieval", "Reranking"]
+        """Depends on Retrieval, FederatedSearch (if enabled), and Reranking to have all results."""
+        return ["Retrieval", "FederatedSearch", "Reranking"]
 
     async def execute(
         self,
