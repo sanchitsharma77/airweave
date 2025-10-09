@@ -5689,6 +5689,12 @@
             "description": "Whether this source supports cursor-based continuous syncing for incremental data extraction. Sources with this capability can track their sync position and resume from where they left off.",
             "default": false
           },
+          "federated_search": {
+            "type": "boolean",
+            "title": "Federated Search",
+            "description": "Whether this source uses federated search instead of traditional syncing. Federated search sources query data in real-time during searches rather than syncing and indexing all data beforehand.",
+            "default": false
+          },
           "id": {
             "type": "string",
             "format": "uuid",
@@ -5919,6 +5925,19 @@
               }
             ]
           },
+          "sync_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Id",
+            "description": "ID of the associated sync"
+          },
           "entities": {
             "anyOf": [
               {
@@ -5928,6 +5947,12 @@
                 "type": "null"
               }
             ]
+          },
+          "federated_search": {
+            "type": "boolean",
+            "title": "Federated Search",
+            "description": "Whether this source uses federated search",
+            "default": false
           }
         },
         "type": "object",
@@ -6201,6 +6226,12 @@
             "type": "integer",
             "title": "Entity Count",
             "default": 0
+          },
+          "federated_search": {
+            "type": "boolean",
+            "title": "Federated Search",
+            "description": "Whether this source uses federated search",
+            "default": false
           },
           "auth_method": {
             "$ref": "#/components/schemas/AuthenticationMethod",

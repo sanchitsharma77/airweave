@@ -7,28 +7,18 @@ description: "Slack integration with Airweave"
 
 
 
-<div className="connector-header">
-  <img src="icon.svg" alt="Slack logo" width="72" height="72" className="connector-icon" />
-  <div className="connector-info">
-    <h1>Slack</h1>
-    <p>Connect your Slack data to Airweave</p>
-  </div>
+<div className="connector-header" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+  <img src="icon.svg" alt="Slack logo" width="48" height="48" className="connector-icon" />
+  <h1 style={{ margin: 0 }}>Slack</h1>
 </div>
-
-## Overview
-
-The Slack connector allows you to sync data from Slack into Airweave, making it available for search and retrieval by your agents.
 
 ## Configuration
 
+Slack source connector using federated search.
 
-### SlackSource
-
-Slack source implementation.
-
-This connector retrieves data from Slack such as Channels, Users, and Messages,
-then yields them as entities using their respective Slack entity schemas.
-
+Instead of syncing all messages and files, this source searches Slack at query time
+using the search.all API endpoint. This is necessary because Slack's rate limits
+are too restrictive for full synchronization.
 
 <Card
   title="View Source Code"
@@ -40,88 +30,42 @@ then yields them as entities using their respective Slack entity schemas.
 
 ### Authentication
 
-This connector uses **OAuth 2.0 authentication flow**.
+This connector uses **OAuth 2.0 authentication**. You can connect through the Airweave UI or API using the OAuth flow.
 
-<Card
-  title="Authentication Configuration"
-  className="auth-config-card"
-  style={{ backgroundColor: 'rgba(0, 0, 0, 0.1)', padding: '16px', marginBottom: '24px' }}
->
+**Supported authentication methods:**
+- OAuth Browser Flow (recommended for UI)
+- OAuth Token (for programmatic access)
+- Auth Provider (enterprise SSO)
 
-Slack authentication credentials schema.
-<ParamField
-  path="access_token"
-  type="str"
-  required={true}
->
-  The access token for your Slack app.
-</ParamField>
-</Card>
+### Configuration Options
 
+This connector does not have any additional configuration options.
 
-## Entities
+## Data Models
 
 The following data models are available for this connector:
 
-<Accordion title="SlackChannelEntity">
-
-Schema for Slack channel entities.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| channel_id | str | Unique identifier for the channel |
-| name | Optional[str] | Human-readable name of the channel |
-| is_channel | bool | Whether this is a public channel |
-| is_group | bool | Whether this is a private channel/group |
-| is_im | bool | Whether this is a direct message (IM) |
-| is_mpim | bool | Whether this is a multi-person direct message |
-| is_archived | bool | Whether the channel has been archived |
-| created | Optional[datetime] | Timestamp when the channel was created |
-| creator | Optional[str] | User ID of the channel creator |
-| members | List[str] | List of user IDs who are members of this channel |
-| topic | Optional[Dict] | Information about the channel topic including value and creator |
-| purpose | Optional[Dict] | Information about the channel purpose including value and creator |
-
-</Accordion>
-<Accordion title="SlackUserEntity">
-
-Schema for Slack user entities.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| user_id | str | Unique identifier for the user |
-| team_id | Optional[str] | Identifier for the team/workspace the user belongs to |
-| name | Optional[str] | The username/handle of the user |
-| real_name | Optional[str] | The user's real/full name |
-| display_name | Optional[str] | The display name set by the user |
-| is_bot | bool | Whether the user is a bot |
-| is_admin | bool | Whether the user has admin privileges |
-| is_owner | bool | Whether the user is an owner of the workspace |
-| is_primary_owner | bool | Whether the user is the primary owner of the workspace |
-| is_restricted | bool | Whether the user is a restricted user (guest) |
-| is_ultra_restricted | bool | Whether the user is an ultra-restricted user (single-channel guest) |
-| updated | Optional[datetime] | Timestamp when the user profile was last updated |
-
-</Accordion>
 <Accordion title="SlackMessageEntity">
 
-Schema for Slack message entities.
+Schema for Slack message entities from federated search.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| channel_id | str | ID of the channel the message was posted in |
-| user_id | Optional[str] | ID of the user who sent the message |
-| text | Optional[str] | The message text content |
-| ts | Optional[str] | Unique timestamp identifier for the message (format: '1664998373.018700') |
-| thread_ts | Optional[str] | Timestamp of the parent message in a thread |
-| team | Optional[str] | Team/workspace ID the message belongs to |
-| attachments | List[Dict] | Legacy message attachments |
-| blocks | List[Dict] | Block Kit blocks in the message |
-| files | List[Dict] | Files attached to the message |
-| reactions | List[Dict] | Emoji reactions added to the message |
-| is_bot | bool | Whether the message was sent by a bot |
-| subtype | Optional[str] | Message subtype for special messages (like joins, leaves) |
-| edited | Optional[Dict] | Information about message edits including timestamp and user |
+| text | str | The text content of the message |
+| user | Optional[str] | User ID of the message author |
+| username | Optional[str] | Username of the message author |
+| ts | str | Message timestamp (unique identifier) |
+| channel_id | str | ID of the channel containing this message |
+| channel_name | Optional[str] | Name of the channel |
+| channel_is_private | Optional[bool] | Whether the channel is private |
+| type | str | Type of the message |
+| permalink | Optional[str] | Permalink to the message in Slack |
+| team | Optional[str] | Team/workspace ID |
+| previous_message | Optional[Dict[str, Any]] | Previous message for context |
+| next_message | Optional[Dict[str, Any]] | Next message for context |
+| score | Optional[float] | Search relevance score from Slack |
+| iid | Optional[str] | Internal search ID |
+| created_at | Optional[datetime] | When the message was created |
 
 </Accordion>
 

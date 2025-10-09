@@ -97,6 +97,8 @@ navigation:
       path: docs/pages/connectors/salesforce/main.mdx
     - page: Sharepoint
       path: docs/pages/connectors/sharepoint/main.mdx
+    - page: Slack
+      path: docs/pages/connectors/slack/main.mdx
     - page: Stripe
       path: docs/pages/connectors/stripe/main.mdx
     - page: Teams
