@@ -366,6 +366,7 @@ const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
 
     return (
         <div
+            data-entity-id={entityId}
             className={cn(
                 "group relative rounded-xl transition-all duration-300 overflow-hidden raw-data-scrollbar",
                 isDark

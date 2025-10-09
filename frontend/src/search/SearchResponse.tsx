@@ -128,9 +128,10 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
     const syntaxStyle = useMemo(() => isDark ? materialOceanic : oneLight, [isDark]);
 
     // Create a mapping of entity IDs to source names and numbers
-    const entitySourceMap = useMemo(() => {
+    // ALSO create a mapping of result numbers to entity IDs (for LLM citations that use numbers)
+    const { entitySourceMap, resultNumberMap } = useMemo(() => {
         const map = new Map<string, { source: string; number: number }>();
-        const sourceCounters = new Map<string, number>();
+        const numberMap = new Map<string, string>(); // result number -> entity ID
 
         // Helper function to format source names
         const formatSourceName = (name: string) => {
@@ -140,27 +141,28 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 .join(' ');
         };
 
-        results.forEach((result: any) => {
+        results.forEach((result: any, idx: number) => {
             const payload = result.payload || result;
             const entityId = payload.entity_id || payload.id || payload._id;
             const rawSourceName = payload.airweave_system_metadata?.source_name || payload.source_name || 'Unknown';
             const sourceName = formatSourceName(rawSourceName);
 
             if (entityId) {
-                // Get or create counter for this source
-                let counter = sourceCounters.get(sourceName) || 0;
-                counter++;
-                sourceCounters.set(sourceName, counter);
-
-                // Store the mapping
+                // Store the mapping by entity ID
+                // Use the global result number (1-based), not per-source count
+                const resultNumber = idx + 1;
                 map.set(entityId, {
                     source: sourceName,
-                    number: counter
+                    number: resultNumber
                 });
+
+                // ALSO store mapping by result number string (1-based)
+                // This handles LLM citations like [[1]], [[2]], [[39]], etc.
+                numberMap.set(String(resultNumber), entityId);
             }
         });
 
-        return map;
+        return { entitySourceMap: map, resultNumberMap: numberMap };
     }, [results]);
 
     // Helper functions for tooltip management with delay
@@ -250,6 +252,46 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
         el.scrollTop = el.scrollHeight;
     }, [events?.length, isSearching, traceAutoScroll]);
 
+    // Helper function to scroll to and highlight an entity card
+    const scrollToEntity = useCallback((entityIndex: number, entityId: string) => {
+        if (!jsonViewerRef.current) {
+            return;
+        }
+
+        const container = jsonViewerRef.current;
+
+        // Find the EntityResultCard by its data-entity-id attribute (most reliable)
+        const targetCard = container.querySelector(`[data-entity-id="${entityId}"]`) as HTMLElement;
+
+        if (targetCard) {
+
+            // Scroll the card into view with some offset from top
+            targetCard.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+            });
+
+            // Add highlight effect with border for better visibility
+            const originalBg = targetCard.style.backgroundColor;
+            const originalTransition = targetCard.style.transition;
+            const originalBorder = targetCard.style.border;
+
+            targetCard.style.transition = 'all 0.3s ease';
+            targetCard.style.backgroundColor = isDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.15)';
+            targetCard.style.border = isDark ? '2px solid rgba(59, 130, 246, 0.5)' : '2px solid rgba(59, 130, 246, 0.4)';
+
+            // Remove highlight after 2 seconds
+            setTimeout(() => {
+                targetCard.style.backgroundColor = originalBg;
+                targetCard.style.border = originalBorder;
+                setTimeout(() => {
+                    targetCard.style.transition = originalTransition;
+                }, 300);
+            }, 2000);
+        }
+    }, [isDark]);
+
     // Handle clicking on entity references in completion
     const handleEntityClick = useCallback((entityId: string) => {
         // Switch to entities tab
@@ -257,61 +299,43 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
 
         // Wait for tab switch to complete, then scroll to entity
         setTimeout(() => {
-            if (!jsonViewerRef.current) return;
-
             // Find the entity in the results array
             const entityIndex = results.findIndex((result: any) => {
                 const payload = result.payload || result;
-                return payload.entity_id === entityId ||
+                const found = payload.entity_id === entityId ||
                     payload.id === entityId ||
                     payload._id === entityId;
+
+                return found;
             });
 
             if (entityIndex === -1) {
-                console.warn(`Entity ${entityId} not found in results`);
                 return;
             }
 
-            // Try to find the DOM element for this entity in the JsonViewer
-            // JsonViewer creates elements with data attributes we can query
-            const container = jsonViewerRef.current;
+            // Check if entity is in visible results (pagination issue)
+            if (entityIndex >= visibleResultsCount) {
 
-            // Look for the entity_id field in the JSON viewer
-            // We'll search for text nodes containing the entity ID
-            const walker = document.createTreeWalker(
-                container,
-                NodeFilter.SHOW_TEXT,
-                {
-                    acceptNode: (node) => {
-                        if (node.textContent?.includes(entityId)) {
-                            return NodeFilter.FILTER_ACCEPT;
-                        }
-                        return NodeFilter.FILTER_SKIP;
-                    }
-                }
-            );
+                // Expand visible results to include this entity
+                setVisibleResultsCount(entityIndex + 1);
 
-            const textNode = walker.nextNode();
-            if (textNode && textNode.parentElement) {
-                // Scroll the element into view at the top with some context
-                textNode.parentElement.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start'
+                // Wait for React to render the new results, then scroll
+                // Use multiple animation frames to ensure DOM is fully updated
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            scrollToEntity(entityIndex, entityId);
+                        }, 100);
+                    });
                 });
-
-                // Highlight the element briefly
-                const originalBg = textNode.parentElement.style.backgroundColor;
-                textNode.parentElement.style.backgroundColor = isDark ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.2)';
-                textNode.parentElement.style.transition = 'background-color 0.3s';
-
-                setTimeout(() => {
-                    if (textNode.parentElement) {
-                        textNode.parentElement.style.backgroundColor = originalBg;
-                    }
-                }, 2000);
+            } else {
+                // Entity is already visible, scroll immediately after DOM update
+                requestAnimationFrame(() => {
+                    scrollToEntity(entityIndex, entityId);
+                });
             }
-        }, 100);
-    }, [results, isDark]);
+        }, 150);
+    }, [results, visibleResultsCount, scrollToEntity]);
 
     // (moved guard return below all hooks to satisfy hooks rules)
 
@@ -1591,25 +1615,115 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                                         isDark ? "text-gray-300" : "text-gray-700"
                                                     )} {...props} />
                                                 ),
+                                                a: ({ node, href, children, ...props }) => {
+                                                    // Check if this is a malformed citation
+                                                    // Pattern 1: href like "Result 5" or "5"
+                                                    const hrefPattern = /^(?:Result\s+)?(\d+)$/i;
+                                                    const hrefMatch = href?.match(hrefPattern);
+
+                                                    // Pattern 2: children text like "[Result 75]" or "[5]"
+                                                    // (happens when LLM writes [[Result 75]](url))
+                                                    const childText = typeof children === 'string' ? children : '';
+                                                    const childPattern = /^\[(?:Result\s+)?(\d+)\]$/i;
+                                                    const childMatch = childText.match(childPattern);
+
+                                                    // Extract result number from either pattern
+                                                    const resultNumber = hrefMatch?.[1] || childMatch?.[1];
+
+                                                    if (resultNumber) {
+                                                        // This is a citation, render as button (ignoring the URL)
+                                                        const mappedId = resultNumberMap.get(resultNumber);
+                                                        const resolvedEntityId = mappedId || resultNumber;
+                                                        const sourceInfo = entitySourceMap.get(resolvedEntityId);
+
+                                                        const displayText = sourceInfo
+                                                            ? `${sourceInfo.source} [${sourceInfo.number}]`
+                                                            : `[${resultNumber}]`;
+
+                                                        const tooltipText = sourceInfo
+                                                            ? `Click to view ${sourceInfo.source} entity #${sourceInfo.number} in the Entities tab`
+                                                            : `Click to view entity: ${resultNumber}`;
+
+                                                        return (
+                                                            <button
+                                                                onClick={() => handleEntityClick(resolvedEntityId)}
+                                                                className={cn(
+                                                                    "inline-flex items-center gap-0.5 px-1 py-0.5 rounded-md text-[11px] font-medium",
+                                                                    "transition-colors cursor-pointer",
+                                                                    isDark
+                                                                        ? "bg-blue-950/50 text-blue-300 hover:bg-blue-900/70 hover:text-blue-200"
+                                                                        : "bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700",
+                                                                    "border",
+                                                                    isDark ? "border-blue-800/50" : "border-blue-200"
+                                                                )}
+                                                                title={tooltipText}
+                                                            >
+                                                                {displayText}
+                                                            </button>
+                                                        );
+                                                    }
+
+                                                    // Regular link - render normally
+                                                    return (
+                                                        <a
+                                                            href={href}
+                                                            className={cn(
+                                                                "underline",
+                                                                isDark ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"
+                                                            )}
+                                                            {...props}
+                                                        >
+                                                            {children}
+                                                        </a>
+                                                    );
+                                                },
                                                 li: ({ children, ...props }) => {
-                                                    // Process list item content to replace [[entity_id]] with clickable links
+                                                    // Process list item content to replace citations with clickable links
                                                     const processedChildren = React.Children.map(children, (child) => {
                                                         if (typeof child === 'string') {
-                                                            // Split by entity reference pattern [[entity_id]]
-                                                            const parts = child.split(/(\[\[[^\]]+\]\])/g);
+                                                            // Split by citation patterns: [[...]] or 【...】
+                                                            const parts = child.split(/(\[\[[^\]]+\]\]|【[^】]+】)/g);
                                                             return parts.map((part, index) => {
-                                                                const match = part.match(/^\[\[([^\]]+)\]\]$/);
+                                                                // Match either [[...]] or 【...】
+                                                                const match = part.match(/^(?:\[\[([^\]]+)\]\]|【([^】]+)】)$/);
                                                                 if (match) {
-                                                                    const entityId = match[1];
-                                                                    const sourceInfo = entitySourceMap.get(entityId);
+                                                                    // Extract citation content (from either capture group)
+                                                                    let citationRef = match[1] || match[2];
+
+                                                                    // Handle "Results 36-37" or "Result 5" format
+                                                                    // Extract just the numbers
+                                                                    const numbersMatch = citationRef.match(/(\d+)(?:[-–‑](\d+))?/);
+                                                                    if (numbersMatch) {
+                                                                        // For ranges like "36-37", use the first number
+                                                                        citationRef = numbersMatch[1];
+                                                                    }
+
+                                                                    // Try to resolve citation ref to entity ID
+                                                                    // LLM might cite by result number (e.g., [[39]]) or by UUID
+                                                                    let resolvedEntityId = citationRef;
+
+                                                                    // Check if this is a result number citation (e.g., "39", "1", "100")
+                                                                    if (/^\d+$/.test(citationRef)) {
+                                                                        const mappedId = resultNumberMap.get(citationRef);
+                                                                        if (mappedId) {
+                                                                            resolvedEntityId = mappedId;
+                                                                        }
+                                                                    }
+
+                                                                    const sourceInfo = entitySourceMap.get(resolvedEntityId);
+
                                                                     const displayText = sourceInfo
                                                                         ? `${sourceInfo.source} [${sourceInfo.number}]`
-                                                                        : entityId;
+                                                                        : citationRef;
+
+                                                                    const tooltipText = sourceInfo
+                                                                        ? `Click to view ${sourceInfo.source} entity #${sourceInfo.number} in the Entities tab`
+                                                                        : `Click to view entity: ${citationRef}`;
 
                                                                     return (
                                                                         <button
                                                                             key={index}
-                                                                            onClick={() => handleEntityClick(entityId)}
+                                                                            onClick={() => handleEntityClick(resolvedEntityId)}
                                                                             className={cn(
                                                                                 "inline-flex items-center gap-0.5 px-1 py-0.5 rounded-md text-[11px] font-medium",
                                                                                 "transition-colors cursor-pointer",
@@ -1619,7 +1733,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                                                                 "border",
                                                                                 isDark ? "border-blue-800/50" : "border-blue-200"
                                                                             )}
-                                                                            title={`View in Entities tab`}
+                                                                            title={tooltipText}
                                                                         >
                                                                             {displayText}
                                                                         </button>
@@ -1633,24 +1747,52 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                                     return <li className="my-0.5" {...props}>{processedChildren}</li>;
                                                 },
                                                 p: ({ children, ...props }) => {
-                                                    // Process paragraph content to replace [[entity_id]] with clickable links
+                                                    // Process paragraph content to replace citations with clickable links
                                                     const processedChildren = React.Children.map(children, (child) => {
                                                         if (typeof child === 'string') {
-                                                            // Split by entity reference pattern [[entity_id]]
-                                                            const parts = child.split(/(\[\[[^\]]+\]\])/g);
+                                                            // Split by citation patterns: [[...]] or 【...】
+                                                            const parts = child.split(/(\[\[[^\]]+\]\]|【[^】]+】)/g);
                                                             return parts.map((part, index) => {
-                                                                const match = part.match(/^\[\[([^\]]+)\]\]$/);
+                                                                // Match either [[...]] or 【...】
+                                                                const match = part.match(/^(?:\[\[([^\]]+)\]\]|【([^】]+)】)$/);
                                                                 if (match) {
-                                                                    const entityId = match[1];
-                                                                    const sourceInfo = entitySourceMap.get(entityId);
+                                                                    // Extract citation content (from either capture group)
+                                                                    let citationRef = match[1] || match[2];
+
+                                                                    // Handle "Results 36-37" or "Result 5" format
+                                                                    // Extract just the numbers
+                                                                    const numbersMatch = citationRef.match(/(\d+)(?:[-–‑](\d+))?/);
+                                                                    if (numbersMatch) {
+                                                                        // For ranges like "36-37", use the first number
+                                                                        citationRef = numbersMatch[1];
+                                                                    }
+
+                                                                    // Try to resolve citation ref to entity ID
+                                                                    // LLM might cite by result number (e.g., [[39]]) or by UUID
+                                                                    let resolvedEntityId = citationRef;
+
+                                                                    // Check if this is a result number citation (e.g., "39", "1", "100")
+                                                                    if (/^\d+$/.test(citationRef)) {
+                                                                        const mappedId = resultNumberMap.get(citationRef);
+                                                                        if (mappedId) {
+                                                                            resolvedEntityId = mappedId;
+                                                                        }
+                                                                    }
+
+                                                                    const sourceInfo = entitySourceMap.get(resolvedEntityId);
+
                                                                     const displayText = sourceInfo
                                                                         ? `${sourceInfo.source} [${sourceInfo.number}]`
-                                                                        : entityId;
+                                                                        : citationRef;
+
+                                                                    const tooltipText = sourceInfo
+                                                                        ? `Click to view ${sourceInfo.source} entity #${sourceInfo.number} in the Entities tab`
+                                                                        : `Click to view entity: ${citationRef}`;
 
                                                                     return (
                                                                         <button
                                                                             key={index}
-                                                                            onClick={() => handleEntityClick(entityId)}
+                                                                            onClick={() => handleEntityClick(resolvedEntityId)}
                                                                             className={cn(
                                                                                 "inline-flex items-center gap-0.5 px-1 py-0.5 rounded-md text-[11px] font-medium",
                                                                                 "transition-colors cursor-pointer",
@@ -1660,7 +1802,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                                                                 "border",
                                                                                 isDark ? "border-blue-800/50" : "border-blue-200"
                                                                             )}
-                                                                            title={`View in Entities tab`}
+                                                                            title={tooltipText}
                                                                         >
                                                                             {displayText}
                                                                         </button>
@@ -1755,10 +1897,13 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                                     </div>
                                 ) : (
                                     <>
-                                        <div className={cn(
-                                            "px-4 py-3 space-y-5 raw-data-scrollbar",
-                                            DESIGN_SYSTEM.typography.sizes.label
-                                        )}>
+                                        <div
+                                            ref={jsonViewerRef}
+                                            className={cn(
+                                                "px-4 py-3 space-y-5 raw-data-scrollbar",
+                                                DESIGN_SYSTEM.typography.sizes.label
+                                            )}
+                                        >
                                             {results.slice(0, visibleResultsCount).map((result: any, index: number) => (
                                                 <EntityResultCard
                                                     key={result.payload?.entity_id || result.id || index}
