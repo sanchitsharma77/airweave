@@ -41,7 +41,7 @@ async def _run_sync_task(
                 f"🧹 Source connection for sync {sync.id} not found. "
                 f"Resource was likely deleted during workflow execution."
             )
-            # Re-raise with a specific marker that the workflow can detect
+            # Re-raise. Custom exception types don't serialize cleanly, so we use a string marker.
             raise Exception("ORPHANED_SYNC: Source connection record not found") from e
         # Other NotFoundException errors should be re-raised as-is
         raise
