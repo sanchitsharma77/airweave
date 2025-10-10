@@ -608,71 +608,117 @@ class NotionSource(BaseSource):
         start_cursor = None
 
         while has_more:
-            url_with_params = url
-            if start_cursor:
-                url_with_params = f"{url}?start_cursor={start_cursor}"
+            url_with_params = url if not start_cursor else f"{url}?start_cursor={start_cursor}"
 
             try:
                 response = await self._get_with_auth(client, url_with_params)
+                if not self._is_valid_response(response, block_id):
+                    break
+
                 blocks = response.get("results", [])
-
-                for block in blocks:
-                    # Format this block
-                    block_result = await self._format_block_content(block, depth, page_breadcrumbs)
-
-                    if block_result["content"]:
-                        yield block_result
-
-                    # Process children recursively if they exist
-                    if block.get("has_children", False):
-                        async for child_result in self._extract_blocks_recursive(
-                            client, block["id"], depth + 1, page_breadcrumbs
-                        ):
-                            yield child_result
+                async for result in self._process_blocks(
+                    client, blocks, block_id, depth, page_breadcrumbs
+                ):
+                    yield result
 
                 has_more = response.get("has_more", False)
                 start_cursor = response.get("next_cursor")
 
             except NotionSource.NotionAccessError as e:
                 self.logger.warning(f"Access issue extracting blocks from {block_id}: {str(e)}")
-                raise
+                break
             except Exception as e:
-                self.logger.error(f"Error extracting blocks from {block_id}: {str(e)}")
-                raise
+                self.logger.error(
+                    f"Error extracting blocks from {block_id}: {type(e).__name__}: {str(e)}"
+                )
+                break
+
+    def _is_valid_response(self, response: Any, block_id: str) -> bool:
+        """Validate API response format."""
+        if not response or not isinstance(response, dict):
+            self.logger.warning(
+                f"Invalid response format for blocks from {block_id}: {type(response)}"
+            )
+            return False
+        return True
+
+    async def _process_blocks(
+        self,
+        client: httpx.AsyncClient,
+        blocks: List[dict],
+        block_id: str,
+        depth: int,
+        page_breadcrumbs: List[Breadcrumb],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Process a list of blocks and their children."""
+        for block in blocks:
+            if not block or not isinstance(block, dict):
+                self.logger.warning(f"Skipping invalid block in {block_id}: {type(block)}")
+                continue
+
+            block_result = await self._format_block_content(block, depth, page_breadcrumbs)
+            if block_result and block_result.get("content"):
+                yield block_result
+
+            if block.get("has_children", False) and block.get("id"):
+                async for child_result in self._extract_blocks_recursive(
+                    client, block["id"], depth + 1, page_breadcrumbs
+                ):
+                    yield child_result
 
     async def _format_block_content(
         self, block: dict, depth: int, page_breadcrumbs: List[Breadcrumb]
     ) -> Dict[str, Any]:
         """Format a single block into markdown content."""
-        block_type = block.get("type", "")
-        block_content = block.get(block_type, {})
+        if not self._validate_block(block):
+            return {"content": "", "files": [], "depth": depth}
 
-        # Delegate to specific formatters based on block type
-        if block_type == "paragraph":
-            content = self._extract_rich_text_markdown(block_content.get("rich_text", []))
-            files = []
-        elif block_type in ["heading_1", "heading_2", "heading_3"]:
-            content = self._format_heading_block(block_content, block_type)
-            files = []
-        elif block_type in ["bulleted_list_item", "numbered_list_item", "to_do"]:
-            content = self._format_list_blocks(block_content, block_type, depth)
-            files = []
-        elif block_type in ["quote", "callout", "code"]:
-            content = self._format_text_blocks(block_content, block_type)
-            files = []
-        elif block_type in ["image", "video", "file", "pdf"]:
-            content, files = self._format_file_block(block_content, block, block_type)
-        elif block_type in ["embed", "bookmark", "equation", "divider"]:
-            content = self._format_simple_blocks(block_content, block_type)
-            files = []
-        elif block_type in ["child_page", "child_database"]:
-            content = self._format_child_blocks(block_content, block, block_type, page_breadcrumbs)
-            files = []
-        else:
-            content = self._format_other_blocks(block_content, block_type)
-            files = []
+        block_type = block.get("type", "")
+        if not block_type:
+            self.logger.warning(f"Block missing type field: {block.get('id', 'unknown')}")
+            return {"content": "", "files": [], "depth": depth}
+
+        block_content = block.get(block_type, {}) or {}
+        content, files = self._dispatch_block_formatter(
+            block_type, block_content, block, depth, page_breadcrumbs
+        )
 
         return {"content": content, "files": files, "depth": depth}
+
+    def _validate_block(self, block: dict) -> bool:
+        """Validate block structure."""
+        if not block or not isinstance(block, dict):
+            self.logger.warning(f"Invalid block format: {type(block)}")
+            return False
+        return True
+
+    def _dispatch_block_formatter(
+        self,
+        block_type: str,
+        block_content: dict,
+        block: dict,
+        depth: int,
+        page_breadcrumbs: List[Breadcrumb],
+    ) -> Tuple[str, List[NotionFileEntity]]:
+        """Dispatch to appropriate block formatter based on type."""
+        if block_type == "paragraph":
+            return self._extract_rich_text_markdown(block_content.get("rich_text", [])), []
+        if block_type in ["heading_1", "heading_2", "heading_3"]:
+            return self._format_heading_block(block_content, block_type), []
+        if block_type in ["bulleted_list_item", "numbered_list_item", "to_do"]:
+            return self._format_list_blocks(block_content, block_type, depth), []
+        if block_type in ["quote", "callout", "code"]:
+            return self._format_text_blocks(block_content, block_type), []
+        if block_type in ["image", "video", "file", "pdf"]:
+            return self._format_file_block(block_content, block, block_type)
+        if block_type in ["embed", "bookmark", "equation", "divider"]:
+            return self._format_simple_blocks(block_content, block_type), []
+        if block_type in ["child_page", "child_database"]:
+            return (
+                self._format_child_blocks(block_content, block, block_type, page_breadcrumbs),
+                [],
+            )
+        return self._format_other_blocks(block_content, block_type), []
 
     def _format_heading_block(self, block_content: dict, block_type: str) -> str:
         """Format heading blocks."""
@@ -819,45 +865,52 @@ class NotionSource(BaseSource):
 
     def _extract_rich_text_markdown(self, rich_text: List[dict]) -> str:
         """Extract rich text and convert to markdown formatting."""
-        if not rich_text:
+        if not rich_text or not isinstance(rich_text, list):
             return ""
 
         result_parts = []
         for text_obj in rich_text:
+            if not text_obj or not isinstance(text_obj, dict):
+                continue
+
             text = text_obj.get("plain_text", "")
             if not text:
                 continue
 
-            annotations = text_obj.get("annotations", {})
+            annotations = text_obj.get("annotations") or {}
             href = text_obj.get("href")
-
-            # Apply formatting
-            if annotations.get("bold"):
-                text = f"**{text}**"
-            if annotations.get("italic"):
-                text = f"*{text}*"
-            if annotations.get("strikethrough"):
-                text = f"~~{text}~~"
-            if annotations.get("underline"):
-                text = f"<u>{text}</u>"
-            if annotations.get("code"):
-                text = f"`{text}`"
-
-            # Handle links
-            if href:
-                text = f"[{text}]({href})"
-
-            result_parts.append(text)
+            formatted_text = self._apply_markdown_annotations(text, annotations, href)
+            result_parts.append(formatted_text)
 
         return "".join(result_parts)
 
+    def _apply_markdown_annotations(self, text: str, annotations: dict, href: str = None) -> str:
+        """Apply markdown formatting based on annotations."""
+        if annotations.get("bold"):
+            text = f"**{text}**"
+        if annotations.get("italic"):
+            text = f"*{text}*"
+        if annotations.get("strikethrough"):
+            text = f"~~{text}~~"
+        if annotations.get("underline"):
+            text = f"<u>{text}</u>"
+        if annotations.get("code"):
+            text = f"`{text}`"
+        if href:
+            text = f"[{text}]({href})"
+        return text
+
     def _extract_rich_text_plain(self, rich_text: List[dict]) -> str:
         """Extract plain text from rich text objects."""
-        if not rich_text:
+        if not rich_text or not isinstance(rich_text, list):
             return ""
 
         text_parts = []
         for text_obj in rich_text:
+            # Defensive check: ensure text_obj is valid
+            if not text_obj or not isinstance(text_obj, dict):
+                continue
+
             plain_text = text_obj.get("plain_text", "")
             if plain_text:
                 text_parts.append(plain_text)

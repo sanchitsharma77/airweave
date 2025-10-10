@@ -6,8 +6,8 @@ connector:
   type: notion
   auth_mode: composio
   composio_config:
-    account_id: ca_1r92u-koLifQ
-    auth_config_id: ac_oh6wodsWoVWB
+    account_id: ca_Ge9Nrtc_xInG
+    auth_config_id: ac_WAdq3MqbLXUo
   config_fields:
     openai_model: "gpt-4.1-mini"
   rate_limit_delay_ms: 334  # ~3 requests per second
