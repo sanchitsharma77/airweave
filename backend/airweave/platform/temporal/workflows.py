@@ -194,3 +194,29 @@ class RunSourceConnectionWorkflow:
 
             # All other exceptions should be re-raised
             raise
+
+
+@workflow.defn
+class CleanupStuckSyncJobsWorkflow:
+    """Workflow for cleaning up stuck sync jobs."""
+
+    @workflow.run
+    async def run(self) -> None:
+        """Run the cleanup workflow to detect and cancel stuck sync jobs.
+
+        This workflow is scheduled to run periodically (every 150 seconds) to:
+        - Cancel jobs stuck in CANCELLING/PENDING for > 3 minutes
+        - Cancel jobs in RUNNING for > 10 minutes with no entity updates
+        """
+        from airweave.platform.temporal.activities import cleanup_stuck_sync_jobs_activity
+
+        await workflow.execute_activity(
+            cleanup_stuck_sync_jobs_activity,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(
+                maximum_attempts=3,
+                initial_interval=timedelta(seconds=10),
+                maximum_interval=timedelta(seconds=60),
+            ),
+        )
+

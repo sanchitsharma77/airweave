@@ -309,5 +309,23 @@ class CRUDEntity(CRUDBaseOrganization[Entity, EntityCreate, EntityUpdate]):
         result = await db.execute(stmt)
         return list(result.unique().scalars().all())
 
+    async def get_latest_entity_time_for_job(
+        self,
+        db: AsyncSession,
+        sync_job_id: UUID,
+    ) -> Optional[datetime]:
+        """Get the most recent entity created_at timestamp for a sync job.
+
+        Args:
+            db: Database session
+            sync_job_id: The sync job ID to check
+
+        Returns:
+            The most recent created_at timestamp, or None if no entities exist
+        """
+        stmt = select(func.max(Entity.created_at)).where(Entity.sync_job_id == sync_job_id)
+        result = await db.execute(stmt)
+        return result.scalar()
+
 
 entity = CRUDEntity()

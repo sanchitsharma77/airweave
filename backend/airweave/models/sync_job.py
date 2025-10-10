@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from airweave.core.shared_models import SyncJobStatus
@@ -48,4 +48,13 @@ class SyncJob(OrganizationBase, UserMixin):
         lazy="noload",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+
+    __table_args__ = (
+        # Index for filtering by status (used in cleanup queries)
+        Index("idx_sync_job_status", "status"),
+        # Composite index for finding stuck jobs by status and last modification time
+        Index("idx_sync_job_status_modified_at", "status", "modified_at"),
+        # Index for finding long-running jobs by status and start time
+        Index("idx_sync_job_status_started_at", "status", "started_at"),
     )
