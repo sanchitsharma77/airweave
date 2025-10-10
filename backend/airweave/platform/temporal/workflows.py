@@ -219,4 +219,3 @@ class CleanupStuckSyncJobsWorkflow:
                 maximum_interval=timedelta(seconds=60),
             ),
         )
-
