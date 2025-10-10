@@ -8,6 +8,8 @@ from uuid import UUID
 
 from temporalio import activity
 
+from airweave.core.exceptions import NotFoundException
+
 
 async def _run_sync_task(
     sync,
@@ -289,14 +291,8 @@ async def create_sync_job_activity(
     async with get_db_context() as db:
         # First, check if the sync still exists (defensive check for orphaned workflows)
         try:
-            sync = await crud.sync.get(db=db, id=UUID(sync_id), ctx=ctx, with_connections=False)
-            if not sync:
-                ctx.logger.info(
-                    f"🧹 Sync {sync_id} not found in database. "
-                    f"Likely deleted during workflow execution. Marking as orphaned."
-                )
-                return {"_orphaned": True, "sync_id": sync_id, "reason": "Sync not found"}
-        except Exception as e:
+            _ = await crud.sync.get(db=db, id=UUID(sync_id), ctx=ctx, with_connections=False)
+        except NotFoundException as e:
             ctx.logger.info(
                 f"🧹 Could not verify sync {sync_id} exists: {e}. "
                 f"Marking as orphaned to trigger cleanup."
