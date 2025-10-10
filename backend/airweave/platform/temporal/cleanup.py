@@ -1,13 +1,11 @@
 """Cleanup utilities for orphaned Temporal workflows and schedules."""
 
 from typing import Any, Dict
-from uuid import UUID
 
 from temporalio import activity
 
 from airweave.api.context import ApiContext
 from airweave.core.logging import LoggerConfigurator
-from airweave.db.session import get_db_context
 
 
 @activity.defn
@@ -29,7 +27,7 @@ async def self_destruct_orphaned_sync_activity(
     Returns:
         Summary of cleanup actions performed
     """
-    from airweave import crud, schemas
+    from airweave import schemas
 
     # Reconstruct context
     organization = schemas.Organization(**ctx_dict["organization"])
@@ -78,27 +76,6 @@ async def self_destruct_orphaned_sync_activity(
         except Exception as e:
             # Schedule doesn't exist or already deleted - this is fine
             ctx.logger.debug(f"  - Schedule {schedule_id} not found: {e}")
-
-    # Note: Other orphaned workflows will self-destruct when they detect missing resources
-    ctx.logger.info(
-        "  ℹ Schedule cleanup complete. "
-        "Any other orphaned workflows will self-destruct when they attempt to run."
-    )
-
-    # 3. Verify sync doesn't exist in database
-    try:
-        async with get_db_context() as db:
-            sync = await crud.sync.get(db=db, id=UUID(sync_id), ctx=ctx, with_connections=False)
-            if sync:
-                ctx.logger.warning(
-                    f"  ⚠ Sync {sync_id} still exists in database. "
-                    f"This might be a race condition during deletion."
-                )
-            else:
-                ctx.logger.info(f"  ✓ Confirmed sync {sync_id} deleted from database")
-    except Exception as e:
-        # This is expected if org/user context is invalid
-        ctx.logger.debug(f"  - Could not verify sync deletion: {e}")
 
     ctx.logger.info(
         f"🧹 Self-destruct cleanup complete for sync {sync_id}. "
