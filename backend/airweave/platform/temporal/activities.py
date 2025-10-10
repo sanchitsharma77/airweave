@@ -20,18 +20,31 @@ async def _run_sync_task(
     force_full_sync=False,
 ):
     """Run the actual sync service."""
+    from airweave.core.exceptions import NotFoundException
     from airweave.core.sync_service import sync_service
 
-    return await sync_service.run(
-        sync=sync,
-        sync_job=sync_job,
-        dag=sync_dag,
-        collection=collection,
-        source_connection=connection,  # sync_service expects this parameter name
-        ctx=ctx,
-        access_token=access_token,
-        force_full_sync=force_full_sync,
-    )
+    try:
+        return await sync_service.run(
+            sync=sync,
+            sync_job=sync_job,
+            dag=sync_dag,
+            collection=collection,
+            source_connection=connection,  # sync_service expects this parameter name
+            ctx=ctx,
+            access_token=access_token,
+            force_full_sync=force_full_sync,
+        )
+    except NotFoundException as e:
+        # Check if this is the specific "Source connection record not found" error
+        if "Source connection record not found" in str(e) or "Connection not found" in str(e):
+            ctx.logger.info(
+                f"🧹 Source connection for sync {sync.id} not found. "
+                f"Resource was likely deleted during workflow execution."
+            )
+            # Re-raise with a specific marker that the workflow can detect
+            raise Exception("ORPHANED_SYNC: Source connection record not found") from e
+        # Other NotFoundException errors should be re-raised as-is
+        raise
 
 
 # Import inside the activity to avoid issues with Temporal's sandboxing
@@ -274,6 +287,22 @@ async def create_sync_job_activity(
     ctx.logger.info(f"Creating sync job for sync {sync_id} (force_full_sync={force_full_sync})")
 
     async with get_db_context() as db:
+        # First, check if the sync still exists (defensive check for orphaned workflows)
+        try:
+            sync = await crud.sync.get(db=db, id=UUID(sync_id), ctx=ctx, with_connections=False)
+            if not sync:
+                ctx.logger.info(
+                    f"🧹 Sync {sync_id} not found in database. "
+                    f"Likely deleted during workflow execution. Marking as orphaned."
+                )
+                return {"_orphaned": True, "sync_id": sync_id, "reason": "Sync not found"}
+        except Exception as e:
+            ctx.logger.info(
+                f"🧹 Could not verify sync {sync_id} exists: {e}. "
+                f"Marking as orphaned to trigger cleanup."
+            )
+            return {"_orphaned": True, "sync_id": sync_id, "reason": f"Sync lookup error: {e}"}
+
         # Check if there's already a running/cancellable sync job for this sync
         from airweave.core.shared_models import SyncJobStatus
 

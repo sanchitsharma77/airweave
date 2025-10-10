@@ -235,9 +235,24 @@ class AsyncImageConverter(DocumentConverter):
         # Upload file to Mistral (non-blocking)
         def _upload_file():
             with open(image_path, "rb") as file:
+                # Ensure filename has correct extension for proper mimetype detection
+                filename = os.path.basename(image_path)
+
+                # Validate that the filename has a proper image extension
+                # This helps Mistral API detect the correct mimetype
+                valid_extensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"]
+                has_valid_ext = any(filename.lower().endswith(ext) for ext in valid_extensions)
+                if not has_valid_ext:
+                    # Try to guess the extension from mimetype
+                    mimetype, _ = mimetypes.guess_type(image_path)
+                    if mimetype and mimetype.startswith("image/"):
+                        ext = mimetypes.guess_extension(mimetype)
+                        if ext:
+                            filename = f"{filename}{ext}"
+
                 return self.mistral_client.files.upload(
                     file={
-                        "file_name": os.path.basename(image_path),
+                        "file_name": filename,
                         "content": file,
                     },
                     purpose="ocr",

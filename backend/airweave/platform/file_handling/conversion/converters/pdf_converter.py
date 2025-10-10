@@ -1,5 +1,6 @@
 """PDF to Markdown converter with Mistral OCR support."""
 
+import mimetypes
 import os
 import tempfile
 from typing import Any, Optional, Tuple, Union
@@ -30,6 +31,42 @@ class PdfConverter(DocumentConverter):
         """Initialize the PDF converter with Mistral client if API key is available."""
         self.mistral_client = mistral_client
 
+    def _is_valid_pdf(self, file_path: str) -> bool:
+        """Check if the file is a valid PDF.
+
+        Args:
+            file_path: Path to the file to check
+
+        Returns:
+            True if the file appears to be a valid PDF, False otherwise
+        """
+        try:
+            # Check file extension
+            if not file_path.lower().endswith(".pdf"):
+                return False
+
+            # Check if file exists and is readable
+            if not os.path.isfile(file_path) or not os.access(file_path, os.R_OK):
+                return False
+
+            # Check PDF magic bytes (%PDF)
+            with open(file_path, "rb") as f:
+                header = f.read(5)
+                if not header.startswith(b"%PDF-"):
+                    logger.warning(f"File {file_path} does not have PDF magic bytes")
+                    return False
+
+            # Verify mimetype
+            mimetype, _ = mimetypes.guess_type(file_path)
+            if mimetype and mimetype != "application/pdf":
+                logger.warning(f"File {file_path} has incorrect mimetype: {mimetype}")
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Error validating PDF file {file_path}: {str(e)}")
+            return False
+
     async def convert(self, local_path: str, **kwargs: Any) -> Union[None, DocumentConverterResult]:
         """Convert a PDF file to markdown using Mistral OCR when available.
 
@@ -43,6 +80,13 @@ class PdfConverter(DocumentConverter):
         extension = kwargs.get("file_extension", "")
         if extension.lower() != ".pdf":
             return None
+
+        # Validate the PDF file
+        if not self._is_valid_pdf(local_path):
+            logger.warning(f"Skipping invalid or corrupted PDF file: {local_path}")
+            return DocumentConverterResult(
+                title=None, text_content="File is not a valid PDF or is corrupted."
+            )
 
         # Try Mistral OCR first if available
         if self.mistral_client:
@@ -103,9 +147,14 @@ class PdfConverter(DocumentConverter):
         # Upload file to Mistral (non-blocking)
         def _upload_file():
             with open(pdf_path, "rb") as file:
+                # Ensure filename has .pdf extension for proper mimetype detection
+                filename = os.path.basename(pdf_path)
+                if not filename.lower().endswith(".pdf"):
+                    filename = f"{filename}.pdf"
+
                 return self.mistral_client.files.upload(
                     file={
-                        "file_name": os.path.basename(pdf_path),
+                        "file_name": filename,
                         "content": file,
                     },
                     purpose="ocr",
