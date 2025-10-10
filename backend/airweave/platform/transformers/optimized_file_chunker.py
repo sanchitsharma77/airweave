@@ -59,18 +59,16 @@ def get_recursive_chunker(chunk_size: int):
     )
 
 
-def calculate_entity_token_size(entity: ChunkEntity) -> int:
-    """Calculate the actual token size when entity is serialized for embedding.
+def calculate_embeddable_token_size(entity: ChunkEntity) -> int:
+    """Calculate the actual token size of text that will be embedded.
 
-    This mimics what happens when the entity is sent to OpenAI:
-    The entity is converted to a storage dict and then to string.
+    This matches what happens when the entity is sent to OpenAI:
+    The entity's embeddable_text is built and sent for embedding.
     """
-    # Get the storage dict (what actually gets sent)
-    storage_dict = entity.to_storage_dict()
-    # Convert to string (same as what happens before embedding)
-    entity_string = str(storage_dict)
+    # Build the embeddable text (what actually gets embedded)
+    embeddable_text = entity.build_embeddable_text()
     # Count tokens
-    return count_tokens(entity_string)
+    return count_tokens(embeddable_text)
 
 
 async def _process_file_content(
@@ -242,20 +240,21 @@ async def _try_chunk_size(
         )
         chunk = UnifiedChunkClass(**base_data)
 
-        # Check actual serialized size
-        actual_size = calculate_entity_token_size(chunk)
+        # Check actual embeddable text size (what gets sent to OpenAI)
+        actual_size = calculate_embeddable_token_size(chunk)
 
         if actual_size > OPENAI_TOKEN_LIMIT:
             logger.warning(
-                f"❌ CHUNKER_TOO_LARGE [{entity_context}] Chunk {i + 1} is {actual_size} "
-                f"tokens when serialized (limit: {OPENAI_TOKEN_LIMIT}). Need smaller chunks"
+                f"⚠️ CHUNKER_TOO_LARGE [{entity_context}] "
+                f"Chunk {i + 1} embeddable text is {actual_size} tokens "
+                f"(limit: {OPENAI_TOKEN_LIMIT}). Need smaller chunks"
             )
             all_chunks_fit = False
             break
         else:
             logger.debug(
-                f"✅ CHUNKER_SIZE_OK [{entity_context}] Chunk {i + 1} is {actual_size} "
-                "tokens "
+                f"✅ CHUNKER_SIZE_OK [{entity_context}] "
+                f"Chunk {i + 1} embeddable text is {actual_size} tokens "
                 f"({int(actual_size / OPENAI_TOKEN_LIMIT * 100)}% of limit)"
             )
             test_chunks.append(chunk)
