@@ -440,9 +440,13 @@ async def file_chunker(file: FileEntity, logger: ContextualLogger) -> list[Chunk
                 )
 
     except Exception as e:
-        logger.error(
-            f"💥 CHUNKER_ERROR [{entity_context}] Chunking failed: {type(e).__name__}: {str(e)}"
-        )
+        # Log unsupported file types as warnings, not errors
+        if isinstance(e, ValueError) and "Unsupported file type" in str(e):
+            logger.warning(f"⚠️ CHUNKER_WARNING [{entity_context}] Unsupported file type: {str(e)}")
+        else:
+            logger.error(
+                f"💥 CHUNKER_ERROR [{entity_context}] Chunking failed: {type(e).__name__}: {str(e)}"
+            )
         raise e
     finally:
         # Clean up temporary file if it exists
