@@ -4,9 +4,6 @@ from typing import Any, Dict
 
 from temporalio import activity
 
-from airweave.api.context import ApiContext
-from airweave.core.logging import LoggerConfigurator
-
 
 @activity.defn
 async def self_destruct_orphaned_sync_activity(
@@ -28,6 +25,8 @@ async def self_destruct_orphaned_sync_activity(
         Summary of cleanup actions performed
     """
     from airweave import schemas
+    from airweave.api.context import ApiContext
+    from airweave.core.logging import LoggerConfigurator
 
     # Reconstruct context
     organization = schemas.Organization(**ctx_dict["organization"])
