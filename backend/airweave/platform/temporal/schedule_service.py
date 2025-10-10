@@ -9,6 +9,7 @@ from temporalio.client import (
     Client,
     Schedule,
     ScheduleActionStartWorkflow,
+    ScheduleIntervalSpec,
     ScheduleSpec,
     ScheduleState,
     ScheduleUpdate,
@@ -792,6 +793,53 @@ class TemporalScheduleService:
             db=db,
             ctx=ctx,
         )
+
+    async def create_cleanup_schedule(self) -> str:
+        """Create a singleton schedule for cleaning up stuck sync jobs.
+
+        This schedule runs every 150 seconds to detect and cancel:
+        - CANCELLING/PENDING jobs stuck for > 3 minutes
+        - RUNNING jobs stuck for > 10 minutes with no entity updates
+
+        Returns:
+            Schedule ID of the cleanup schedule
+        """
+        from airweave.platform.temporal.workflows import CleanupStuckSyncJobsWorkflow
+
+        client = await self._get_client()
+        schedule_id = "cleanup-stuck-sync-jobs"
+
+        # Check if schedule already exists
+        try:
+            handle = client.get_schedule_handle(schedule_id)
+            await handle.describe()
+            logger.info(f"Cleanup schedule {schedule_id} already exists")
+            return schedule_id
+        except Exception:
+            # Schedule doesn't exist, create it
+            pass
+
+        logger.info(f"Creating cleanup schedule {schedule_id}")
+
+        # Create schedule with 150 second interval
+        schedule = Schedule(
+            action=ScheduleActionStartWorkflow(
+                CleanupStuckSyncJobsWorkflow.run,
+                id="cleanup-workflow",
+                task_queue=settings.TEMPORAL_TASK_QUEUE,
+            ),
+            spec=ScheduleSpec(
+                intervals=[ScheduleIntervalSpec(every=timedelta(seconds=150))],
+            ),
+            state=ScheduleState(
+                note="Periodic cleanup of stuck sync jobs",
+                paused=False,
+            ),
+        )
+
+        await client.create_schedule(schedule_id, schedule)
+        logger.info(f"Successfully created cleanup schedule {schedule_id}")
+        return schedule_id
 
 
 # Singleton instance

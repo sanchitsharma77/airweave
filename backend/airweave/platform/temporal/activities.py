@@ -367,3 +367,177 @@ async def create_sync_job_activity(
         # Convert to dict for return
         sync_job_schema = schemas.SyncJob.model_validate(sync_job)
         return sync_job_schema.model_dump(mode="json")
+
+
+@activity.defn
+async def cleanup_stuck_sync_jobs_activity() -> None:
+    """Activity to clean up sync jobs stuck in transitional states.
+
+    Detects and cancels:
+    - CANCELLING/PENDING jobs stuck for > 3 minutes
+    - RUNNING jobs stuck for > 10 minutes with no entity updates
+
+    For each stuck job:
+    1. Attempts graceful cancellation via Temporal workflow
+    2. Falls back to force-cancelling in the database if workflow doesn't exist
+    """
+    from datetime import timedelta
+
+    from airweave.api.context import ApiContext
+    from airweave.core.datetime_utils import utc_now_naive
+    from airweave.core.logging import LoggerConfigurator
+    from airweave.core.shared_models import SyncJobStatus
+    from airweave.core.sync_job_service import sync_job_service
+    from airweave.core.temporal_service import temporal_service
+    from airweave.db.session import get_db_context
+
+    # Configure logger for cleanup activity
+    logger = LoggerConfigurator.configure_logger(
+        "airweave.temporal.cleanup",
+        dimensions={"activity": "cleanup_stuck_sync_jobs"},
+    )
+
+    logger.info("Starting cleanup of stuck sync jobs...")
+
+    # Calculate cutoff times
+    now = utc_now_naive()
+    cancelling_pending_cutoff = now - timedelta(minutes=3)
+    running_cutoff = now - timedelta(minutes=10)
+
+    stuck_job_count = 0
+    cancelled_count = 0
+    failed_count = 0
+
+    try:
+        async with get_db_context() as db:
+            # Import CRUD layer inside to avoid sandbox issues
+            from airweave import crud
+
+            # Query 1: Find CANCELLING/PENDING jobs stuck for > 3 minutes
+            cancelling_pending_jobs = await crud.sync_job.get_stuck_jobs_by_status(
+                db=db,
+                status=[SyncJobStatus.CANCELLING.value, SyncJobStatus.PENDING.value],
+                modified_before=cancelling_pending_cutoff,
+            )
+
+            logger.info(
+                f"Found {len(cancelling_pending_jobs)} CANCELLING/PENDING jobs "
+                f"stuck for > 3 minutes"
+            )
+
+            # Query 2: Find RUNNING jobs > 10 minutes old
+            running_jobs = await crud.sync_job.get_stuck_jobs_by_status(
+                db=db,
+                status=[SyncJobStatus.RUNNING.value],
+                started_before=running_cutoff,
+            )
+
+            logger.info(f"Found {len(running_jobs)} RUNNING jobs that started > 10 minutes ago")
+
+            # Check which RUNNING jobs have no recent entity updates
+            stuck_running_jobs = []
+            for job in running_jobs:
+                # Get the most recent entity created_at for this job using CRUD
+                latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
+                    db=db,
+                    sync_job_id=job.id,
+                )
+
+                # Consider stuck if no entities or latest entity is > 10 minutes old
+                if latest_entity_time is None or latest_entity_time < running_cutoff:
+                    stuck_running_jobs.append(job)
+                    logger.info(
+                        f"Job {job.id} has no entity updates since "
+                        f"{latest_entity_time or 'job start'} - marking as stuck"
+                    )
+
+            logger.info(
+                f"Found {len(stuck_running_jobs)} RUNNING jobs with no entity "
+                f"updates in last 10 minutes"
+            )
+
+            # Combine all stuck jobs
+            all_stuck_jobs = cancelling_pending_jobs + stuck_running_jobs
+            stuck_job_count = len(all_stuck_jobs)
+
+            if stuck_job_count == 0:
+                logger.info("No stuck jobs found. Cleanup complete.")
+                return
+
+            logger.info(f"Processing {stuck_job_count} stuck sync jobs...")
+
+            # Process each stuck job
+            for job in all_stuck_jobs:
+                job_id = str(job.id)
+                sync_id = str(job.sync_id)
+                org_id = str(job.organization_id)
+
+                logger.info(
+                    f"Attempting to cancel stuck job {job_id} "
+                    f"(status: {job.status}, sync: {sync_id}, org: {org_id})"
+                )
+
+                # Create a system-level API context for this organization
+                # Fetch the organization using CRUD layer
+                try:
+                    # Create a temporary context to fetch the organization
+                    # (skip_access_validation=True since this is a system operation)
+                    organization = await crud.organization.get(
+                        db=db,
+                        id=job.organization_id,
+                        skip_access_validation=True,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to fetch organization {org_id} for job {job_id}: {e}")
+                    failed_count += 1
+                    continue
+
+                # Create a system-level context (no user)
+                from airweave import schemas
+
+                ctx = ApiContext(
+                    request_id=f"cleanup-{job_id}",
+                    organization=schemas.Organization.model_validate(organization),
+                    user=None,
+                    auth_method="system",
+                    auth_metadata={"source": "cleanup_activity"},
+                    logger=logger,
+                )
+
+                try:
+                    # Step 1: Try to cancel via Temporal (graceful)
+                    cancel_success = await temporal_service.cancel_sync_job_workflow(job_id, ctx)
+
+                    if cancel_success:
+                        logger.info(
+                            f"Successfully requested Temporal cancellation for job {job_id}"
+                        )
+                        # Give Temporal a moment to process the cancellation
+                        await asyncio.sleep(2)
+
+                    # Step 2: Force update status to CANCELLED in database
+                    # (Either the workflow doesn't exist or we're ensuring the state is correct)
+                    await sync_job_service.update_status(
+                        sync_job_id=UUID(job_id),
+                        status=SyncJobStatus.CANCELLED,
+                        ctx=ctx,
+                        error="Cancelled by cleanup job (stuck in transitional state)",
+                        failed_at=now,
+                    )
+
+                    logger.info(f"Successfully cancelled stuck job {job_id}")
+                    cancelled_count += 1
+
+                except Exception as e:
+                    logger.error(f"Failed to cancel stuck job {job_id}: {e}", exc_info=True)
+                    failed_count += 1
+
+        # Log summary
+        logger.info(
+            f"Cleanup complete. Processed {stuck_job_count} stuck jobs: "
+            f"{cancelled_count} cancelled, {failed_count} failed"
+        )
+
+    except Exception as e:
+        logger.error(f"Error during cleanup activity: {e}", exc_info=True)
+        raise

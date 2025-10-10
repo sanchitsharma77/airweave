@@ -69,6 +69,19 @@ async def lifespan(app: FastAPI):
             await sync_platform_components("airweave/platform", db)
         await init_db(db)
 
+    # Initialize cleanup schedule for stuck sync jobs (if Temporal is enabled)
+    if settings.TEMPORAL_ENABLED:
+        try:
+            from airweave.platform.temporal.schedule_service import temporal_schedule_service
+
+            logger.info("Initializing cleanup schedule for stuck sync jobs...")
+            await temporal_schedule_service.create_cleanup_schedule()
+            logger.info("Cleanup schedule initialized successfully")
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize cleanup schedule (Temporal may not be available): {e}"
+            )
+
     yield
 
 
