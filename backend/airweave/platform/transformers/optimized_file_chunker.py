@@ -24,6 +24,46 @@ INITIAL_CHUNK_SIZE = 7500
 # Minimum chunk size to avoid infinite recursion
 MIN_CHUNK_SIZE = 500
 
+# File types that cannot be processed and should be skipped
+UNSUPPORTED_FILE_TYPES = {
+    # Video files
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v",
+    ".mpeg",
+    ".mpg",
+    # Audio files
+    ".mp3",
+    ".wav",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".wma",
+    ".m4a",
+    # Archive files
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".bz2",
+    # Executable and binary files
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".bin",
+    # Database files
+    ".db",
+    ".sqlite",
+    ".mdb",
+}
+
 
 def get_token_chunker(chunk_size: int):
     """Get or create a token chunker with specified size."""
@@ -270,7 +310,9 @@ async def _try_chunk_size(
 
 
 @transformer(name="Optimized File Chunker")
-async def optimized_file_chunker(file: FileEntity, logger: ContextualLogger) -> list[ChunkEntity]:
+async def optimized_file_chunker(  # noqa: C901
+    file: FileEntity, logger: ContextualLogger
+) -> list[ChunkEntity]:
     """Optimized file chunker that ensures chunks fit within OpenAI's token limit.
 
     This transformer:
@@ -293,6 +335,18 @@ async def optimized_file_chunker(file: FileEntity, logger: ContextualLogger) -> 
         f"📄 CHUNKER_START [{entity_context}] Starting optimized file chunking for: {file.name} "
         f"(type: {type(file).__name__})"
     )
+
+    # Check if file type is supported before attempting to process
+    if file.airweave_system_metadata.local_path:
+        _, extension = os.path.splitext(file.airweave_system_metadata.local_path)
+        extension = extension.lower()
+
+        if extension in UNSUPPORTED_FILE_TYPES:
+            logger.info(
+                f"⏭️  CHUNKER_SKIP_UNSUPPORTED [{entity_context}] "
+                f"Skipping unsupported file type: {extension} ({file.name})"
+            )
+            return []
 
     file_class = type(file)
     UnifiedChunkClass = file_class.create_unified_chunk_model()
@@ -373,9 +427,13 @@ async def optimized_file_chunker(file: FileEntity, logger: ContextualLogger) -> 
         return produced_entities
 
     except Exception as e:
-        logger.error(
-            f"💥 CHUNKER_ERROR [{entity_context}] Chunking failed: {type(e).__name__}: {str(e)}"
-        )
+        # Log unsupported file types as warnings, not errors
+        if isinstance(e, ValueError) and "Unsupported file type" in str(e):
+            logger.warning(f"⚠️ CHUNKER_WARNING [{entity_context}] Unsupported file type: {str(e)}")
+        else:
+            logger.error(
+                f"💥 CHUNKER_ERROR [{entity_context}] Chunking failed: {type(e).__name__}: {str(e)}"
+            )
         raise e
     finally:
         # Clean up temporary file if it exists
