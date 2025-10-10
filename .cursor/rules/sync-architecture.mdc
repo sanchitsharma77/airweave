@@ -251,79 +251,41 @@ Every operation increments counter
 └── Subscribers receive real-time updates
 ```
 
-## Performance Characteristics
+## Orphaned Workflow Self-Destruct
 
-### Concurrency Model
-- **Default**: 20 concurrent workers (configurable)
-- **Queue Size**: 10000 entities buffered
-- **Backpressure**: Natural flow control via bounded queues
-- **Thread Pool**: Scales with CPU count for hash operations
+**Problem**: Workflows may execute after their sync/source_connection is deleted (race condition between schedule deletion and queued workflows).
 
-### Optimization Points
-1. **Transformer Cache**: Eliminates 1.5s database lookups per entity
-2. **Pull-Based Processing**: Prevents memory overload
-3. **Lazy Database Sessions**: Created only when needed
-4. **Concurrent Vectors**: Batch processing for embeddings
-5. **Early Skip Detection**: Avoids processing filtered entities
+**Solution**: Self-healing workflows that detect orphaned state and clean up automatically.
 
-### Bottlenecks & Solutions
-- **Database Queries**: Solved with caching and batch operations
-- **Vector Computation**: Parallelized across entities
-- **Memory Usage**: Bounded queues and task cleanup
-- **Token Refresh**: Proactive refresh prevents auth failures
+**Detection Points**:
+1. **Early** (in `create_sync_job_activity`): Checks if sync exists before creating job
+   - Returns `{"_orphaned": True, "sync_id": sync_id}` if not found
+2. **Late** (in `run_sync_activity`): Catches `NotFoundException` during execution
+   - Raises `Exception("ORPHANED_SYNC: Source connection record not found")`
 
-## Error Handling Strategy
+Custom exception types don't serialize cleanly, so we use a string marker.
 
-### Entity-Level Failures
-- Individual entity errors don't fail the sync
-- Failed entities marked as "skipped"
-- Detailed error logging with context
-- Progress tracking continues
+**Self-Destruct Flow**:
+```python
+if sync_job_dict.get("_orphaned") or "ORPHANED_SYNC" in str(e):
+    # Call self_destruct_orphaned_sync_activity
+    await workflow.execute_activity(
+        self_destruct_orphaned_sync_activity,
+        args=[sync_dict["id"], ctx_dict, reason],
+        start_to_close_timeout=timedelta(minutes=5),
+        retry_policy=RetryPolicy(maximum_attempts=3),
+    )
+    return  # Exit gracefully without error
+```
 
-### System-Level Failures
-- Producer exceptions propagate to consumer
-- All pending tasks cancelled on failure
-- Job status updated with error details
-- Resources cleaned up properly
+**Cleanup Actions** (in `self_destruct_orphaned_sync_activity`):
+- Deletes all schedule types: `sync-{id}`, `minute-sync-{id}`, `daily-cleanup-{id}`
+- Uses existing `temporal_schedule_service.delete_schedule_handle()`
+- Logs with INFO level (🧹 indicators), not ERROR
+- Idempotent (safe for concurrent workflows)
 
-### Recovery Mechanisms
-- OAuth token auto-refresh
-- Retry logic in destinations
-- Graceful degradation for transformers
-- Comprehensive error messages
+**Result**: No "Source connection record not found" errors, graceful workflow exits, automatic schedule cleanup.
 
-## Security Considerations
-
-### OAuth Token Management
-- Tokens never logged
-- Automatic refresh before expiry
-- Secure storage in database
-- Custom OAuth2 Token support
-
-### Data Isolation
-- Organization-based filtering
-- Entity-level access control
-- Audit trail via progress tracking
-
-## Monitoring & Observability
-
-### Contextual Logging
-- Every log includes sync_id, job_id, org_id
-- Detailed timing for each stage
-- Thread IDs for concurrency debugging
-- Progress indicators throughout
-
-### Real-time Metrics
-- Redis pubsub for live updates
-- Entity counts by type
-- Operation statistics
-- Performance timings
-
-### Debugging Features
-- Stage-by-stage timing logs
-- Entity context in errors
-- Worker pool utilization
-- Queue depth monitoring
 
 ## Best Practices
 

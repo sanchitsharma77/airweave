@@ -644,7 +644,12 @@ class SyncFactory:
             db, sync_id=sync.id, ctx=ctx
         )
         if not source_connection_obj:
-            raise NotFoundException("Source connection record not found")
+            raise NotFoundException(
+                f"Source connection record not found for sync {sync.id}. "
+                f"This typically occurs when a source connection is deleted while a "
+                f"scheduled workflow is queued. The workflow should self-destruct and "
+                f"clean up orphaned schedules."
+            )
 
         # 2. Get Connection only to access integration_credential_id
         connection = await crud.connection.get(db, source_connection_obj.connection_id, ctx)
