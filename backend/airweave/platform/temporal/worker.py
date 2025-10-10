@@ -11,12 +11,16 @@ from airweave.core.config import settings
 from airweave.core.logging import logger
 from airweave.platform.entities._base import ensure_file_entity_models
 from airweave.platform.temporal.activities import (
+    cleanup_stuck_sync_jobs_activity,
     create_sync_job_activity,
     mark_sync_job_cancelled_activity,
     run_sync_activity,
 )
 from airweave.platform.temporal.client import temporal_client
-from airweave.platform.temporal.workflows import RunSourceConnectionWorkflow
+from airweave.platform.temporal.workflows import (
+    CleanupStuckSyncJobsWorkflow,
+    RunSourceConnectionWorkflow,
+)
 
 
 class TemporalWorker:
@@ -43,11 +47,12 @@ class TemporalWorker:
             self.worker = Worker(
                 client,
                 task_queue=task_queue,
-                workflows=[RunSourceConnectionWorkflow],
+                workflows=[RunSourceConnectionWorkflow, CleanupStuckSyncJobsWorkflow],
                 activities=[
                     run_sync_activity,
                     mark_sync_job_cancelled_activity,
                     create_sync_job_activity,
+                    cleanup_stuck_sync_jobs_activity,
                 ],
                 workflow_runner=sandbox_config,
                 max_concurrent_workflow_task_polls=8,
