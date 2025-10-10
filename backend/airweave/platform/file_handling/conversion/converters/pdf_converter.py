@@ -1,5 +1,6 @@
 """PDF to Markdown converter with Mistral OCR support."""
 
+import mimetypes
 import os
 import tempfile
 from typing import Any, Optional, Tuple, Union
@@ -22,6 +23,32 @@ if hasattr(settings, "MISTRAL_API_KEY") and settings.MISTRAL_API_KEY:
 # Maximum file size for Mistral OCR (50MB in bytes)
 MAX_MISTRAL_FILE_SIZE = 50 * 1024 * 1024
 
+# Mistral OCR supported mimetypes (from API error message)
+MISTRAL_SUPPORTED_MIMETYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/epub+zip",
+    "application/docbook+xml",
+    "application/rtf",
+    "application/vnd.oasis.opendocument.text",
+    "application/x-biblatex",
+    "application/x-bibtex",
+    "application/x-endnote+xml",
+    "application/x-fictionbook+xml",
+    "application/x-ipynb+json",
+    "application/x-jats+xml",
+    "application/x-latex",
+    "application/x-opml+xml",
+    "text/troff",
+    "text/x-dokuwiki",
+}
+
 
 class PdfConverter(DocumentConverter):
     """Converts PDF files to Markdown using Mistral OCR or falls back to PyPDF2."""
@@ -29,6 +56,65 @@ class PdfConverter(DocumentConverter):
     def __init__(self):
         """Initialize the PDF converter with Mistral client if API key is available."""
         self.mistral_client = mistral_client
+
+    def _detect_mimetype(self, file_path: str) -> Optional[str]:
+        """Detect the mimetype of a file.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            The detected mimetype or None if detection fails
+        """
+        # Try python-magic first for more accurate detection
+        try:
+            import magic
+
+            mime = magic.Magic(mime=True)
+            detected_type = mime.from_file(file_path)
+            logger.debug(f"Detected mimetype using python-magic: {detected_type}")
+            return detected_type
+        except (ImportError, Exception) as e:
+            logger.debug(
+                f"python-magic not available or failed: {str(e)}, falling back to mimetypes"
+            )
+
+        # Fall back to mimetypes module
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type:
+            logger.debug(f"Detected mimetype using mimetypes: {mime_type}")
+        else:
+            logger.debug(f"Could not detect mimetype for {file_path}")
+        return mime_type
+
+    def _is_valid_mistral_mimetype(self, file_path: str) -> bool:
+        """Check if a file has a mimetype supported by Mistral OCR.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            True if the mimetype is supported, False otherwise
+        """
+        detected_type = self._detect_mimetype(file_path)
+
+        if not detected_type:
+            logger.warning(f"Could not detect mimetype for {file_path}, skipping Mistral OCR")
+            return False
+
+        # Check if it matches any supported mimetype (including wildcard for images)
+        if detected_type in MISTRAL_SUPPORTED_MIMETYPES:
+            return True
+
+        # Check for image/* pattern
+        if detected_type.startswith("image/"):
+            return True
+
+        logger.warning(
+            f"File {file_path} has unsupported mimetype '{detected_type}' for Mistral OCR, "
+            f"will fall back to PyPDF2"
+        )
+        return False
 
     async def convert(self, local_path: str, **kwargs: Any) -> Union[None, DocumentConverterResult]:
         """Convert a PDF file to markdown using Mistral OCR when available.
@@ -44,8 +130,8 @@ class PdfConverter(DocumentConverter):
         if extension.lower() != ".pdf":
             return None
 
-        # Try Mistral OCR first if available
-        if self.mistral_client:
+        # Try Mistral OCR first if available and mimetype is valid
+        if self.mistral_client and self._is_valid_mistral_mimetype(local_path):
             try:
                 md_content, title = await self._convert_with_mistral(local_path)
                 return DocumentConverterResult(title=title, text_content=md_content)
