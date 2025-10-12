@@ -26,6 +26,9 @@ class LinearBongo(BaseBongo):
         self.logger = get_logger("linear_bongo")
         self._issues: List[Dict[str, Any]] = []
         self._last_req = 0.0
+        
+        # Store Composio config for token refresh if available
+        self._composio_config = kwargs.get("composio_config")
 
     async def create_entities(self) -> List[Dict[str, Any]]:
         self.logger.info(f"🥁 Creating {self.entity_count} Linear issues")
@@ -221,10 +224,22 @@ class LinearBongo(BaseBongo):
     async def _refresh_token(self):
         """Refresh the access token from Composio."""
         try:
-            from monke.auth.credentials_resolver import resolve_credentials
+            from monke.auth.broker import ComposioBroker
 
             self.logger.info("🔄 Refreshing Linear access token...")
-            fresh_creds = await resolve_credentials("linear", self._credentials)
+            
+            if self._composio_config:
+                # Use the specific Composio configuration for this connector
+                broker = ComposioBroker(
+                    account_id=self._composio_config["account_id"],
+                    auth_config_id=self._composio_config["auth_config_id"],
+                )
+                fresh_creds = await broker.get_credentials("linear")
+            else:
+                # Fallback to generic credentials resolver
+                from monke.auth.credentials_resolver import resolve_credentials
+                fresh_creds = await resolve_credentials("linear", self._credentials)
+            
             self.access_token = fresh_creds["access_token"]
             self.logger.info("✅ Linear access token refreshed")
         except Exception as e:
