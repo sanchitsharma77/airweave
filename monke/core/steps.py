@@ -800,34 +800,39 @@ class CollectionCleanupStep(TestStep):
         cleanup_stats = {"collections_deleted": 0, "errors": 0}
 
         try:
-            # Find all test collections
-            test_collections = await self._find_test_collections()
-
-            if test_collections:
+            # Only clean up collections that belong to this specific test
+            # This prevents race conditions where tests delete each other's collections
+            if (
+                hasattr(self.context, "collection_readable_id")
+                and self.context.collection_readable_id
+            ):
                 self.logger.info(
-                    f"🔍 Found {len(test_collections)} test collections to clean up"
+                    f"🔍 Cleaning up current test collection: {self.context.collection_readable_id}"
                 )
 
-                for collection in test_collections:
-                    try:
-                        response = http_utils.http_delete(
-                            f"/collections/{collection['readable_id']}"
+                try:
+                    response = http_utils.http_delete(
+                        f"/collections/{self.context.collection_readable_id}"
+                    )
+                    if response.status_code in [200, 204]:
+                        cleanup_stats["collections_deleted"] += 1
+                        self.logger.info(
+                            f"✅ Deleted collection: {self.context.collection_readable_id}"
                         )
-                        if response.status_code in [200, 204]:
-                            cleanup_stats["collections_deleted"] += 1
-                            self.logger.info(
-                                f"✅ Deleted collection: {collection['name']} ({collection['readable_id']})"
-                            )
-                        else:
-                            cleanup_stats["errors"] += 1
-                            self.logger.warning(
-                                f"⚠️ Failed to delete collection {collection['readable_id']}: {response.status_code}"
-                            )
-                    except Exception as e:
+                    elif response.status_code == 404:
+                        self.logger.info("ℹ️  Collection already deleted")
+                    else:
                         cleanup_stats["errors"] += 1
                         self.logger.warning(
-                            f"⚠️ Failed to delete collection {collection['readable_id']}: {e}"
+                            f"⚠️ Failed to delete collection {self.context.collection_readable_id}: {response.status_code}"
                         )
+                except Exception as e:
+                    cleanup_stats["errors"] += 1
+                    self.logger.warning(
+                        f"⚠️ Failed to delete collection {self.context.collection_readable_id}: {e}"
+                    )
+            else:
+                self.logger.info("ℹ️  No collection to clean up for this test")
 
             # Log cleanup summary
             self.logger.info(
@@ -838,37 +843,6 @@ class CollectionCleanupStep(TestStep):
         except Exception as e:
             self.logger.error(f"❌ Error during collection cleanup: {e}")
             # Don't re-raise - cleanup should be best-effort
-
-    async def _find_test_collections(self) -> List[Dict[str, Any]]:
-        """Find all test collections that should be cleaned up."""
-        test_collections = []
-
-        try:
-            collections = http_utils.http_get("/collections")
-
-            # Handle both list and dict with items/results key
-            if isinstance(collections, dict):
-                collections = collections.get("items", collections.get("results", []))
-
-            for collection in collections:
-                name = collection.get("name", "")
-                readable_id = collection.get("readable_id", "")
-
-                # Check if this looks like a test collection
-                is_test_collection = (
-                    name.lower().startswith("monke-")
-                    or "test" in name.lower()
-                    and ("collection" in name.lower() or "monke" in name.lower())
-                    or readable_id.startswith("monke-")
-                )
-
-                if is_test_collection:
-                    test_collections.append(collection)
-
-        except Exception as e:
-            self.logger.error(f"❌ Error finding test collections: {e}")
-
-        return test_collections
 
 
 class TestStepFactory:
