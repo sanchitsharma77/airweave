@@ -151,7 +151,7 @@ jobs:
         env:
           CI: true # Tells runner to use simple output
           MONKE_NO_VENV: 1 # Skip venv setup in CI
-          MONKE_MAX_PARALLEL: 1
+          MONKE_MAX_PARALLEL: 5
           AIRWEAVE_API_URL: http://localhost:8001
 
           # Core dependencies (keep these as GitHub secrets)

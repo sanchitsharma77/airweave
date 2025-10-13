@@ -254,7 +254,7 @@ check_backend() {
 # Run tests in parallel
 run_tests() {
     local connectors=("$@")
-    local max_parallel="${MONKE_MAX_PARALLEL:-1}"
+    local max_parallel="${MONKE_MAX_PARALLEL:-5}"
     local env_file="${MONKE_ENV_FILE:-${MONKE_DIR}/.env}"
 
     if [[ ${#connectors[@]} -eq 0 ]]; then
