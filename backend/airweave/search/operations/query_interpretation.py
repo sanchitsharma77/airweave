@@ -18,16 +18,44 @@ from airweave.search.providers._base import BaseProvider
 from ._base import SearchOperation
 
 
+class ValueMatch(BaseModel):
+    """Exact match condition for a single value."""
+
+    model_config = {"extra": "forbid"}
+    value: str | int | float | bool
+
+
+class AnyMatch(BaseModel):
+    """Any-of match condition for multiple values (IN semantics)."""
+
+    model_config = {"extra": "forbid"}
+    any: List[str | int | float | bool]
+
+
+class RangeSpec(BaseModel):
+    """Range condition with standard comparison operators."""
+
+    model_config = {"extra": "forbid"}
+    gt: Optional[str | float] = None
+    gte: Optional[str | float] = None
+    lt: Optional[str | float] = None
+    lte: Optional[str | float] = None
+
+
 class FilterCondition(BaseModel):
     """A single filter condition."""
 
+    model_config = {"extra": "forbid"}
+
     key: str
-    match: Optional[Dict[str, Any]] = None
-    range: Optional[Dict[str, Any]] = None
+    match: Optional[ValueMatch | AnyMatch] = None
+    range: Optional[RangeSpec] = None
 
 
 class ExtractedFilters(BaseModel):
     """Structured output schema for extracted filters."""
+
+    model_config = {"extra": "forbid"}
 
     filters: List[FilterCondition] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
@@ -306,7 +334,7 @@ class QueryInterpretation(SearchOperation):
     def _validate_filters(
         self, filters: List[FilterCondition], available_fields: Dict[str, Dict[str, str]]
     ) -> List[Dict[str, Any]]:
-        """Validate filter conditions against available fields."""
+        """Validate filter conditions against available fields and convert to Qdrant format."""
         allowed_keys = set()
         allowed_sources = set(available_fields.keys())
 
@@ -315,62 +343,105 @@ class QueryInterpretation(SearchOperation):
 
         validated = []
         for condition in filters:
-            # Drop filters for fields that don't exist
             if condition.key not in allowed_keys:
                 continue
 
-            # Convert FilterCondition to dict with mapped Qdrant path
             cond_dict = {"key": self._map_to_qdrant_path(condition.key)}
 
-            # Special validation for source_name to ensure correct values
-            if condition.key == "source_name" and condition.match:
-                validated_match = self._validate_source_name_match(condition.match, allowed_sources)
+            if condition.match:
+                match_dict = self._convert_match_to_dict(condition.match)
+                if condition.key == "source_name":
+                    validated_match = self._validate_source_name_match(match_dict, allowed_sources)
+                else:
+                    validated_match = match_dict
+
                 if not validated_match:
-                    continue  # Invalid source_name value, skip this filter
+                    continue
                 cond_dict["match"] = validated_match
-            elif condition.match:
-                cond_dict["match"] = condition.match
 
             if condition.range:
-                cond_dict["range"] = condition.range
+                cond_dict["range"] = self._convert_range_to_dict(condition.range)
 
             validated.append(cond_dict)
 
         return validated
 
+    def _convert_match_to_dict(self, match: ValueMatch | AnyMatch) -> Dict[str, Any]:
+        """Convert match model to Qdrant-compatible dict format."""
+        if isinstance(match, ValueMatch):
+            return {"value": match.value}
+        elif isinstance(match, AnyMatch):
+            return {"any": match.any}
+        # Fallback for any other match type
+        try:
+            return match.model_dump(exclude_none=True)  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+    def _convert_range_to_dict(self, range_spec: RangeSpec) -> Dict[str, Any]:
+        """Convert range model to Qdrant-compatible dict format."""
+        try:
+            return range_spec.model_dump(exclude_none=True)
+        except Exception:
+            return {
+                k: v
+                for k, v in {
+                    "gt": range_spec.gt,
+                    "gte": range_spec.gte,
+                    "lt": range_spec.lt,
+                    "lte": range_spec.lte,
+                }.items()
+                if v is not None
+            }
+
     def _validate_source_name_match(
         self, match: Dict[str, Any], allowed_sources: set
     ) -> Optional[Dict[str, Any]]:
-        """Validate source_name match values against allowed sources."""
-        # Handle single value match
+        """Validate source_name match values against allowed sources.
+
+        Args:
+            match: Match dict with 'value' or 'any' key
+            allowed_sources: Set of valid source names
+
+        Returns:
+            Validated match dict or None if invalid
+        """
         if "value" in match:
-            value = str(match["value"])
-            # Check exact match or lowercase match
-            if value in allowed_sources:
-                return {"value": value}
-            # Try lowercase
-            if value.lower() in allowed_sources:
-                return {"value": value.lower()}
-            # Invalid source value
-            return None
+            return self._validate_single_source_value(match["value"], allowed_sources)
 
-        # Handle any-of match
         if "any" in match and isinstance(match["any"], list):
-            valid_values = []
-            for val in match["any"]:
-                val_str = str(val)
-                if val_str in allowed_sources:
-                    valid_values.append(val_str)
-                elif val_str.lower() in allowed_sources:
-                    valid_values.append(val_str.lower())
-
-            if not valid_values:
-                return None
-            if len(valid_values) == 1:
-                return {"value": valid_values[0]}
-            return {"any": valid_values}
+            return self._validate_multiple_source_values(match["any"], allowed_sources)
 
         return match
+
+    def _validate_single_source_value(
+        self, value: Any, allowed_sources: set
+    ) -> Optional[Dict[str, Any]]:
+        """Validate a single source name value."""
+        value_str = str(value)
+        if value_str in allowed_sources:
+            return {"value": value_str}
+        if value_str.lower() in allowed_sources:
+            return {"value": value_str.lower()}
+        return None
+
+    def _validate_multiple_source_values(
+        self, values: List[Any], allowed_sources: set
+    ) -> Optional[Dict[str, Any]]:
+        """Validate multiple source name values (any-of match)."""
+        valid_values = []
+        for val in values:
+            val_str = str(val)
+            if val_str in allowed_sources:
+                valid_values.append(val_str)
+            elif val_str.lower() in allowed_sources:
+                valid_values.append(val_str.lower())
+
+        if not valid_values:
+            return None
+        if len(valid_values) == 1:
+            return {"value": valid_values[0]}
+        return {"any": valid_values}
 
     def _map_to_qdrant_path(self, key: str) -> str:
         """Map field names to Qdrant payload paths."""

@@ -5,7 +5,7 @@ Uses LLM to generate semantic alternatives that might match relevant documents
 using different terminology while preserving the original search intent.
 """
 
-from typing import Any, List
+from typing import Any, List, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -23,15 +23,16 @@ _NUMBER_OF_EXPANSIONS = 4
 class QueryExpansions(BaseModel):
     """Structured output schema for LLM-generated query expansions."""
 
-    alternatives: List[str] = Field(
+    # Use a fixed-size tuple to generate Cerebras-compatible prefixItems schema
+    model_config = {"extra": "forbid"}
+
+    alternatives: Tuple[str, str, str, str] = Field(
         description=(
             f"Exactly {_NUMBER_OF_EXPANSIONS} UNIQUE and DISTINCT alternative query "
             f"phrasings. Each alternative MUST be different from all others AND "
             f"different from the original query. No duplicates, no repetitions, "
             f"no variations that differ only in punctuation or capitalization."
-        ),
-        min_items=_NUMBER_OF_EXPANSIONS,
-        max_items=_NUMBER_OF_EXPANSIONS,
+        )
     )
 
 

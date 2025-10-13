@@ -50,7 +50,7 @@ provider_models:
 
   cerebras:
     llm:
-      name: "openai/gpt-oss-120b"
+      name: "gpt-oss-120b"
       tokenizer: "o200k_harmony"
       context_window: 64000 # TODO: goes up on paid tier
     embedding: null
