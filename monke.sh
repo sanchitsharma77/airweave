@@ -166,16 +166,24 @@ detect_changed_connectors() {
     local base_branch="${BASE_BRANCH:-${1:-main}}"
     local changed_files
     local changed_connectors=()
+    local git_ref
 
-    log_step "Detecting changed connectors vs ${base_branch}..." >&2
+    # In GitHub Actions, use origin/branch, locally use just branch
+    if is_ci; then
+        git_ref="origin/${base_branch}"
+    else
+        git_ref="${base_branch}"
+    fi
+
+    log_step "Detecting changed connectors vs ${git_ref}..." >&2
 
     # Get list of changed files
-    if ! git diff --name-only "${base_branch}...HEAD" &>/dev/null; then
-        log_warning "Cannot detect changes (not a git repo or ${base_branch} not found)" >&2
+    if ! git diff --name-only "${git_ref}...HEAD" &>/dev/null; then
+        log_warning "Cannot detect changes (not a git repo or ${git_ref} not found)" >&2
         return 1
     fi
 
-    changed_files=$(git diff --name-only "${base_branch}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/platform/sources/|backend/airweave/platform/entities/)" || true)
+    changed_files=$(git diff --name-only "${git_ref}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/platform/sources/|backend/airweave/platform/entities/)" || true)
 
     if [[ -z "$changed_files" ]]; then
         log_info "No connector-related changes detected" >&2

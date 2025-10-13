@@ -55,17 +55,14 @@ jobs:
           wait
           echo "All images pre-pulled successfully"
 
-      - name: Build test images locally
+      - name: Build test backend image locally
         run: |
           echo "Building backend image for testing..."
           docker build -t test-backend:latest ./backend
-          echo "Building frontend image for testing..."
-          docker build -t test-frontend:latest ./frontend
 
       - name: Setup environment and start services
         env:
           BACKEND_IMAGE: test-backend:latest
-          FRONTEND_IMAGE: test-frontend:latest
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY || 'dummy-key' }}
@@ -74,8 +71,9 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY || 'dummy-key' }}
           # Required for start.sh to skip interactive prompts
           NONINTERACTIVE: "1"
-          # Skip local embeddings (we have OpenAI key, saves ~2GB)
-          SKIP_LOCAL_EMBEDDINGS: "1"
+          # Skip services not needed for backend API tests
+          SKIP_LOCAL_EMBEDDINGS: "1"  # Use OpenAI embeddings (saves ~2GB)
+          SKIP_FRONTEND: "1"  # Backend-only testing (saves time)
           # Set required environment variables for the containers
           AUTH0_ENABLED: "false"
           DEV_MODE: "true"
@@ -106,9 +104,7 @@ jobs:
           echo "Testing backend on port 8001..."
           curl -f http://localhost:8001/health || (echo "Backend not healthy"; docker logs airweave-backend; exit 1)
 
-          # Frontend runs on port 8080 according to start.sh
-          echo "Testing frontend on port 8080..."
-          curl -f http://localhost:8080 || (echo "Frontend not healthy"; docker logs airweave-frontend; exit 1)
+          echo "Backend is healthy and ready for API tests!"
 
       - name: Run E2E Smoke Tests
         env:

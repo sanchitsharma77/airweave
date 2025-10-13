@@ -61,15 +61,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Build and push frontend image (ONCE for all parallel jobs)
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          push: true
-          tags: ghcr.io/${{ github.repository }}/test-frontend:${{ steps.set-tag.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Note: Frontend image not needed for connector tests (backend-only)
 
       # Determine which connectors to test
       - name: Determine connectors to test
@@ -108,7 +100,7 @@ jobs:
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
           echo "connector-count=$CONNECTOR_COUNT" >> $GITHUB_OUTPUT
 
-  # Job 2: Run tests in parallel (reuses pre-built images)
+  # Job 2: Run tests in parallel (reuses pre-built backend image)
   test-connectors:
     needs: build-and-determine
     runs-on: ubuntu-latest
@@ -127,9 +119,8 @@ jobs:
       packages: read  # For pulling from GHCR
 
     env:
-      # Use pre-built images from GHCR
+      # Use pre-built backend image from GHCR (frontend not needed for connector tests)
       BACKEND_IMAGE: ghcr.io/${{ github.repository }}/test-backend:${{ needs.build-and-determine.outputs.image-tag }}
-      FRONTEND_IMAGE: ghcr.io/${{ github.repository }}/test-frontend:${{ needs.build-and-determine.outputs.image-tag }}
 
       # Core configuration
       AIRWEAVE_API_URL: http://localhost:8001
@@ -154,18 +145,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull pre-built images from Job 1
-      - name: Pull pre-built test images
+      # Pull pre-built backend image from Job 1
+      - name: Pull pre-built backend image
         run: |
           echo "Pulling pre-built backend image..."
           docker pull ${{ env.BACKEND_IMAGE }}
 
-          echo "Pulling pre-built frontend image..."
-          docker pull ${{ env.FRONTEND_IMAGE }}
-
-          # Tag them as local images for docker-compose compatibility
+          # Tag as local image for docker-compose compatibility
           docker tag ${{ env.BACKEND_IMAGE }} test-backend:latest
-          docker tag ${{ env.FRONTEND_IMAGE }} test-frontend:latest
 
       # Pre-pull infrastructure images in parallel
       # Note: Each matrix runner is isolated (separate VM), so we must pull on each
@@ -203,8 +190,9 @@ jobs:
         env:
           # Required for start.sh to skip interactive prompts
           NONINTERACTIVE: "1"
-          # Skip local embeddings (we have OpenAI key, saves ~2GB)
-          SKIP_LOCAL_EMBEDDINGS: "1"
+          # Skip services not needed for connector tests
+          SKIP_LOCAL_EMBEDDINGS: "1"  # Use OpenAI embeddings (saves ~2GB)
+          SKIP_FRONTEND: "1"  # Backend-only testing (saves time)
           # Set required environment variables for the containers
           AUTH0_ENABLED: "false"
           DEV_MODE: "true"
@@ -235,9 +223,7 @@ jobs:
           echo "Testing backend on port 8001..."
           curl -f http://localhost:8001/health || (echo "Backend not healthy"; docker logs airweave-backend; exit 1)
 
-          # Frontend runs on port 8080 according to start.sh
-          echo "Testing frontend on port 8080..."
-          curl -f http://localhost:8080 || (echo "Frontend not healthy"; docker logs airweave-frontend; exit 1)
+          echo "Backend is healthy and ready for connector tests!"
 
 
       # Run test for this specific connector

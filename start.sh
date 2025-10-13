@@ -6,11 +6,13 @@ set -euo pipefail
 # ---- Optional flags/env (do not change default behavior) ---------------------
 NONINTERACTIVE="${NONINTERACTIVE:-}"
 SKIP_LOCAL_EMBEDDINGS="${SKIP_LOCAL_EMBEDDINGS:-}"  # Explicitly skip local embeddings
+SKIP_FRONTEND="${SKIP_FRONTEND:-}"  # Explicitly skip frontend
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --noninteractive) NONINTERACTIVE=1; shift ;;
     --skip-local-embeddings) SKIP_LOCAL_EMBEDDINGS=1; shift ;;
+    --skip-frontend) SKIP_FRONTEND=1; shift ;;
     *) echo "Unknown arg: $1"; exit 2 ;;
   esac
 done
@@ -182,11 +184,11 @@ if [ -n "${BACKEND_IMAGE:-}" ] || [ -n "${FRONTEND_IMAGE:-}" ]; then
     echo ""
 fi
 
-# Determine if we should use local embeddings
-# Skip if: 1) OpenAI key is available, or 2) explicitly disabled
+# Determine which optional services to start (default: all enabled for local dev)
 USE_LOCAL_EMBEDDINGS=true
+USE_FRONTEND=true
 
-# Check if OpenAI API key exists in .env
+# Check if OpenAI API key exists in .env - auto-skip local embeddings if present
 if [ -f .env ]; then
     OPENAI_KEY=$(grep "^OPENAI_API_KEY=" .env 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d ' ')
     if [ -n "$OPENAI_KEY" ] && [ "$OPENAI_KEY" != "your-api-key-here" ]; then
@@ -195,19 +197,31 @@ if [ -f .env ]; then
     fi
 fi
 
-# Check if explicitly disabled
+# Check for explicit skip flags (used in CI)
 if [ -n "$SKIP_LOCAL_EMBEDDINGS" ]; then
     echo "SKIP_LOCAL_EMBEDDINGS is set - skipping local embeddings service"
     USE_LOCAL_EMBEDDINGS=false
 fi
 
-# Build compose command with optional profile
+if [ -n "$SKIP_FRONTEND" ]; then
+    echo "SKIP_FRONTEND is set - skipping frontend service"
+    USE_FRONTEND=false
+fi
+
+# Build compose command with profiles (default: enable both)
 COMPOSE_CMD_WITH_OPTS="$COMPOSE_CMD -f docker/docker-compose.yml"
 if [ "$USE_LOCAL_EMBEDDINGS" = true ]; then
     echo "Starting with local embeddings service (text2vec-transformers)"
     COMPOSE_CMD_WITH_OPTS="$COMPOSE_CMD_WITH_OPTS --profile local-embeddings"
 else
     echo "Starting without local embeddings (backend will use OpenAI)"
+fi
+
+if [ "$USE_FRONTEND" = true ]; then
+    echo "Starting with frontend UI"
+    COMPOSE_CMD_WITH_OPTS="$COMPOSE_CMD_WITH_OPTS --profile frontend"
+else
+    echo "Starting without frontend (backend-only mode)"
 fi
 
 echo "Starting Docker services..."

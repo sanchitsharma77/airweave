@@ -90,6 +90,10 @@ services:
     container_name: airweave-frontend
     # Use pre-built image of latest release, or override with FRONTEND_IMAGE env var for testing
     image: ${FRONTEND_IMAGE:-ghcr.io/airweave-ai/airweave-frontend:latest}
+    # Profile: only start if explicitly enabled with --profile frontend
+    # Not needed for backend-only testing (API tests, connector tests)
+    profiles:
+      - frontend
     ports:
       - "${FRONTEND_LOCAL_DEVELOPMENT_PORT:-8080}:8080"
     environment:
