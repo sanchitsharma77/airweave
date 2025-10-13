@@ -136,12 +136,61 @@ pip install airweave-sdk
 ```python
 from airweave import AirweaveSDK
 
+# Initialize client
 client = AirweaveSDK(
     api_key="YOUR_API_KEY",
     base_url="http://localhost:8001"
 )
-client.collections.create(
-    name="name",
+
+# Create a collection
+collection = client.collections.create(name="My Collection")
+
+# Add a source connection
+source = client.source_connections.create(
+    name="My Stripe Connection",
+    short_name="stripe",
+    readable_collection_id=collection.readable_id,
+    authentication={
+        "credentials": {"api_key": "your_stripe_api_key"}
+    }
+)
+
+# Semantic search (default)
+results = client.collections.search(
+    readable_id=collection.readable_id,
+    query="Find recent failed payments"
+)
+
+# Hybrid search (semantic + keyword)
+results = client.collections.search(
+    readable_id=collection.readable_id,
+    query="customer invoices Q4 2024",
+    search_type="hybrid"
+)
+
+# With query expansion and reranking
+results = client.collections.search(
+    readable_id=collection.readable_id,
+    query="technical documentation",
+    enable_query_expansion=True,
+    enable_reranking=True,
+    top_k=20
+)
+
+# Search with recency bias (prioritize recent results)
+results = client.collections.search(
+    readable_id=collection.readable_id,
+    query="critical bugs",
+    recency_bias=0.8,  # 0.0 to 1.0, higher = more recent
+    limit=10
+)
+
+# Get AI-generated answer instead of raw results
+answer = client.collections.search(
+    readable_id=collection.readable_id,
+    query="What are our customer refund policies?",
+    response_type="completion",
+    enable_reranking=True
 )
 ```
 
@@ -155,13 +204,72 @@ yarn add @airweave/sdk
 ```typescript
 import { AirweaveSDKClient, AirweaveSDKEnvironment } from "@airweave/sdk";
 
+// Initialize client
 const client = new AirweaveSDKClient({
     apiKey: "YOUR_API_KEY",
     environment: AirweaveSDKEnvironment.Local
 });
-await client.collections.create({
-    name: "name",
+
+// Create a collection
+const collection = await client.collections.create({
+    name: "My Collection"
 });
+
+// Add a source connection
+const source = await client.sourceConnections.create({
+    name: "My Stripe Connection",
+    shortName: "stripe",
+    readableCollectionId: collection.readableId,
+    authentication: {
+        credentials: { apiKey: "your_stripe_api_key" }
+    }
+});
+
+// Semantic search (default)
+const results = await client.collections.search(
+    collection.readableId,
+    { query: "Find recent failed payments" }
+);
+
+// Hybrid search (semantic + keyword)
+const hybridResults = await client.collections.search(
+    collection.readableId,
+    {
+        query: "customer invoices Q4 2024",
+        searchType: "hybrid"
+    }
+);
+
+// With query expansion and reranking
+const advancedResults = await client.collections.search(
+    collection.readableId,
+    {
+        query: "technical documentation",
+        enableQueryExpansion: true,
+        enableReranking: true,
+        topK: 20
+    }
+);
+
+// Search with recency bias (prioritize recent results)
+const recentResults = await client.collections.search(
+    collection.readableId,
+    {
+        query: "critical bugs",
+        recencyBias: 0.8,  // 0.0 to 1.0, higher = more recent
+        limit: 10
+    }
+);
+
+// Get AI-generated answer instead of raw results
+const answer = await client.collections.search(
+    collection.readableId,
+    {
+        query: "What are our customer refund policies?",
+        responseType: "completion",
+        enableReranking: true
+    }
+);
 ```
 
 ## 🔑 Key Features
