@@ -30,6 +30,7 @@ from airweave.search.operations import (
     UserFilter,
 )
 from airweave.search.providers._base import BaseProvider
+from airweave.search.providers.cerebras import CerebrasProvider
 from airweave.search.providers.cohere import CohereProvider
 from airweave.search.providers.groq import GroqProvider
 from airweave.search.providers.openai import OpenAIProvider
@@ -317,6 +318,7 @@ class SearchFactory:
     def _get_available_api_keys(self) -> Dict[str, Optional[str]]:
         """Get available API keys from settings."""
         return {
+            "cerebras": getattr(settings, "CEREBRAS_API_KEY", None),
             "groq": getattr(settings, "GROQ_API_KEY", None),
             "openai": getattr(settings, "OPENAI_API_KEY", None),
             "cohere": getattr(settings, "COHERE_API_KEY", None),
@@ -378,7 +380,7 @@ class SearchFactory:
                 api_keys,
                 ctx,
                 "Query expansion enabled but no provider available. "
-                "Configure GROQ_API_KEY or OPENAI_API_KEY",
+                "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
         # Federated search
@@ -390,7 +392,7 @@ class SearchFactory:
                 api_keys,
                 ctx,
                 "Federated sources exist but no provider available for keyword extraction. "
-                "Configure GROQ_API_KEY or OPENAI_API_KEY",
+                "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
         # Query interpretation
@@ -402,7 +404,7 @@ class SearchFactory:
                 api_keys,
                 ctx,
                 "Query interpretation enabled but no provider available. "
-                "Configure GROQ_API_KEY or OPENAI_API_KEY",
+                "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
         # Reranking
@@ -426,7 +428,7 @@ class SearchFactory:
                 api_keys,
                 ctx,
                 "Answer generation enabled but no provider available. "
-                "Configure GROQ_API_KEY or OPENAI_API_KEY",
+                "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
         return providers
@@ -503,7 +505,12 @@ class SearchFactory:
 
             # Initialize provider with complete model spec
             try:
-                if provider_name == "groq":
+                if provider_name == "cerebras":
+                    ctx.logger.debug(
+                        f"[Factory] Attempting to initialize CerebrasProvider for {operation_name}"
+                    )
+                    return CerebrasProvider(api_key=api_key, model_spec=model_spec, ctx=ctx)
+                elif provider_name == "groq":
                     ctx.logger.debug(
                         f"[Factory] Attempting to initialize GroqProvider for {operation_name}"
                     )
