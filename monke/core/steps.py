@@ -80,6 +80,11 @@ class SyncStep(TestStep):
         """Trigger sync and wait for completion."""
         self.logger.info("🔄 Syncing data to Airweave")
 
+        # Add delay to allow external APIs (like GitHub) to update their commit history
+        # This prevents race conditions where sync runs before deletions are reflected in API
+        self.logger.info("⏳ Waiting 30s for external API to reflect recent changes...")
+        await asyncio.sleep(30)
+
         # If a job is already running, wait for it, BUT ALWAYS launch our own sync afterwards
         active_job_id = self._find_active_job_id()
         if active_job_id:
@@ -304,10 +309,31 @@ async def _token_present_in_collection(
         # Always use 1000 limit for comprehensive results
         results = await _search_collection_async(client, readable_id, token, 1000)
         token_lower = token.lower()
-        for r in results:
+
+        # Debug logging to help diagnose search issues
+        logger = get_logger("monke")
+        logger.info(f"🔍 Searching for token '{token}' in collection '{readable_id}'")
+        logger.info(f"🔍 Found {len(results)} results from search")
+
+        # Log all results for debugging
+        for i, r in enumerate(results):
+            payload = r.get("payload", {})
+            score = r.get("score", 0)
+            logger.info(
+                f"   Result {i}: {payload.get('name', 'Unknown')} (score: {score})"
+            )
+            if i < 2:  # Show first 2 results in detail
+                logger.info(f"      Payload: {str(payload)[:200]}...")
+
+        for i, r in enumerate(results):
             payload = r.get("payload", {})
             if payload and token_lower in str(payload).lower():
+                logger.info(
+                    f"✅ Token '{token}' found in result {i}: {payload.get('name', 'Unknown')}"
+                )
                 return True
+
+        logger.info(f"✅ Token '{token}' confirmed deleted (not found in any of {len(results)} results)")
         return False
     except Exception as e:
         get_logger("monke").error(f"Error checking token present in collection: {e}")
@@ -332,6 +358,12 @@ class VerifyStep(TestStep):
         self.logger.info("🔍 Verifying entities in Qdrant")
         client = self.context.airweave_client
 
+        # Debug: Log collection info
+        self.logger.info(
+            f"🔍 Searching in collection: {self.context.collection_readable_id}"
+        )
+        self.logger.info(f"🔍 Verifying {len(self.context.created_entities)} entities")
+
         async def verify_one(entity: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
             expected_token = entity.get("token")
             if not expected_token:
@@ -340,11 +372,19 @@ class VerifyStep(TestStep):
                 )
                 expected_token = (entity.get("path") or "").split("/")[-1]
 
+            self.logger.info(
+                f"🔍 Verifying entity: {self._display_name(entity)} with token: {expected_token}"
+            )
+
             # Always use 1000 limit for comprehensive search
             ok = await _token_present_in_collection(
                 client, self.context.collection_readable_id, expected_token, 1000
             )
             return entity, ok
+
+        # Add a wait after sync completion to allow Qdrant indexing
+        self.logger.info("⏳ Waiting 10s for Qdrant indexing to complete...")
+        await asyncio.sleep(10)
 
         # Retry support + optional one-time rescue resync
         attempts = int(self.config.verification_config.get("retries", 5))
@@ -439,16 +479,21 @@ class PartialDeleteStep(TestStep):
         # (e.g., cascade deletions in ClickUp where deleting a task also deletes its children)
         # We need to update our tracking based on what was actually deleted
 
-        # Build a set of deleted IDs for fast lookup
-        deleted_ids = set(deleted_paths)
+        # Build a set of deleted identifiers for fast lookup
+        deleted_identifiers = set(deleted_paths)
 
         # Find all entities that were actually deleted (including cascade deletions)
-        actually_deleted = [
-            e for e in self.context.created_entities if e["id"] in deleted_ids
-        ]
-        actually_remaining = [
-            e for e in self.context.created_entities if e["id"] not in deleted_ids
-        ]
+        # Different bongos use different identifier fields (id vs path)
+        actually_deleted = []
+        actually_remaining = []
+
+        for e in self.context.created_entities:
+            # Check both 'id' and 'path' fields to support different bongo types
+            entity_identifier = e.get("id") or e.get("path")
+            if entity_identifier and entity_identifier in deleted_identifiers:
+                actually_deleted.append(e)
+            else:
+                actually_remaining.append(e)
 
         # Update context with actual results
         self.context.partially_deleted_entities = actually_deleted
@@ -755,34 +800,39 @@ class CollectionCleanupStep(TestStep):
         cleanup_stats = {"collections_deleted": 0, "errors": 0}
 
         try:
-            # Find all test collections
-            test_collections = await self._find_test_collections()
-
-            if test_collections:
+            # Only clean up collections that belong to this specific test
+            # This prevents race conditions where tests delete each other's collections
+            if (
+                hasattr(self.context, "collection_readable_id")
+                and self.context.collection_readable_id
+            ):
                 self.logger.info(
-                    f"🔍 Found {len(test_collections)} test collections to clean up"
+                    f"🔍 Cleaning up current test collection: {self.context.collection_readable_id}"
                 )
 
-                for collection in test_collections:
-                    try:
-                        response = http_utils.http_delete(
-                            f"/collections/{collection['readable_id']}"
+                try:
+                    response = http_utils.http_delete(
+                        f"/collections/{self.context.collection_readable_id}"
+                    )
+                    if response.status_code in [200, 204]:
+                        cleanup_stats["collections_deleted"] += 1
+                        self.logger.info(
+                            f"✅ Deleted collection: {self.context.collection_readable_id}"
                         )
-                        if response.status_code in [200, 204]:
-                            cleanup_stats["collections_deleted"] += 1
-                            self.logger.info(
-                                f"✅ Deleted collection: {collection['name']} ({collection['readable_id']})"
-                            )
-                        else:
-                            cleanup_stats["errors"] += 1
-                            self.logger.warning(
-                                f"⚠️ Failed to delete collection {collection['readable_id']}: {response.status_code}"
-                            )
-                    except Exception as e:
+                    elif response.status_code == 404:
+                        self.logger.info("ℹ️  Collection already deleted")
+                    else:
                         cleanup_stats["errors"] += 1
                         self.logger.warning(
-                            f"⚠️ Failed to delete collection {collection['readable_id']}: {e}"
+                            f"⚠️ Failed to delete collection {self.context.collection_readable_id}: {response.status_code}"
                         )
+                except Exception as e:
+                    cleanup_stats["errors"] += 1
+                    self.logger.warning(
+                        f"⚠️ Failed to delete collection {self.context.collection_readable_id}: {e}"
+                    )
+            else:
+                self.logger.info("ℹ️  No collection to clean up for this test")
 
             # Log cleanup summary
             self.logger.info(
@@ -793,37 +843,6 @@ class CollectionCleanupStep(TestStep):
         except Exception as e:
             self.logger.error(f"❌ Error during collection cleanup: {e}")
             # Don't re-raise - cleanup should be best-effort
-
-    async def _find_test_collections(self) -> List[Dict[str, Any]]:
-        """Find all test collections that should be cleaned up."""
-        test_collections = []
-
-        try:
-            collections = http_utils.http_get("/collections")
-
-            # Handle both list and dict with items/results key
-            if isinstance(collections, dict):
-                collections = collections.get("items", collections.get("results", []))
-
-            for collection in collections:
-                name = collection.get("name", "")
-                readable_id = collection.get("readable_id", "")
-
-                # Check if this looks like a test collection
-                is_test_collection = (
-                    name.lower().startswith("monke-")
-                    or "test" in name.lower()
-                    and ("collection" in name.lower() or "monke" in name.lower())
-                    or readable_id.startswith("monke-")
-                )
-
-                if is_test_collection:
-                    test_collections.append(collection)
-
-        except Exception as e:
-            self.logger.error(f"❌ Error finding test collections: {e}")
-
-        return test_collections
 
 
 class TestStepFactory:
