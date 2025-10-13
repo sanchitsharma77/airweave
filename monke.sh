@@ -184,15 +184,22 @@ detect_changed_connectors() {
     while IFS= read -r file; do
         local connector=""
 
-        if [[ "$file" =~ monke/(bongos|configs|generation)/([^/]+)\.(py|yaml) ]]; then
-            connector="${BASH_REMATCH[2]}"
-        elif [[ "$file" =~ backend/airweave/platform/(entities|sources)/([^/]+)\.(py|yaml) ]]; then
-            connector="${BASH_REMATCH[2]}"
+        # Use sed for reliable extraction (works with older bash versions)
+        if echo "$file" | grep -q "monke/bongos/"; then
+            connector=$(echo "$file" | sed -n 's|.*/bongos/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "monke/configs/"; then
+            connector=$(echo "$file" | sed -n 's|.*/configs/\([^/]*\)\.yaml|\1|p')
+        elif echo "$file" | grep -q "monke/generation/"; then
+            connector=$(echo "$file" | sed -n 's|.*/generation/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "backend/airweave/platform/sources/"; then
+            connector=$(echo "$file" | sed -n 's|.*/sources/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "backend/airweave/platform/entities/"; then
+            connector=$(echo "$file" | sed -n 's|.*/entities/\([^/]*\)\.py|\1|p')
         fi
 
         if [[ -n "$connector" ]] && [[ -f "${MONKE_DIR}/configs/${connector}.yaml" ]]; then
             # Avoid duplicates
-            if [[ ! " ${changed_connectors[@]} " =~ " ${connector} " ]]; then
+            if [[ ${#changed_connectors[@]} -eq 0 ]] || [[ ! " ${changed_connectors[@]} " =~ " ${connector} " ]]; then
                 changed_connectors+=("$connector")
             fi
         fi
@@ -215,7 +222,7 @@ get_hybrid_connectors() {
     
     # Try to detect changed connectors
     local changed_output
-    if changed_output=$(detect_changed_connectors 2>/dev/null); then
+    if changed_output=$(detect_changed_connectors); then
         changed_connectors=($changed_output)
         log_info "Found changed connectors: ${changed_connectors[*]}" >&2
     else
