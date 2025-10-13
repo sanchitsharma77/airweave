@@ -165,12 +165,6 @@ class GmailConfig(SourceConfig):
         description="Sync emails after this date (format: YYYY/MM/DD or YYYY-MM-DD).",
     )
 
-    before_date: Optional[str] = Field(
-        None,
-        title="Before Date",
-        description="Sync emails before this date (format: YYYY/MM/DD or YYYY-MM-DD).",
-    )
-
     included_labels: list[str] = Field(
         default=["inbox", "sent"],
         title="Included Labels",
@@ -216,15 +210,13 @@ class GmailConfig(SourceConfig):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @validator("after_date", "before_date")
+    @validator("after_date")
     def validate_date_format(cls, value):
         """Validate date format and convert to YYYY/MM/DD."""
         if not value:
             return value
         # Accept both YYYY/MM/DD and YYYY-MM-DD formats
-        if value:
-            value = value.replace("-", "/")
-        return value
+        return value.replace("-", "/")
 
 
 class GoogleCalendarConfig(SourceConfig):
@@ -316,7 +308,46 @@ class OutlookCalendarConfig(SourceConfig):
 class OutlookMailConfig(SourceConfig):
     """Outlook Mail configuration schema."""
 
-    pass
+    after_date: Optional[str] = Field(
+        None,
+        title="After Date",
+        description="Sync emails after this date (format: YYYY/MM/DD or YYYY-MM-DD).",
+    )
+
+    included_folders: list[str] = Field(
+        default=["inbox", "sentitems"],
+        title="Included Folders",
+        description=(
+            "Well-known folder names to include (e.g., 'inbox', 'sentitems', 'drafts'). "
+            "Defaults to inbox and sent items."
+        ),
+    )
+
+    excluded_folders: list[str] = Field(
+        default=["junkemail", "deleteditems"],
+        title="Excluded Folders",
+        description=(
+            "Well-known folder names to exclude (e.g., 'junkemail', 'deleteditems'). "
+            "Defaults to junk email and deleted items."
+        ),
+    )
+
+    @validator("included_folders", "excluded_folders", pre=True)
+    def parse_list_fields(cls, value):
+        """Convert comma-separated string to list if needed."""
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @validator("after_date")
+    def validate_date_format(cls, value):
+        """Validate date format and convert to YYYY/MM/DD."""
+        if not value:
+            return value
+        # Accept both YYYY/MM/DD and YYYY-MM-DD formats
+        return value.replace("-", "/")
 
 
 class CTTIConfig(SourceConfig):

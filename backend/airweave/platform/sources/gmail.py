@@ -85,7 +85,6 @@ class GmailSource(BaseSource):
 
         # Filter configuration
         instance.after_date = config.get("after_date")
-        instance.before_date = config.get("before_date")
         instance.included_labels = config.get("included_labels", ["inbox", "sent"])
         instance.excluded_labels = config.get("excluded_labels", ["spam", "trash"])
         instance.excluded_categories = config.get("excluded_categories", ["promotions", "social"])
@@ -118,15 +117,19 @@ class GmailSource(BaseSource):
         """Build individual query parts from filter configuration."""
         parts = []
 
-        # Date filters
+        # Date filter
         if getattr(self, "after_date", None):
             parts.append(f"after:{self.after_date}")
-        if getattr(self, "before_date", None):
-            parts.append(f"before:{self.before_date}")
 
-        # Included labels
-        for label in getattr(self, "included_labels", []):
-            parts.append(f"in:{label}")
+        # Included labels (OR logic - wrap in parentheses with OR)
+        included_labels = getattr(self, "included_labels", [])
+        if included_labels:
+            if len(included_labels) == 1:
+                parts.append(f"in:{included_labels[0]}")
+            else:
+                # Gmail syntax: {in:inbox OR in:sent}
+                label_parts = " OR ".join(f"in:{label}" for label in included_labels)
+                parts.append(f"{{{label_parts}}}")
 
         # Excluded labels
         for label in getattr(self, "excluded_labels", []):
@@ -150,10 +153,42 @@ class GmailSource(BaseSource):
             True if message matches filters, False otherwise
         """
         # If custom query is used, we can't filter post-fetch reliably
-        # so we accept all messages
         if getattr(self, "gmail_query", None):
             return True
 
+        # Check date filters
+        if not self._message_matches_date_filters(message_data):
+            return False
+
+        # Check label filters
+        if not self._message_matches_label_filters(message_data):
+            return False
+
+        return True
+
+    def _message_matches_date_filters(self, message_data: Dict) -> bool:
+        """Check if message matches after_date filter."""
+        after_date = getattr(self, "after_date", None)
+        if not after_date:
+            return True
+
+        internal_date_ms = message_data.get("internalDate")
+        if not internal_date_ms:
+            return True
+
+        try:
+            message_date = datetime.utcfromtimestamp(int(internal_date_ms) / 1000)
+            after_dt = datetime.strptime(after_date, "%Y/%m/%d")
+            if message_date < after_dt:
+                self.logger.debug(f"Message {message_data.get('id')} skipped: before after_date")
+                return False
+        except (ValueError, TypeError) as e:
+            self.logger.warning(f"Failed to parse date for message {message_data.get('id')}: {e}")
+
+        return True
+
+    def _message_matches_label_filters(self, message_data: Dict) -> bool:
+        """Check if message matches label and category filters."""
         label_ids = message_data.get("labelIds", []) or []
         label_ids_lower = [label.lower() for label in label_ids]
 
