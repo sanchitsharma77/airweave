@@ -108,6 +108,10 @@ services:
   text2vec-transformers:
     container_name: airweave-embeddings
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
+    # Profile: only start if explicitly enabled with --profile local-embeddings
+    # By default, backend uses OpenAI embeddings when OPENAI_API_KEY is set
+    profiles:
+      - local-embeddings
     ports:
       - "9878:8080"
     environment:
