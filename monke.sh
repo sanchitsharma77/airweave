@@ -27,6 +27,7 @@ ${BOLD}Usage:${NC}
     ./monke.sh --changed                Run core connectors + any changed connectors
     ./monke.sh --all                    Run all connectors in parallel
     ./monke.sh --list                   List available connectors
+    ./monke.sh --print-connectors       Print connectors that would be tested (space-separated)
     ./monke.sh --help                   Show this help
 
 ${BOLD}Examples:${NC}
@@ -34,6 +35,7 @@ ${BOLD}Examples:${NC}
     ./monke.sh github asana notion      Run multiple specific connectors
     ./monke.sh --changed                Run core + changed connectors
     ./monke.sh --all                    Run all connector tests in parallel
+    ./monke.sh --print-connectors --changed  Print connectors for CI matrix
 
 ${BOLD}Environment:${NC}
     AIRWEAVE_API_URL                    Backend URL (default: http://localhost:8001)
@@ -146,7 +148,7 @@ get_core_connectors() {
         "asana"       # Task management, different data patterns
         "linear"      # Modern API, good for testing
     )
-    
+
     # Filter to only include connectors that have configs
     local available_connectors=()
     for connector in "${core_connectors[@]}"; do
@@ -154,7 +156,7 @@ get_core_connectors() {
             available_connectors+=("$connector")
         fi
     done
-    
+
     echo "${available_connectors[@]}"
 }
 
@@ -164,16 +166,24 @@ detect_changed_connectors() {
     local base_branch="${BASE_BRANCH:-${1:-main}}"
     local changed_files
     local changed_connectors=()
+    local git_ref
 
-    log_step "Detecting changed connectors vs ${base_branch}..." >&2
+    # In GitHub Actions, use origin/branch, locally use just branch
+    if is_ci; then
+        git_ref="origin/${base_branch}"
+    else
+        git_ref="${base_branch}"
+    fi
+
+    log_step "Detecting changed connectors vs ${git_ref}..." >&2
 
     # Get list of changed files
-    if ! git diff --name-only "${base_branch}...HEAD" &>/dev/null; then
-        log_warning "Cannot detect changes (not a git repo or ${base_branch} not found)" >&2
+    if ! git diff --name-only "${git_ref}...HEAD" &>/dev/null; then
+        log_warning "Cannot detect changes (not a git repo or ${git_ref} not found)" >&2
         return 1
     fi
 
-    changed_files=$(git diff --name-only "${base_branch}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/platform/sources/|backend/airweave/platform/entities/)" || true)
+    changed_files=$(git diff --name-only "${git_ref}...HEAD" | grep -E "(monke/bongos/|monke/configs/|monke/generation/|backend/airweave/platform/sources/|backend/airweave/platform/entities/)" || true)
 
     if [[ -z "$changed_files" ]]; then
         log_info "No connector-related changes detected" >&2
@@ -184,15 +194,22 @@ detect_changed_connectors() {
     while IFS= read -r file; do
         local connector=""
 
-        if [[ "$file" =~ monke/(bongos|configs|generation)/([^/]+)\.(py|yaml) ]]; then
-            connector="${BASH_REMATCH[2]}"
-        elif [[ "$file" =~ backend/airweave/platform/(entities|sources)/([^/]+)\.(py|yaml) ]]; then
-            connector="${BASH_REMATCH[2]}"
+        # Use sed for reliable extraction (works with older bash versions)
+        if echo "$file" | grep -q "monke/bongos/"; then
+            connector=$(echo "$file" | sed -n 's|.*/bongos/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "monke/configs/"; then
+            connector=$(echo "$file" | sed -n 's|.*/configs/\([^/]*\)\.yaml|\1|p')
+        elif echo "$file" | grep -q "monke/generation/"; then
+            connector=$(echo "$file" | sed -n 's|.*/generation/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "backend/airweave/platform/sources/"; then
+            connector=$(echo "$file" | sed -n 's|.*/sources/\([^/]*\)\.py|\1|p')
+        elif echo "$file" | grep -q "backend/airweave/platform/entities/"; then
+            connector=$(echo "$file" | sed -n 's|.*/entities/\([^/]*\)\.py|\1|p')
         fi
 
         if [[ -n "$connector" ]] && [[ -f "${MONKE_DIR}/configs/${connector}.yaml" ]]; then
             # Avoid duplicates
-            if [[ ! " ${changed_connectors[@]} " =~ " ${connector} " ]]; then
+            if [[ ${#changed_connectors[@]} -eq 0 ]] || [[ ! " ${changed_connectors[@]} " =~ " ${connector} " ]]; then
                 changed_connectors+=("$connector")
             fi
         fi
@@ -212,17 +229,17 @@ get_hybrid_connectors() {
     # Core connectors that always run
     local core_connectors=("github" "notion" "asana" "linear")
     local changed_connectors=()
-    
+
     # Try to detect changed connectors
     local changed_output
-    if changed_output=$(detect_changed_connectors 2>/dev/null); then
+    if changed_output=$(detect_changed_connectors); then
         changed_connectors=($changed_output)
         log_info "Found changed connectors: ${changed_connectors[*]}" >&2
     else
         changed_connectors=()
         log_info "No changed connectors detected" >&2
     fi
-    
+
     # Combine core + changed, removing duplicates
     local all_connectors=("${core_connectors[@]}")
     if [[ ${#changed_connectors[@]} -gt 0 ]]; then
@@ -233,8 +250,40 @@ get_hybrid_connectors() {
             fi
         done
     fi
-    
+
     echo "${all_connectors[@]}"
+}
+
+# Ensure minimum number of connectors (pad with extras if needed)
+ensure_min_connectors() {
+    local connectors=("$@")
+    local min_connectors="${MONKE_MIN_CONNECTORS:-4}"
+
+    # If we already have enough, just return them
+    if [[ ${#connectors[@]} -ge $min_connectors ]]; then
+        echo "${connectors[@]}"
+        return 0
+    fi
+
+    log_info "Only ${#connectors[@]} connectors, padding to minimum of $min_connectors..." >&2
+
+    # Get all available connectors
+    local available=($(get_available_connectors))
+
+    # Add extras until we reach minimum
+    for connector in "${available[@]}"; do
+        if [[ ${#connectors[@]} -ge $min_connectors ]]; then
+            break
+        fi
+
+        # Add if not already in list
+        if [[ ! " ${connectors[@]} " =~ " ${connector} " ]]; then
+            connectors+=("$connector")
+            log_info "Added extra connector: $connector" >&2
+        fi
+    done
+
+    echo "${connectors[@]}"
 }
 
 # Check if Airweave backend is running
@@ -254,7 +303,7 @@ check_backend() {
 # Run tests in parallel
 run_tests() {
     local connectors=("$@")
-    local max_parallel="${MONKE_MAX_PARALLEL:-1}"
+    local max_parallel="${MONKE_MAX_PARALLEL:-5}"
     local env_file="${MONKE_ENV_FILE:-${MONKE_DIR}/.env}"
 
     if [[ ${#connectors[@]} -eq 0 ]]; then
@@ -311,6 +360,7 @@ run_tests() {
 main() {
     local connectors=()
     local mode="specific"
+    local print_connectors=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -322,6 +372,10 @@ main() {
             --list|-l)
                 list_connectors
                 exit 0
+                ;;
+            --print-connectors)
+                print_connectors=true
+                shift
                 ;;
             --all|-a)
                 mode="all"
@@ -346,6 +400,30 @@ main() {
                 ;;
         esac
     done
+
+    # If --print-connectors, just determine and print them (for CI matrix generation)
+    if [[ "$print_connectors" == true ]]; then
+        case "$mode" in
+            all)
+                connectors=($(get_available_connectors))
+                ;;
+            changed)
+                connectors=($(get_hybrid_connectors))
+                ;;
+            specific)
+                if [[ ${#connectors[@]} -eq 0 ]]; then
+                    connectors=($(get_hybrid_connectors))
+                fi
+                ;;
+        esac
+
+        # Ensure minimum of 4 connectors for CI parallelism
+        connectors=($(ensure_min_connectors "${connectors[@]}" 2>/dev/null))
+
+        # Print space-separated list to stdout (only this, no other output)
+        echo "${connectors[@]}"
+        exit 0
+    fi
 
     # Header
     echo -e "${BOLD}🐒 Monke Test Runner${NC}"
