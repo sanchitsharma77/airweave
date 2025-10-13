@@ -159,7 +159,72 @@ class GitLabConfig(SourceConfig):
 class GmailConfig(SourceConfig):
     """Gmail configuration schema."""
 
-    pass
+    after_date: Optional[str] = Field(
+        None,
+        title="After Date",
+        description="Sync emails after this date (format: YYYY/MM/DD or YYYY-MM-DD).",
+    )
+
+    before_date: Optional[str] = Field(
+        None,
+        title="Before Date",
+        description="Sync emails before this date (format: YYYY/MM/DD or YYYY-MM-DD).",
+    )
+
+    included_labels: list[str] = Field(
+        default=["inbox", "sent"],
+        title="Included Labels",
+        description=(
+            "Labels to include (e.g., 'inbox', 'sent', 'important'). Defaults to inbox and sent."
+        ),
+    )
+
+    excluded_labels: list[str] = Field(
+        default=[
+            "spam",
+            "trash",
+        ],
+        title="Excluded Labels",
+        description=(
+            "Labels to exclude (e.g., 'spam', 'trash', 'promotions', 'social'). "
+            "Defaults to spam and trash."
+        ),
+    )
+
+    excluded_categories: list[str] = Field(
+        default=["promotions", "social"],
+        title="Excluded Categories",
+        description=(
+            "Gmail categories to exclude (e.g., 'promotions', 'social', 'updates', 'forums')."
+        ),
+    )
+
+    gmail_query: Optional[str] = Field(
+        None,
+        title="Custom Gmail Query",
+        description=(
+            "Advanced. Custom Gmail query string (overrides all other filters if provided)."
+        ),
+    )
+
+    @validator("included_labels", "excluded_labels", "excluded_categories", pre=True)
+    def parse_list_fields(cls, value):
+        """Convert comma-separated string to list if needed."""
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @validator("after_date", "before_date")
+    def validate_date_format(cls, value):
+        """Validate date format and convert to YYYY/MM/DD."""
+        if not value:
+            return value
+        # Accept both YYYY/MM/DD and YYYY-MM-DD formats
+        if value:
+            value = value.replace("-", "/")
+        return value
 
 
 class GoogleCalendarConfig(SourceConfig):

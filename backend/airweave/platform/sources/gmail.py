@@ -83,8 +83,112 @@ class GmailSource(BaseSource):
         instance.preserve_order = bool(config.get("preserve_order", False))
         instance.stop_on_error = bool(config.get("stop_on_error", False))
 
+        # Filter configuration
+        instance.after_date = config.get("after_date")
+        instance.before_date = config.get("before_date")
+        instance.included_labels = config.get("included_labels", ["inbox", "sent"])
+        instance.excluded_labels = config.get("excluded_labels", ["spam", "trash"])
+        instance.excluded_categories = config.get("excluded_categories", ["promotions", "social"])
+        instance.gmail_query = config.get("gmail_query")
+
         logger.info(f"GmailSource instance created with config: {config}")
         return instance
+
+    def _build_gmail_query(self) -> Optional[str]:
+        """Build Gmail API query string from filter configuration.
+
+        Returns:
+            Query string for Gmail API, or None if no filters configured.
+        """
+        # If custom query provided, use it directly
+        if getattr(self, "gmail_query", None):
+            self.logger.info(f"Using custom Gmail query: {self.gmail_query}")
+            return self.gmail_query
+
+        query_parts = self._build_query_parts()
+
+        if not query_parts:
+            return None
+
+        query = " ".join(query_parts)
+        self.logger.info(f"Built Gmail query: {query}")
+        return query
+
+    def _build_query_parts(self) -> List[str]:
+        """Build individual query parts from filter configuration."""
+        parts = []
+
+        # Date filters
+        if getattr(self, "after_date", None):
+            parts.append(f"after:{self.after_date}")
+        if getattr(self, "before_date", None):
+            parts.append(f"before:{self.before_date}")
+
+        # Included labels
+        for label in getattr(self, "included_labels", []):
+            parts.append(f"in:{label}")
+
+        # Excluded labels
+        for label in getattr(self, "excluded_labels", []):
+            parts.append(f"-in:{label}")
+
+        # Excluded categories
+        for category in getattr(self, "excluded_categories", []):
+            parts.append(f"-category:{category}")
+
+        return parts
+
+    def _message_matches_filters(self, message_data: Dict) -> bool:
+        """Check if a message matches the configured filters.
+
+        Used for incremental syncs where we can't filter via query parameter.
+
+        Args:
+            message_data: Message data from Gmail API
+
+        Returns:
+            True if message matches filters, False otherwise
+        """
+        # If custom query is used, we can't filter post-fetch reliably
+        # so we accept all messages
+        if getattr(self, "gmail_query", None):
+            return True
+
+        label_ids = message_data.get("labelIds", []) or []
+        label_ids_lower = [label.lower() for label in label_ids]
+
+        # Check included labels (at least one must match)
+        included_labels = getattr(self, "included_labels", None)
+        if included_labels:
+            has_included = any(label.lower() in label_ids_lower for label in included_labels)
+            if not has_included:
+                self.logger.debug(
+                    f"Message {message_data.get('id')} skipped: doesn't match included labels"
+                )
+                return False
+
+        # Check excluded labels (none must match)
+        excluded_labels = getattr(self, "excluded_labels", None)
+        if excluded_labels:
+            has_excluded = any(label.lower() in label_ids_lower for label in excluded_labels)
+            if has_excluded:
+                self.logger.debug(
+                    f"Message {message_data.get('id')} skipped: matches excluded labels"
+                )
+                return False
+
+        # Check excluded categories (none must match)
+        excluded_categories = getattr(self, "excluded_categories", None)
+        if excluded_categories:
+            category_labels = [f"category_{cat.lower()}" for cat in excluded_categories]
+            has_excluded_category = any(cat in label_ids_lower for cat in category_labels)
+            if has_excluded_category:
+                self.logger.debug(
+                    f"Message {message_data.get('id')} skipped: matches excluded categories"
+                )
+                return False
+
+        return True
 
     # -----------------------
     # HTTP helpers
@@ -177,6 +281,13 @@ class GmailSource(BaseSource):
         """Yield thread summary objects across all pages."""
         base_url = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
         params = {"maxResults": 100}
+
+        # Add query filter if configured
+        query = self._build_gmail_query()
+        if query:
+            params["q"] = query
+            self.logger.info(f"Filtering threads with query: {query}")
+
         page_count = 0
 
         while True:
@@ -786,6 +897,12 @@ class GmailSource(BaseSource):
             try:
                 detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
                 message_data = await self._get_with_auth(client, detail_url)
+
+                # Apply filters for incremental sync
+                if not self._message_matches_filters(message_data):
+                    self.logger.debug(f"Skipping message {msg_id} - doesn't match filters")
+                    continue
+
                 thread_breadcrumb = Breadcrumb(
                     entity_id=f"thread_{thread_id}",
                     name=f"Thread {thread_id}",
@@ -809,6 +926,12 @@ class GmailSource(BaseSource):
             try:
                 detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
                 message_data = await self._get_with_auth(client, detail_url)
+
+                # Apply filters for incremental sync
+                if not self._message_matches_filters(message_data):
+                    self.logger.debug(f"Skipping message {msg_id} - doesn't match filters")
+                    return
+
                 thread_breadcrumb = Breadcrumb(
                     entity_id=f"thread_{thread_id}",
                     name=f"Thread {thread_id}",
