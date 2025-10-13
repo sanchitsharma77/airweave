@@ -8,15 +8,6 @@ Now supports two flows:
       * Per-thread message processing
       * Per-message attachment fetch & processing
       * Incremental history message-detail fetch
-
-Config (all optional, shown with defaults):
-    {
-        "batch_generation": False,     # enable/disable concurrent generation
-        "batch_size": 30,              # max concurrent workers
-        "max_queue_size": 200,         # backpressure queue size
-        "preserve_order": False,       # maintain item order per batch
-        "stop_on_error": False         # cancel all on first error
-    }
 """
 
 import asyncio
