@@ -32,7 +32,7 @@ test_flow:
   steps:
     - cleanup
     - create
-    - sync
+    - force_full_sync
     - verify
     - partial_delete
     - force_full_sync

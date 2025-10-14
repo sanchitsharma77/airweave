@@ -35,7 +35,7 @@ test_flow:
   steps:
     - cleanup
     - create
-    - sync                           # First sync: Full sync (no cursor yet)
+    - force_full_sync                # First sync: Full sync (no cursor yet)
     - verify
     - partial_delete                 # Delete 1 entity
     - force_full_sync                           # Second sync: Incremental (uses cursor)

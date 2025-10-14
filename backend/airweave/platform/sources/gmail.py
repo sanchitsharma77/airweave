@@ -31,6 +31,18 @@ from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
+def _should_retry_gmail_request(exception: Exception) -> bool:
+    """Custom retry condition that excludes 404 errors from retrying."""
+    if isinstance(exception, httpx.HTTPStatusError):
+        # Don't retry 404s - let them pass through to call-site handlers
+        if exception.response.status_code == 404:
+            return False
+        # Retry other HTTP errors
+        return True
+    # Retry other exceptions (timeouts, etc.)
+    return True
+
+
 @source(
     name="Gmail",
     short_name="gmail",
@@ -46,18 +58,6 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["Communication", "Email"],
     supports_continuous=True,
 )
-def _should_retry_gmail_request(exception: Exception) -> bool:
-    """Custom retry condition that excludes 404 errors from retrying."""
-    if isinstance(exception, httpx.HTTPStatusError):
-        # Don't retry 404s - let them pass through to call-site handlers
-        if exception.response.status_code == 404:
-            return False
-        # Retry other HTTP errors
-        return True
-    # Retry other exceptions (timeouts, etc.)
-    return True
-
-
 class GmailSource(BaseSource):
     """Gmail source connector integrates with the Gmail API to extract and synchronize email data.
 
@@ -418,7 +418,7 @@ class GmailSource(BaseSource):
             if ent is not None:
                 yield ent
 
-    async def _create_thread_entity(self, thread_id: str, thread_data: Dict) -> GmailThreadEntity:  # noqa: C901
+    async def _create_thread_entity(self, thread_id: str, thread_data: Dict) -> GmailThreadEntity:
         """Create a thread entity from thread data."""
         snippet = thread_data.get("snippet", "")
         history_id = thread_data.get("historyId")
