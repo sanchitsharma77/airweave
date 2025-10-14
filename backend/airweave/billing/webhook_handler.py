@@ -194,6 +194,12 @@ class BillingWebhookProcessor:
 
         log.info(f"Subscription created for org {org_id}: {plan}")
 
+        # Notify Donke about paid subscription
+        if plan != BillingPlan.DEVELOPER:
+            await _notify_donke_subscription(
+                org_schema, plan, UUID(org_id), is_yearly=False, log=log
+            )
+
     async def _handle_subscription_updated(  # noqa: C901
         self,
         event: stripe.Event,
@@ -885,6 +891,56 @@ class BillingWebhookProcessor:
                     )
 
                     log.info(f"Yearly prepay finalized for org {organization_id}: sub {sub.id}")
+
+                    # Notify Donke about yearly subscription
+                    await _notify_donke_subscription(
+                        org, BillingPlan(plan_str), organization_id, is_yearly=True, log=log
+                    )
         except Exception as e:
             log.error(f"Error finalizing yearly prepay: {e}", exc_info=True)
             raise
+
+
+async def _notify_donke_subscription(
+    org: schemas.Organization,
+    plan: BillingPlan,
+    org_id: UUID,
+    is_yearly: bool,
+    log: ContextualLogger,
+) -> None:
+    """Notify Donke about paid subscription (best-effort).
+
+    Args:
+        org: The organization schema
+        plan: The billing plan
+        org_id: Organization ID
+        is_yearly: Whether this is a yearly subscription
+        log: Contextual logger
+    """
+    import httpx
+
+    from airweave.core.config import settings
+
+    if not settings.DONKE_URL or not settings.DONKE_API_KEY:
+        return
+
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{settings.DONKE_URL}/api/notify-subscription",
+                headers={
+                    "Authorization": f"Bearer {settings.DONKE_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "organization_name": org.name,
+                    "plan": plan.value,
+                    "organization_id": str(org_id),
+                    "is_yearly": is_yearly,
+                    "user_email": None,  # Could get from org owner if needed
+                },
+                timeout=5.0,
+            )
+            log.info(f"Notified Donke about subscription for {org_id}")
+    except Exception as e:
+        log.warning(f"Failed to notify Donke: {e}")
