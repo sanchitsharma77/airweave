@@ -35,7 +35,7 @@ test_flow:
     - sync
     - verify
     - partial_delete
-    - sync
+    - force_full_sync
     - verify_partial_deletion
     - verify_remaining_entities
     - force_full_sync
