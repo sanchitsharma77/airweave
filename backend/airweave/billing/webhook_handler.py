@@ -940,9 +940,8 @@ async def _notify_donke_subscription(
     try:
         async with httpx.AsyncClient() as client:
             await client.post(
-                f"{settings.DONKE_URL}/api/notify-subscription",
+                f"{settings.DONKE_URL}/api/notify-subscription?code={settings.DONKE_API_KEY}",
                 headers={
-                    "Authorization": f"Bearer {settings.DONKE_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={
@@ -1012,9 +1011,8 @@ async def _send_team_welcome_email(
         # Call Donke to send the welcome email
         async with httpx.AsyncClient() as client:
             await client.post(
-                f"{settings.DONKE_URL}/api/send-team-welcome-email",
+                f"{settings.DONKE_URL}/api/send-team-welcome-email?code={settings.DONKE_API_KEY}",
                 headers={
-                    "Authorization": f"Bearer {settings.DONKE_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={

@@ -672,12 +672,11 @@ async def _notify_donke_signup(
         else:
             plan = "developer"
 
-        # Simple HTTP call to Donke
+        # Simple HTTP call to Donke (uses Azure app key)
         async with httpx.AsyncClient() as client:
             await client.post(
-                f"{settings.DONKE_URL}/api/notify-signup",
+                f"{settings.DONKE_URL}/api/notify-signup?code={settings.DONKE_API_KEY}",
                 headers={
-                    "Authorization": f"Bearer {settings.DONKE_API_KEY}",
                     "Content-Type": "application/json",
                 },
                 json={
