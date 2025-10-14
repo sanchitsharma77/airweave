@@ -6,7 +6,7 @@ Enables users to filter results using natural language without knowing filter sy
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from airweave import crud
 from airweave.api.context import ApiContext
@@ -60,6 +60,14 @@ class ExtractedFilters(BaseModel):
     filters: List[FilterCondition] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
 
+    @field_validator("filters", mode="before")
+    @classmethod
+    def convert_none_to_empty_list(cls, v):
+        """Convert None to empty list for compatibility with providers that return null."""
+        if v is None:
+            return []
+        return v
+
 
 class QueryInterpretation(SearchOperation):
     """Extract structured Qdrant filters from natural language query."""
@@ -76,9 +84,15 @@ class QueryInterpretation(SearchOperation):
         "airweave_updated_at": "Last updated in Airweave (ISO8601 datetime)",
     }
 
-    def __init__(self, provider: BaseProvider) -> None:
-        """Initialize with LLM provider."""
-        self.provider = provider
+    def __init__(self, providers: List[BaseProvider]) -> None:
+        """Initialize with list of LLM providers in preference order.
+
+        Args:
+            providers: List of LLM providers for structured output with fallback support
+        """
+        if not providers:
+            raise ValueError("QueryInterpretation requires at least one provider")
+        self.providers = providers
 
     def depends_on(self) -> List[str]:
         """Depends on query expansion to get all query variations."""
@@ -99,11 +113,7 @@ class QueryInterpretation(SearchOperation):
         # Emit interpretation start
         await context.emitter.emit(
             "interpretation_start",
-            {
-                "model": self.provider.model_spec.llm_model.name
-                if self.provider.model_spec.llm_model
-                else None
-            },
+            {},
             op_name=self.__class__.__name__,
         )
 
@@ -114,16 +124,23 @@ class QueryInterpretation(SearchOperation):
         system_prompt = self._build_system_prompt(available_fields)
         user_prompt = self._build_user_prompt(query, expanded_queries)
 
-        # Validate prompt length
-        self._validate_prompt_length(system_prompt, user_prompt)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
-        # Get structured output from provider
-        result = await self.provider.structured_output(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            schema=ExtractedFilters,
+        # Get structured output from provider with fallback
+        # Note: Token validation happens per-provider in the fallback loop
+        async def call_provider(provider: BaseProvider) -> BaseModel:
+            # Validate prompt length for this specific provider
+            self._validate_prompt_length_for_provider(system_prompt, user_prompt, provider)
+            return await provider.structured_output(messages, ExtractedFilters)
+
+        result = await self._execute_with_provider_fallback(
+            providers=self.providers,
+            operation_call=call_provider,
+            operation_name="QueryInterpretation",
+            ctx=ctx,
         )
 
         # Check confidence threshold
@@ -309,26 +326,31 @@ class QueryInterpretation(SearchOperation):
             f"- {query_lines}"
         )
 
-    def _validate_prompt_length(self, system_prompt: str, user_prompt: str) -> None:
-        """Validate prompts fit in context window."""
-        # Get LLM tokenizer from provider
-        tokenizer = getattr(self.provider, "llm_tokenizer", None)
+    def _validate_prompt_length_for_provider(
+        self, system_prompt: str, user_prompt: str, provider: BaseProvider
+    ) -> None:
+        """Validate prompts fit in specific provider's context window.
+
+        This validates against the actual provider that will be used, not a random one.
+        """
+        tokenizer = getattr(provider, "llm_tokenizer", None)
         if not tokenizer:
-            provider_name = self.provider.__class__.__name__
+            provider_name = provider.__class__.__name__
             raise RuntimeError(
                 f"Provider {provider_name} does not have an LLM tokenizer. "
                 "Cannot validate prompt length."
             )
 
-        system_tokens = self.provider.count_tokens(system_prompt, tokenizer)
-        user_tokens = self.provider.count_tokens(user_prompt, tokenizer)
+        system_tokens = provider.count_tokens(system_prompt, tokenizer)
+        user_tokens = provider.count_tokens(user_prompt, tokenizer)
 
         total_tokens = system_tokens + user_tokens
 
-        if total_tokens > self.provider.model_spec.llm_model.context_window:
+        if total_tokens > provider.model_spec.llm_model.context_window:
             raise ValueError(
-                f"Query interpretation prompts too long: {total_tokens} tokens "
-                f"exceeds context window of {self.provider.model_spec.llm_model.context_window}"
+                f"Query interpretation prompts too long for {provider.__class__.__name__}: "
+                f"{total_tokens} tokens exceeds context window of "
+                f"{provider.model_spec.llm_model.context_window}"
             )
 
     def _validate_filters(

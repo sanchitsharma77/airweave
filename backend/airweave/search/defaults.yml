@@ -52,7 +52,7 @@ provider_models:
     llm:
       name: "gpt-oss-120b"
       tokenizer: "o200k_harmony"
-      context_window: 64000 # TODO: goes up on paid tier
+      context_window: 131000
     embedding: null
     rerank: null
 
