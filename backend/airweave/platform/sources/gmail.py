@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
 from airweave.platform.decorators import source
@@ -46,6 +46,18 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["Communication", "Email"],
     supports_continuous=True,
 )
+def _should_retry_gmail_request(exception: Exception) -> bool:
+    """Custom retry condition that excludes 404 errors from retrying."""
+    if isinstance(exception, httpx.HTTPStatusError):
+        # Don't retry 404s - let them pass through to call-site handlers
+        if exception.response.status_code == 404:
+            return False
+        # Retry other HTTP errors
+        return True
+    # Retry other exceptions (timeouts, etc.)
+    return True
+
+
 class GmailSource(BaseSource):
     """Gmail source connector integrates with the Gmail API to extract and synchronize email data.
 
@@ -220,7 +232,10 @@ class GmailSource(BaseSource):
     # HTTP helpers
     # -----------------------
     @retry(
-        stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=60), reraise=True
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        reraise=True,
+        retry=retry_if_exception(_should_retry_gmail_request),
     )
     async def _get_with_auth(
         self, client: httpx.AsyncClient, url: str, params: Optional[dict] = None
@@ -337,13 +352,19 @@ class GmailSource(BaseSource):
         base_url = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
         detail_url = f"{base_url}/{thread_id}"
         self.logger.info(f"Fetching full thread details from: {detail_url}")
-        thread_data = await self._get_with_auth(client, detail_url)
-        return thread_data
+        try:
+            thread_data = await self._get_with_auth(client, detail_url)
+            return thread_data
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                self.logger.warning(f"Thread {thread_id} not found (404) - skipping")
+                return None
+            raise
 
     # -----------------------
     # Entity generation (threads/messages/attachments)
     # -----------------------
-    async def _generate_thread_entities(
+    async def _generate_thread_entities(  # noqa: C901
         self, client: httpx.AsyncClient, processed_message_ids: Set[str]
     ) -> AsyncGenerator[ChunkEntity, None]:
         """Generate GmailThreadEntity objects and associated message entities.
@@ -357,6 +378,8 @@ class GmailSource(BaseSource):
             async for thread_info in self._list_threads(client):
                 thread_id = thread_info["id"]
                 thread_data = await self._fetch_thread_detail(client, thread_id)
+                if not thread_data:
+                    continue
                 # Yield thread entity, then process messages sequentially
                 async for e in self._emit_thread_and_messages(
                     client, thread_id, thread_data, processed_message_ids
@@ -375,6 +398,8 @@ class GmailSource(BaseSource):
                 return
             try:
                 thread_data = await self._fetch_thread_detail(client, thread_id)
+                if not thread_data:
+                    return
                 async for ent in self._emit_thread_and_messages(
                     client, thread_id, thread_data, processed_message_ids, lock=lock
                 ):
@@ -393,7 +418,7 @@ class GmailSource(BaseSource):
             if ent is not None:
                 yield ent
 
-    async def _create_thread_entity(self, thread_id: str, thread_data: Dict) -> GmailThreadEntity:
+    async def _create_thread_entity(self, thread_id: str, thread_data: Dict) -> GmailThreadEntity:  # noqa: C901
         """Create a thread entity from thread data."""
         snippet = thread_data.get("snippet", "")
         history_id = thread_data.get("historyId")
@@ -535,8 +560,16 @@ class GmailSource(BaseSource):
                 f"Payload not in message data, fetching full message details for {message_id}"
             )
             message_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
-            message_data = await self._get_with_auth(client, message_url)
-            self.logger.debug(f"Fetched full message data with keys: {list(message_data.keys())}")
+            try:
+                message_data = await self._get_with_auth(client, message_url)
+                self.logger.debug(
+                    f"Fetched full message data with keys: {list(message_data.keys())}"
+                )
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    self.logger.warning(f"Message {message_id} not found (404) - skipping")
+                    return
+                raise
         else:
             self.logger.debug("Message already contains payload data")
 
@@ -745,7 +778,15 @@ class GmailSource(BaseSource):
                     f"{message_id}/attachments/{attachment_id}"
                 )
                 try:
-                    attachment_data = await self._get_with_auth(client, attachment_url)
+                    try:
+                        attachment_data = await self._get_with_auth(client, attachment_url)
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            self.logger.warning(
+                                f"Attachment {attachment_id} not found (404) - skipping"
+                            )
+                            return
+                        raise
                     size = attachment_data.get("size", 0)
 
                     # Create FileEntity wrapper
@@ -810,7 +851,15 @@ class GmailSource(BaseSource):
                     f"{message_id}/attachments/{attachment_id}"
                 )
                 try:
-                    attachment_data = await self._get_with_auth(client, attachment_url)
+                    try:
+                        attachment_data = await self._get_with_auth(client, attachment_url)
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            self.logger.warning(
+                                f"Attachment {attachment_id} not found (404) - skipping"
+                            )
+                            continue
+                        raise
                     size = attachment_data.get("size", 0)
 
                     file_entity = GmailAttachmentEntity(
@@ -922,7 +971,13 @@ class GmailSource(BaseSource):
             thread_id = it.get("thread_id") or "unknown"
             try:
                 detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
-                message_data = await self._get_with_auth(client, detail_url)
+                try:
+                    message_data = await self._get_with_auth(client, detail_url)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.warning(f"Message {msg_id} not found (404) - skipping")
+                        continue
+                    raise
 
                 # Apply filters for incremental sync
                 if not self._message_matches_filters(message_data):
@@ -951,7 +1006,13 @@ class GmailSource(BaseSource):
             thread_id = item.get("thread_id") or "unknown"
             try:
                 detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
-                message_data = await self._get_with_auth(client, detail_url)
+                try:
+                    message_data = await self._get_with_auth(client, detail_url)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.warning(f"Message {msg_id} not found (404) - skipping")
+                        return
+                    raise
 
                 # Apply filters for incremental sync
                 if not self._message_matches_filters(message_data):

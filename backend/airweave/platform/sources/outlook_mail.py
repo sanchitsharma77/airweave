@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
 from airweave.platform.decorators import source
@@ -27,6 +27,18 @@ from airweave.platform.entities.outlook_mail import (
 )
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
+
+
+def _should_retry_outlook_request(exception: Exception) -> bool:
+    """Custom retry condition that excludes 404 errors from retrying."""
+    if isinstance(exception, httpx.HTTPStatusError):
+        # Don't retry 404s - let them pass through to call-site handlers
+        if exception.response.status_code == 404:
+            return False
+        # Retry other HTTP errors
+        return True
+    # Retry other exceptions (timeouts, etc.)
+    return True
 
 
 @source(
@@ -268,7 +280,10 @@ class OutlookMailSource(BaseSource):
         return True
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+        retry=retry_if_exception(_should_retry_outlook_request),
     )
     async def _get_with_auth(
         self, client: httpx.AsyncClient, url: str, params: Optional[dict] = None
@@ -484,7 +499,7 @@ class OutlookMailSource(BaseSource):
             self.logger.error(f"Error fetching folders: {str(e)}")
             raise
 
-    async def _generate_message_entities(
+    async def _generate_message_entities( # noqa: C901
         self,
         client: httpx.AsyncClient,
         folder_entity: OutlookMailFolderEntity,
@@ -540,7 +555,15 @@ class OutlookMailSource(BaseSource):
                     if "body" not in message_data:
                         self.logger.debug(f"Fetching full message details for {message_id}")
                         message_url = f"{self.GRAPH_BASE_URL}/me/messages/{message_id}"
-                        message_data = await self._get_with_auth(client, message_url)
+                        try:
+                            message_data = await self._get_with_auth(client, message_url)
+                        except httpx.HTTPStatusError as e:
+                            if e.response.status_code == 404:
+                                self.logger.warning(
+                                    f"Message {message_id} not found (404) - skipping"
+                                )
+                                continue
+                            raise
 
                     # Process the message
                     try:
@@ -719,9 +742,17 @@ class OutlookMailSource(BaseSource):
             # Get attachment content if not already included
             content_bytes = attachment.get("contentBytes")
             if not content_bytes:
-                content_bytes = await self._fetch_attachment_content(
-                    client, message_id, attachment_id
-                )
+                try:
+                    content_bytes = await self._fetch_attachment_content(
+                        client, message_id, attachment_id
+                    )
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.warning(
+                            f"Attachment {attachment_id} not found (404) - skipping"
+                        )
+                        return None
+                    raise
 
                 if not content_bytes:
                     self.logger.warning(f"No content found for attachment {attachment_name}")
