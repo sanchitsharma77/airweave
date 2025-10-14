@@ -499,7 +499,7 @@ class OutlookMailSource(BaseSource):
             self.logger.error(f"Error fetching folders: {str(e)}")
             raise
 
-    async def _generate_message_entities( # noqa: C901
+    async def _generate_message_entities(  # noqa: C901
         self,
         client: httpx.AsyncClient,
         folder_entity: OutlookMailFolderEntity,
