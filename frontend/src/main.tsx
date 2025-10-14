@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/lib/theme-provider";
 import { Auth0ProviderWithNavigation } from "@/lib/auth0-provider";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { setTokenProvider } from "@/lib/api";
+import { initPostHog } from "@/lib/posthog";
 
 // Component to initialize the API with auth
 function ApiAuthConnector({ children }: { children: React.ReactNode }) {
@@ -36,6 +37,9 @@ function ApiAuthConnector({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
+
+// Initialize PostHog analytics (CASA-6: using npm package instead of CDN)
+initPostHog();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
