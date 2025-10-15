@@ -11,10 +11,13 @@ from airweave import crud, schemas
 from airweave.api.auth import auth0
 from airweave.api.context import ApiContext
 from airweave.core.config import settings
-from airweave.core.exceptions import NotFoundException
+from airweave.core.context_cache_service import context_cache
+from airweave.core.exceptions import NotFoundException, RateLimitExceededException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, logger
+from airweave.core.rate_limiter_service import RateLimiter
 from airweave.db.session import get_db
+from airweave.schemas.rate_limit import RateLimitResult
 
 
 async def _authenticate_system_user(db: AsyncSession) -> Tuple[Optional[schemas.User], str, dict]:
@@ -39,21 +42,42 @@ async def _authenticate_auth0_user(
     return user_context, "auth0", {"auth0_id": auth0_user.id}
 
 
-async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, str, dict]:
-    """Authenticate API key."""
+async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, str, dict, str]:
+    """Authenticate API key and return organization ID.
+
+    Uses Redis cache for API key → org_id mapping to avoid DB lookup on every request.
+    The 10-minute cache TTL provides sufficient protection against expired keys.
+
+    Returns:
+        Tuple of (user_context, auth_method, auth_metadata, organization_id)
+    """
     try:
+        # Try cache first for API key → org_id mapping
+        org_id = await context_cache.get_api_key_org_id(api_key)
+
+        if org_id:
+            # Cache hit - use cached mapping without DB validation
+            # The 10-minute TTL is sufficient; no need to check expiration on every request
+            auth_metadata = {
+                "api_key_id": "cached",  # We don't have the ID from cache, but it's not critical
+                "created_by": None,
+            }
+            return None, "api_key", auth_metadata, str(org_id)
+
+        # Cache miss - validate API key via CRUD
         api_key_obj = await crud.api_key.get_by_key(db, key=api_key)
-        # Fetch the organization to get its name
-        organization = await crud.organization.get(
-            db, id=api_key_obj.organization_id, skip_access_validation=True
-        )
+        org_id = api_key_obj.organization_id
+
+        # Cache the mapping for next time
+        await context_cache.set_api_key_org_id(api_key, org_id)
+
         auth_metadata = {
             "api_key_id": str(api_key_obj.id),
             "created_by": api_key_obj.created_by_email,
-            "organization_id": str(api_key_obj.organization_id),
-            "organization_name": organization.name if organization else None,
         }
-        return None, "api_key", auth_metadata
+
+        return None, "api_key", auth_metadata, str(org_id)
+
     except (ValueError, NotFoundException) as e:
         logger.error(f"API key validation failed: {e}")
         if "expired" in str(e):
@@ -66,8 +90,20 @@ def _resolve_organization_id(
     user_context: Optional[schemas.User],
     auth_method: str,
     auth_metadata: dict,
+    api_key_org_id: Optional[str] = None,
 ) -> str:
-    """Resolve the organization ID from header or fallback to defaults."""
+    """Resolve the organization ID from header or fallback to defaults.
+
+    Args:
+        x_organization_id: Organization ID from header
+        user_context: User context (if user auth)
+        auth_method: Authentication method used
+        auth_metadata: Auth metadata dict
+        api_key_org_id: Organization ID from API key auth (already resolved)
+
+    Returns:
+        Organization ID string
+    """
     if x_organization_id:
         return x_organization_id
 
@@ -75,8 +111,8 @@ def _resolve_organization_id(
     if auth_method in ["system", "auth0"] and user_context:
         if user_context.primary_organization_id:
             return str(user_context.primary_organization_id)
-    elif auth_method == "api_key":
-        return auth_metadata.get("organization_id")
+    elif auth_method == "api_key" and api_key_org_id:
+        return api_key_org_id
 
     raise HTTPException(
         status_code=400,
@@ -109,6 +145,107 @@ async def _validate_organization_access(
                 status_code=403,
                 detail=f"API key does not have access to organization {organization_id}",
             )
+
+
+async def _get_or_fetch_user_context(
+    db: AsyncSession,
+    auth0_user: Auth0User,
+) -> Tuple[Optional[schemas.User], str, dict]:
+    """Get user context from cache or fetch from database.
+
+    Args:
+    ----
+        db (AsyncSession): Database session.
+        auth0_user (Auth0User): Auth0 user details.
+
+    Returns:
+    -------
+        Tuple containing user context, auth method, and auth metadata.
+    """
+    # Try cache first for user
+    user_context = await context_cache.get_user(auth0_user.email)
+    if not user_context:
+        # Cache miss - fetch from DB
+        user_context, auth_method, auth_metadata = await _authenticate_auth0_user(db, auth0_user)
+        # Cache for next time
+        if user_context:
+            await context_cache.set_user(user_context)
+    else:
+        # Cache hit - still need auth metadata
+        auth_method = "auth0"
+        auth_metadata = {"auth0_id": auth0_user.id}
+
+    return user_context, auth_method, auth_metadata
+
+
+async def _get_or_fetch_organization(
+    db: AsyncSession,
+    organization_id: str,
+) -> schemas.Organization:
+    """Get organization from cache or fetch from database with billing info.
+
+    This function returns a fully enriched Organization schema with:
+    - Feature flags
+    - Billing information (plan, status, etc.)
+    - Current billing period
+
+    Args:
+        db: Database session
+        organization_id: Organization ID to fetch
+
+    Returns:
+        Enriched Organization schema object
+    """
+    # Try cache first for organization
+    organization_schema = await context_cache.get_organization(uuid.UUID(organization_id))
+
+    if not organization_schema:
+        # Cache miss - fetch from DB with enrichment
+        # The CRUD method returns enriched schemas.Organization with billing and current period
+        organization_schema = await crud.organization.get(
+            db, id=organization_id, skip_access_validation=True, enrich=True
+        )
+
+        # Cache the enriched organization for next time
+        await context_cache.set_organization(organization_schema)
+
+    return organization_schema
+
+
+async def _check_and_enforce_rate_limit(
+    request: Request,
+    ctx: ApiContext,
+) -> None:
+    """Check and enforce rate limits for the organization.
+
+    Stores RateLimitResult in request.state for middleware to add headers.
+
+    Args:
+    ----
+        request (Request): The FastAPI request object to store rate limit info.
+        ctx (ApiContext): API context containing organization and logger.
+
+    Raises:
+    ------
+        RateLimitExceededException: If rate limit is exceeded.
+    """
+    try:
+        result = await RateLimiter.check_rate_limit(ctx)
+        # Store the full result object for middleware
+        request.state.rate_limit_result = result
+
+    except RateLimitExceededException:
+        # Re-raise rate limit exceptions to be handled by exception handler
+        raise
+    except Exception as e:
+        logger.error(f"Rate limit check failed: {e}. Allowing request.")
+
+        request.state.rate_limit_result = RateLimitResult(
+            allowed=True,
+            retry_after=0.0,
+            limit=0,
+            remaining=9999,
+        )
 
 
 async def get_context(
@@ -148,30 +285,28 @@ async def get_context(
     user_context = None
     auth_method = ""
     auth_metadata = {}
+    api_key_org_id = None  # For API key auth, this is already resolved
 
     # Determine authentication method and context
     if not settings.AUTH_ENABLED:
         user_context, auth_method, auth_metadata = await _authenticate_system_user(db)
     elif auth0_user:
-        user_context, auth_method, auth_metadata = await _authenticate_auth0_user(db, auth0_user)
+        user_context, auth_method, auth_metadata = await _get_or_fetch_user_context(db, auth0_user)
     elif x_api_key:
-        user_context, auth_method, auth_metadata = await _authenticate_api_key(db, x_api_key)
+        user_context, auth_method, auth_metadata, api_key_org_id = await _authenticate_api_key(
+            db, x_api_key
+        )
 
     if not auth_method:
         raise HTTPException(status_code=401, detail="No valid authentication provided")
 
-    # Resolve organization ID
     organization_id = _resolve_organization_id(
-        x_organization_id, user_context, auth_method, auth_metadata
+        x_organization_id, user_context, auth_method, auth_metadata, api_key_org_id
     )
 
-    organization = await crud.organization.get(db, id=organization_id, skip_access_validation=True)
-    organization_schema = schemas.Organization.model_validate(organization, from_attributes=True)
+    organization_schema = await _get_or_fetch_organization(db, organization_id)
 
-    # Validate organization access
     await _validate_organization_access(db, organization_id, user_context, auth_method, x_api_key)
-
-    # Create logger with full context
 
     base_logger = logger.with_context(
         request_id=request_id,
@@ -187,7 +322,7 @@ async def get_context(
             user_id=str(user_context.id), user_email=user_context.email
         )
 
-    return ApiContext(
+    ctx = ApiContext(
         request_id=request_id,
         organization=organization_schema,
         user=user_context,
@@ -195,6 +330,9 @@ async def get_context(
         auth_metadata=auth_metadata,
         logger=base_logger,
     )
+
+    await _check_and_enforce_rate_limit(request, ctx)
+    return ctx
 
 
 async def get_logger(
