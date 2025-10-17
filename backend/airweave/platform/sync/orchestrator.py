@@ -108,13 +108,6 @@ class SyncOrchestrator:
 
         self.sync_context.sync_job.started_at = started_at
 
-        business_events.track_sync_started(
-            ctx=self.sync_context.ctx,
-            sync_id=self.sync_context.sync.id,
-            source_type=self.sync_context.connection.short_name,
-            collection_id=self.sync_context.collection.id,
-        )
-
     async def _process_entities(self) -> None:
         """Dispatch to batched or unbatched processing depending on the context flag."""
         if self.should_batch:
@@ -412,12 +405,16 @@ class SyncOrchestrator:
         from airweave.analytics import business_events
 
         entities_processed = 0
+        entities_synced = 0  # NEW: actual work done (for billing)
         duration_ms = 0
 
         if stats:
+            # Total operations (for operational metrics)
             entities_processed = (
                 stats.inserted + stats.updated + stats.deleted + stats.kept + stats.skipped
             )
+            # Actual entities synced (for billing/usage tracking)
+            entities_synced = stats.inserted + stats.updated
 
         # Calculate duration from sync job start to completion
         if (
@@ -433,6 +430,8 @@ class SyncOrchestrator:
             ctx=self.sync_context.ctx,
             sync_id=self.sync_context.sync.id,
             entities_processed=entities_processed,
+            entities_synced=entities_synced,  # NEW parameter
+            stats=stats,  # NEW: pass full stats for breakdown
             duration_ms=duration_ms,
         )
 

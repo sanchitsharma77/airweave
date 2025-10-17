@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "local"
     FRONTEND_LOCAL_DEVELOPMENT_PORT: int = 8080
 
+    # Rate limiting
+    DISABLE_RATE_LIMIT: bool = False  # For testing purposes - disables rate limiting completely
     FIRST_SUPERUSER: str
     FIRST_SUPERUSER_PASSWORD: str
 
@@ -152,6 +154,10 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     RESEND_FROM_EMAIL: Optional[str] = None
 
+    # Donke integration (internal automation service)
+    DONKE_URL: Optional[str] = None
+    DONKE_API_KEY: Optional[str] = None
+
     # PostHog Analytics Configuration
     # Public API key for open source and hosted platform
     POSTHOG_API_KEY: str = "phc_Ytp26UB3WwGCdjHTpDBI9HQg2ZA38ITMDKI6fE6EPGS"
@@ -165,6 +171,9 @@ class Settings(BaseSettings):
     WEB_FETCHER_MAX_CONCURRENT: int = 10  # Max concurrent web scraping requests
     OPENAI_MAX_CONCURRENT: int = 20  # Max concurrent OpenAI API requests
     CTTI_MAX_CONCURRENT: int = 3  # Max concurrent CTTI (ClinicalTrials.gov) requests
+
+    API_REQUEST_BODY_SIZE_LIMIT: int = 10 * 1024 * 1024  # 10MB default
+    API_REQUEST_TIMEOUT_SECONDS: int = 60
 
     # Custom deployment URLs - these are used to override the default URLs to allow
     # for custom domains in custom deployments

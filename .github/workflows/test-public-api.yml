@@ -72,8 +72,8 @@ jobs:
           # Required for start.sh to skip interactive prompts
           NONINTERACTIVE: "1"
           # Skip services not needed for backend API tests
-          SKIP_LOCAL_EMBEDDINGS: "1"  # Use OpenAI embeddings (saves ~2GB)
-          SKIP_FRONTEND: "1"  # Backend-only testing (saves time)
+          SKIP_LOCAL_EMBEDDINGS: "1" # Use OpenAI embeddings (saves ~2GB)
+          SKIP_FRONTEND: "1" # Backend-only testing (saves time)
           # Set required environment variables for the containers
           AUTH0_ENABLED: "false"
           DEV_MODE: "true"
@@ -88,6 +88,9 @@ jobs:
           echo "COHERE_API_KEY=$COHERE_API_KEY" >> .env
           echo "GROQ_API_KEY=$GROQ_API_KEY" >> .env
           echo "CEREBRAS_API_KEY=$CEREBRAS_API_KEY" >> .env
+
+          # Disable rate limiting for regular tests
+          echo "DISABLE_RATE_LIMIT=true" >> .env
 
           echo "Starting services using start.sh..."
           ./start.sh --noninteractive
@@ -137,7 +140,9 @@ jobs:
           BACKEND_IMAGE: test-backend:latest
         run: |
           cd backend
-          pytest tests/e2e/smoke -n 3 -v --tb=short
+          # Exclude rate_limit tests from CI/CD - they consume quota and should run separately
+          # To run rate limit tests locally: pytest tests/e2e/smoke -m rate_limit
+          pytest tests/e2e/smoke -m "not rate_limit" -n 3 -v --tb=short
 
       - name: Cleanup Docker containers
         if: always()

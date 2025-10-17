@@ -9,7 +9,7 @@ instances:
 title: Airweave
 analytics:
   posthog:
-    api-key: phc_pRMEx1bwjdogqrCL4xpfEoEwXds7eONicNSWhX45M8M
+    api-key: phc_Ytp26UB3WwGCdjHTpDBI9HQg2ZA38ITMDKI6fE6EPGS
     endpoint: https://eu.i.posthog.com
 layout:
   searchbar-placement: header
@@ -31,6 +31,8 @@ navigation:
     path: docs/pages/mcp-server.mdx
   - page: Add New Connector
     path: docs/pages/add-new-source.mdx
+  - page: Rate Limits
+    path: docs/pages/rate-limits.mdx
   - section: Authentication
     contents:
     - section: Auth Providers
