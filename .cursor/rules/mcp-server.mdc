@@ -42,8 +42,9 @@ The Airweave MCP Server provides search capabilities for AI assistants through t
 - **Express App**: HTTP server with health checks and info endpoints
 - **Streamable HTTP Transport**: Modern MCP 2025-03-26 transport for bidirectional communication
 - **Request Handling**: POST `/mcp` endpoint for all MCP requests
-- **Session Management**: Per-session server instances with independent API keys
+- **Session Management**: Redis-backed distributed sessions with local caching for performance
 - **Authentication**: API key extraction from headers or query parameters per request
+- **Security**: API key hashing, session binding (IP/User-Agent), rate limiting, audit logging
 
 ### Tools
 - **Search Tool**: `search-{collection}` - Main search functionality with natural language queries
@@ -75,6 +76,10 @@ The Airweave MCP Server provides search capabilities for AI assistants through t
 - `AIRWEAVE_COLLECTION`: Target collection name
 - `AIRWEAVE_BASE_URL`: API base URL (default: production)
 - `PORT`: Server port (default: 8080)
+- `REDIS_HOST`: Redis server hostname (default: redis)
+- `REDIS_PORT`: Redis server port (default: 6379)
+- `REDIS_PASSWORD`: Redis authentication password
+- `REDIS_URL`: Complete Redis connection string
 
 ### Client Configuration
 - API key provided by client (not server environment)
@@ -83,27 +88,52 @@ The Airweave MCP Server provides search capabilities for AI assistants through t
 
 ## Implementation Details
 
-### Streamable HTTP Transport Pattern
+### Redis-Backed Session Management Pattern
 ```typescript
-// Session management: Map session IDs to { server, transport, apiKey }
-const sessions = new Map<string, { server: McpServer, transport: StreamableHTTPServerTransport, apiKey: string }>();
+// Local cache: Map session IDs to { server, transport, data }
+// This cache is per-pod and reconstructed from Redis as needed
+const localSessionCache = new Map<string, SessionWithTransport>();
 
-// Handle all MCP requests with per-session isolation
+// Redis session manager for distributed storage
+const sessionManager = new RedisSessionManager({
+    host: process.env.REDIS_HOST || 'redis',
+    port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD
+});
+
+// Handle all MCP requests with Redis-backed session persistence
 app.post('/mcp', async (req, res) => {
-    // Extract API key from request
+    // Extract API key and client metadata
     const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
-    
-    // Get or create session
     const sessionId = req.headers['mcp-session-id'] || generateSessionId();
-    let session = sessions.get(sessionId);
+    const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
     
-    if (!session || session.apiKey !== apiKey) {
-        // Create new server instance with API key
-        const server = createMcpServer(apiKey);
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => sessionId });
-        await server.connect(transport);
-        session = { server, transport, apiKey };
-        sessions.set(sessionId, session);
+    // Check local cache first (fastest path)
+    let session = localSessionCache.get(sessionId);
+    
+    if (!session) {
+        // Retrieve from Redis and recreate server instance
+        const sessionData = await sessionManager.getSession(sessionId);
+        if (sessionData) {
+            session = await createSessionObjects(sessionData, apiKey);
+            localSessionCache.set(sessionId, session);
+        } else {
+            // Create new session with rate limiting and security checks
+            const rateLimit = await sessionManager.checkRateLimit(apiKey);
+            if (!rateLimit.allowed) throw new Error('Rate limit exceeded');
+            
+            const newSessionData = {
+                sessionId,
+                apiKeyHash: RedisSessionManager.hashApiKey(apiKey),
+                collection: process.env.AIRWEAVE_COLLECTION,
+                baseUrl: process.env.AIRWEAVE_BASE_URL,
+                clientIP,
+                userAgent: req.headers['user-agent']
+            };
+            await sessionManager.setSession(newSessionData);
+            session = await createSessionObjects(newSessionData, apiKey);
+            localSessionCache.set(sessionId, session);
+        }
     }
     
     // Handle request with session's transport
@@ -127,7 +157,8 @@ app.post('/mcp', async (req, res) => {
 ### Testing
 - **MCP Server Tests** (`tests/mcp-server.test.ts`): Core functionality tests including tool registration, parameter passing, response formatting, and error handling
 - **HTTP Transport Tests** (`tests/http-transport.test.ts`): Session management, API key authentication, and multi-tenant behavior
-- **Test Commands**: `npm run test:mcp`, `npm run test:http`, `npm run test:all`
+- **Redis Session Tests** (`tests/redis-session-manager.test.ts`): Redis connection, session storage/retrieval, rate limiting, and cross-pod session sharing
+- **Test Commands**: `npm run test:mcp`, `npm run test:http`, `npm run test:redis`, `npm run test:all`
 
 ### Deployment
 - Docker containerization
