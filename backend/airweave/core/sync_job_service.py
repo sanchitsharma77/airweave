@@ -90,8 +90,9 @@ class SyncJobService:
                 db_sync_job = await crud.sync_job.get(db=db, id=sync_job_id, ctx=ctx)
 
                 if not db_sync_job:
-                    logger.error(f"Sync job {sync_job_id} not found")
-                    return
+                    error_msg = f"Sync job {sync_job_id} not found"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
 
                 # Use the enum value directly (it's already a string)
                 status_value = status.value
@@ -127,7 +128,7 @@ class SyncJobService:
 
         except Exception as e:
             logger.error(f"Failed to update sync job status: {e}")
-            return
+            raise  # Re-raise to let caller handle the error
 
 
 # Singleton instance
