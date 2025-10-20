@@ -222,6 +222,20 @@ integrations:
     additional_frontend_params:
       response_type: "code"
 
+  onenote:
+    oauth_type: "with_rotating_refresh"
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    backend_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    grant_type: "authorization_code"
+    client_id: "cbd62f0d-9c87-4aa2-b420-debf53b46d30"
+    client_secret: "onenote-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Notes.Read"
+    additional_frontend_params:
+      response_type: "code"
+      response_mode: "query"
+
   outlook_calendar:
     oauth_type: "with_rotating_refresh"
     url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"

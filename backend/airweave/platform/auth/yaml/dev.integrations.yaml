@@ -220,6 +220,20 @@ integrations:
     additional_frontend_params:
       response_type: "code"
 
+  onenote:
+    oauth_type: "with_rotating_refresh"
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    backend_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    grant_type: "authorization_code"
+    client_id: "e18255d3-f0b1-4088-b16d-aefea93de91b"
+    client_secret: "iqR8Q~eKy9ypYPWuMPZ3RDmwWVQ0xXQSFwZPYa11"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Notes.Read"
+    additional_frontend_params:
+      response_type: "code"
+      response_mode: "query"
+
   outlook_calendar:
     oauth_type: "with_rotating_refresh"
     url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
