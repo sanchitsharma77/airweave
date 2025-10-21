@@ -84,10 +84,10 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                     maxHeight: "95vh"
                 }}
             >
-                <div className="flex flex-col h-full">
+                <div className="flex flex-col h-full overflow-hidden">
                     {/* Content area - scrollable */}
-                    <div className="flex-grow overflow-y-auto">
-                        <div className="px-8 py-6 h-full flex flex-col">
+                    <div className="flex-1 overflow-y-auto min-h-0">
+                        <div className="px-8 py-6">
                             {/* Heading with Icon */}
                             <div className="flex items-center gap-4 mb-2">
                                 {/* Source Icon - smaller */}
