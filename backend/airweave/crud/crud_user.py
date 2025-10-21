@@ -51,6 +51,29 @@ class CRUDUser(CRUDBaseUser[User, UserCreate, UserUpdate]):
             raise NotFoundException(f"User with email {email} not found")
         return db_obj
 
+    async def update_user_no_auth(self, db: AsyncSession, *, id: UUID, obj_in: UserUpdate) -> User:
+        """Update a user without authentication.
+
+        Important: this method is not part of the regular CRUD operations.
+        This is a custom method for updating a user, that does not
+        require a current user. Use responsibly.
+
+        Args:
+            db (AsyncSession): The database session.
+            id (UUID): The UUID of the user to update.
+            obj_in (UserUpdate): The updated user object.
+        """
+        user = await self.get(db, id=id)
+        if not user:
+            raise NotFoundException(f"User with ID {id} not found")
+
+        for field, value in obj_in.model_dump(exclude_unset=True).items():
+            setattr(user, field, value)
+
+        await db.commit()
+        await db.refresh(user)
+        return user
+
     async def get(self, db: AsyncSession, id: UUID, current_user: User) -> Optional[User]:
         """Get a single object by ID.
 
