@@ -50,13 +50,11 @@ async def _authenticate_auth0_user(
         logger.error(f"User {auth0_user.email} not found in database")
         return None, AuthMethod.AUTH0, {}
 
-    # Update last active timestamp using CRUD module
-    user = await crud.user.update(
-        db=db,
-        db_obj=user,
-        obj_in={"last_active_at": datetime.utcnow()},
-        current_user=user,  # User updating their own record
-    )
+    # Update last active timestamp directly (can't use CRUD during auth flow)
+    user.last_active_at = datetime.utcnow()
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
 
     user_context = schemas.User.model_validate(user)
     return user_context, AuthMethod.AUTH0, {"auth0_id": auth0_user.id}
