@@ -20,6 +20,7 @@ from airweave.core.constants.reserved_ids import (
     NATIVE_QDRANT_UUID,
 )
 from airweave.core.shared_models import (
+    AuthMethod,
     ConnectionStatus,
     FeatureFlag,
     SourceConnectionStatus,
@@ -147,7 +148,7 @@ class SourceConnectionHelpers:
             request_id=request_id,
             organization_id=str(organization_schema.id),
             organization_name=organization_schema.name,
-            auth_method="oauth_callback",  # Special auth method for OAuth callbacks
+            auth_method=AuthMethod.OAUTH_CALLBACK.value,  # Special auth method for OAuth callbacks
             context_base="oauth",
         )
 
@@ -155,7 +156,7 @@ class SourceConnectionHelpers:
             request_id=request_id,
             organization=organization_schema,
             user=None,  # No user context for OAuth callbacks
-            auth_method="oauth_callback",
+            auth_method=AuthMethod.OAUTH_CALLBACK,
             auth_metadata={"session_id": str(init_session.id)},
             logger=base_logger,
         )

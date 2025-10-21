@@ -22,33 +22,38 @@ from airweave.core.exceptions import NotFoundException, RateLimitExceededExcepti
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, logger
 from airweave.core.rate_limiter_service import RateLimiter
+from airweave.core.shared_models import AuthMethod
 from airweave.db.session import get_db
 from airweave.schemas.rate_limit import RateLimitResult
 
 
-async def _authenticate_system_user(db: AsyncSession) -> Tuple[Optional[schemas.User], str, dict]:
+async def _authenticate_system_user(
+    db: AsyncSession,
+) -> Tuple[Optional[schemas.User], AuthMethod, dict]:
     """Authenticate system user when auth is disabled."""
     user = await crud.user.get_by_email(db, email=settings.FIRST_SUPERUSER)
     if user:
         user_context = schemas.User.model_validate(user)
-        return user_context, "system", {"disabled_auth": True}
-    return None, "", {}
+        return user_context, AuthMethod.SYSTEM, {"disabled_auth": True}
+    return None, AuthMethod.SYSTEM, {}
 
 
 async def _authenticate_auth0_user(
     db: AsyncSession, auth0_user: Auth0User
-) -> Tuple[Optional[schemas.User], str, dict]:
+) -> Tuple[Optional[schemas.User], AuthMethod, dict]:
     """Authenticate Auth0 user."""
     try:
         user = await crud.user.get_by_email(db, email=auth0_user.email)
     except NotFoundException:
         logger.error(f"User {auth0_user.email} not found in database")
-        return None, "", {}
+        return None, AuthMethod.AUTH0, {}
     user_context = schemas.User.model_validate(user)
-    return user_context, "auth0", {"auth0_id": auth0_user.id}
+    return user_context, AuthMethod.AUTH0, {"auth0_id": auth0_user.id}
 
 
-async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, str, dict, str]:
+async def _authenticate_api_key(
+    db: AsyncSession, api_key: str
+) -> Tuple[None, AuthMethod, dict, str]:
     """Authenticate API key and return organization ID.
 
     Uses Redis cache for API key → org_id mapping to avoid DB lookup on every request.
@@ -68,7 +73,7 @@ async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, s
                 "api_key_id": "cached",  # We don't have the ID from cache, but it's not critical
                 "created_by": None,
             }
-            return None, "api_key", auth_metadata, str(org_id)
+            return None, AuthMethod.API_KEY, auth_metadata, str(org_id)
 
         # Cache miss - validate API key via CRUD
         api_key_obj = await crud.api_key.get_by_key(db, key=api_key)
@@ -82,7 +87,7 @@ async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, s
             "created_by": api_key_obj.created_by_email,
         }
 
-        return None, "api_key", auth_metadata, str(org_id)
+        return None, AuthMethod.API_KEY, auth_metadata, str(org_id)
 
     except (ValueError, NotFoundException) as e:
         logger.error(f"API key validation failed: {e}")
@@ -94,7 +99,7 @@ async def _authenticate_api_key(db: AsyncSession, api_key: str) -> Tuple[None, s
 def _resolve_organization_id(
     x_organization_id: Optional[str],
     user_context: Optional[schemas.User],
-    auth_method: str,
+    auth_method: AuthMethod,
     auth_metadata: dict,
     api_key_org_id: Optional[str] = None,
 ) -> str:
@@ -114,10 +119,10 @@ def _resolve_organization_id(
         return x_organization_id
 
     # Fallback logic based on auth method
-    if auth_method in ["system", "auth0"] and user_context:
+    if auth_method in [AuthMethod.SYSTEM, AuthMethod.AUTH0] and user_context:
         if user_context.primary_organization_id:
             return str(user_context.primary_organization_id)
-    elif auth_method == "api_key" and api_key_org_id:
+    elif auth_method == AuthMethod.API_KEY and api_key_org_id:
         return api_key_org_id
 
     raise HTTPException(
@@ -130,12 +135,12 @@ async def _validate_organization_access(
     db: AsyncSession,
     organization_id: str,
     user_context: Optional[schemas.User],
-    auth_method: str,
+    auth_method: AuthMethod,
     x_api_key: Optional[str],
 ) -> None:
     """Validate that the user/API key has access to the requested organization."""
     # For user-based auth, verify the user has access to the requested organization
-    if user_context and auth_method in ["auth0", "system"]:
+    if user_context and auth_method in [AuthMethod.AUTH0, AuthMethod.SYSTEM]:
         user_org_ids = [str(org.organization.id) for org in user_context.user_organizations]
         if organization_id not in user_org_ids:
             raise HTTPException(
@@ -144,7 +149,7 @@ async def _validate_organization_access(
             )
 
     # For API key auth, verify the API key belongs to the requested organization
-    elif auth_method == "api_key" and x_api_key:
+    elif auth_method == AuthMethod.API_KEY and x_api_key:
         api_key_obj = await crud.api_key.get_by_key(db, key=x_api_key)
         if str(api_key_obj.organization_id) != organization_id:
             raise HTTPException(
@@ -156,7 +161,7 @@ async def _validate_organization_access(
 async def _get_or_fetch_user_context(
     db: AsyncSession,
     auth0_user: Auth0User,
-) -> Tuple[Optional[schemas.User], str, dict]:
+) -> Tuple[Optional[schemas.User], AuthMethod, dict]:
     """Get user context from cache or fetch from database.
 
     Args:
@@ -178,7 +183,7 @@ async def _get_or_fetch_user_context(
             await context_cache.set_user(user_context)
     else:
         # Cache hit - still need auth metadata
-        auth_method = "auth0"
+        auth_method = AuthMethod.AUTH0
         auth_metadata = {"auth0_id": auth0_user.id}
 
     return user_context, auth_method, auth_metadata
@@ -224,6 +229,9 @@ async def _check_and_enforce_rate_limit(
 ) -> None:
     """Check and enforce rate limits for the organization.
 
+    Rate limiting only applies to API key authentication. Auth0 (access token)
+    and system authentication are excluded from rate limiting.
+
     Stores RateLimitResult in request.state for middleware to add headers.
 
     Args:
@@ -235,6 +243,18 @@ async def _check_and_enforce_rate_limit(
     ------
         RateLimitExceededException: If rate limit is exceeded.
     """
+    # Only apply rate limiting to API key authentication
+    # Auth0 (access token) and system auth are excluded
+    if ctx.auth_method in [AuthMethod.AUTH0, AuthMethod.SYSTEM]:
+        ctx.logger.debug(f"Skipping rate limit for auth method: {ctx.auth_method.value}")
+        request.state.rate_limit_result = RateLimitResult(
+            allowed=True,
+            retry_after=0.0,
+            limit=9999,  # 9999 indicates unlimited/not applicable
+            remaining=9999,  # Not applicable for excluded auth methods
+        )
+        return
+
     try:
         result = await RateLimiter.check_rate_limit(ctx)
         # Store the full result object for middleware
@@ -289,7 +309,7 @@ async def get_context(
 
     # Perform authentication (reuse existing logic)
     user_context = None
-    auth_method = ""
+    auth_method: Optional[AuthMethod] = None
     auth_metadata = {}
     api_key_org_id = None  # For API key auth, this is already resolved
 
@@ -318,7 +338,7 @@ async def get_context(
         request_id=request_id,
         organization_id=str(organization_schema.id),
         organization_name=organization_schema.name,
-        auth_method=auth_method,
+        auth_method=auth_method.value,
         context_base="api",
     )
 
@@ -330,7 +350,7 @@ async def get_context(
 
     # Create analytics context with only the fields we need
     analytics_context = AnalyticsContext(
-        auth_method=auth_method,
+        auth_method=auth_method.value,
         organization_id=str(organization_schema.id),
         organization_name=organization_schema.name,
         request_id=request_id,

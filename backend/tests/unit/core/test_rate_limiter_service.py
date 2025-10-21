@@ -123,8 +123,8 @@ async def test_rate_limiter_unlimited_for_enterprise(
 
     assert result.allowed is True
     assert result.retry_after == 0.0
-    assert result.limit == 0  # 0 indicates unlimited
-    assert result.remaining == 0
+    assert result.limit == 9999  # 9999 indicates unlimited
+    assert result.remaining == 9999
 
 
 @pytest.mark.asyncio

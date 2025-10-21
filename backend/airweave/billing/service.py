@@ -26,6 +26,7 @@ from airweave.billing.plan_logic import (
 from airweave.billing.transactions import billing_transactions
 from airweave.core.exceptions import InvalidStateError, NotFoundException
 from airweave.core.logging import ContextualLogger, logger
+from airweave.core.shared_models import AuthMethod
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.integrations.stripe_client import stripe_client
 from airweave.models import Organization
@@ -49,7 +50,7 @@ class BillingService:
         request_id = str(uuid4())
         return ApiContext(
             request_id=request_id,
-            auth_method="internal_system",
+            auth_method=AuthMethod.INTERNAL_SYSTEM,
             auth_subject_id=str(uuid4()),
             auth_subject_name=f"billing_{source}",
             organization=organization,
@@ -57,7 +58,7 @@ class BillingService:
             logger=logger.with_context(
                 request_id=request_id,
                 organization_id=str(organization.id),
-                auth_method="internal_system",
+                auth_method=AuthMethod.INTERNAL_SYSTEM.value,
                 source=source,
             ),
         )
@@ -450,7 +451,7 @@ class BillingService:
         target_plan = BillingPlan(new_plan)
 
         # Block public Enterprise upgrades/changes (allow only internal/system)
-        if target_plan == BillingPlan.ENTERPRISE and ctx.auth_method != "internal_system":
+        if target_plan == BillingPlan.ENTERPRISE and ctx.auth_method != AuthMethod.INTERNAL_SYSTEM:
             raise InvalidStateError(
                 "Enterprise plan is only available via sales. Please contact support."
             )

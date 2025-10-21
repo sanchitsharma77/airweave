@@ -22,6 +22,7 @@ from airweave.billing.plan_logic import (
 from airweave.billing.service import billing_service
 from airweave.billing.transactions import billing_transactions
 from airweave.core.logging import ContextualLogger, logger
+from airweave.core.shared_models import AuthMethod
 from airweave.integrations.stripe_client import stripe_client
 from airweave.schemas.billing_period import BillingPeriodStatus, BillingTransition
 from airweave.schemas.organization_billing import (
@@ -90,13 +91,13 @@ class BillingWebhookProcessor:
         if organization_id:
             return logger.with_context(
                 organization_id=str(organization_id),
-                auth_method="stripe_webhook",
+                auth_method=AuthMethod.STRIPE_WEBHOOK.value,
                 event_type=event.type,
                 stripe_event_id=event.id,
             )
 
         return logger.with_context(
-            auth_method="stripe_webhook",
+            auth_method=AuthMethod.STRIPE_WEBHOOK.value,
             event_type=event.type,
             stripe_event_id=event.id,
         )
