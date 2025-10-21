@@ -164,7 +164,7 @@ class CRUDUsage(CRUDBaseOrganization[Usage, UsageCreate, UsageUpdate]):
         params = {"usage_id": usage_id}
 
         for action_type, increment in increments.items():
-            if increment > 0:
+            if increment != 0:  # Handle both positive and negative increments
                 field = action_type.value
                 update_parts.append(f"{field} = {field} + :{field}_inc")
                 params[f"{field}_inc"] = increment
