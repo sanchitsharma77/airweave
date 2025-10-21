@@ -165,7 +165,7 @@ export function SyncSchedule({ value, onChange }: SyncScheduleProps) {
               Webhook-based real-time updates
             </p>
             <div className="mt-2 bg-muted/30 py-1 px-2 rounded text-xs text-center font-medium text-muted-foreground">
-              Only in hosted version
+              Coming soon
             </div>
           </div>
         </div>
