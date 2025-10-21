@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from airweave import schemas
 from airweave.core.logging import ContextualLogger
+from airweave.core.shared_models import AuthMethod
 from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
 
 
@@ -28,7 +29,7 @@ class ApiContext(BaseModel):
     # Authentication context
     organization: schemas.Organization
     user: Optional[schemas.User] = None
-    auth_method: str  # "auth0", "api_key", "system"
+    auth_method: AuthMethod
     auth_metadata: Optional[Dict[str, Any]] = None
 
     # Contextual logger with all dimensions pre-configured
@@ -62,12 +63,12 @@ class ApiContext(BaseModel):
     @property
     def is_api_key_auth(self) -> bool:
         """Whether this is API key authentication."""
-        return self.auth_method == "api_key"
+        return self.auth_method == AuthMethod.API_KEY
 
     @property
     def is_user_auth(self) -> bool:
         """Whether this is user authentication (Auth0)."""
-        return self.auth_method == "auth0"
+        return self.auth_method == AuthMethod.AUTH0
 
     def has_feature(self, flag: FeatureFlagEnum) -> bool:
         """Check if organization has a feature enabled.
@@ -90,13 +91,13 @@ class ApiContext(BaseModel):
         if self.user:
             return (
                 f"ApiContext(request_id={self.request_id[:8]}..., "
-                f"method={self.auth_method}, user={self.user.email}, "
+                f"method={self.auth_method.value}, user={self.user.email}, "
                 f"org={self.organization.id})"
             )
         else:
             return (
                 f"ApiContext(request_id={self.request_id[:8]}..., "
-                f"method={self.auth_method}, org={self.organization.id})"
+                f"method={self.auth_method.value}, org={self.organization.id})"
             )
 
     def to_serializable_dict(self) -> Dict[str, Any]:
@@ -110,6 +111,6 @@ class ApiContext(BaseModel):
             "organization_id": str(self.organization.id),
             "organization": self.organization.model_dump(mode="json"),
             "user": self.user.model_dump(mode="json") if self.user else None,
-            "auth_method": self.auth_method,
+            "auth_method": self.auth_method.value,
             "auth_metadata": self.auth_metadata,
         }

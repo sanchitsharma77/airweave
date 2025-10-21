@@ -76,3 +76,17 @@ class FeatureFlag(str, Enum):
 
     S3_DESTINATION = "s3_destination"
     PRIORITY_SUPPORT = "priority_support"
+
+
+class AuthMethod(str, Enum):
+    """Authentication methods used in API requests.
+
+    Defines the valid authentication methods for API context.
+    """
+
+    AUTH0 = "auth0"  # User authentication via Auth0 JWT tokens
+    API_KEY = "api_key"  # Programmatic access via API keys
+    SYSTEM = "system"  # Internal system operations (local dev, migrations)
+    INTERNAL_SYSTEM = "internal_system"  # Internal service-to-service calls
+    STRIPE_WEBHOOK = "stripe_webhook"  # Stripe webhook handlers
+    OAUTH_CALLBACK = "oauth_callback"  # OAuth callback handlers

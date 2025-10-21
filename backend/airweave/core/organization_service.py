@@ -13,6 +13,7 @@ from airweave.api.context import ApiContext
 # Import billing dependencies only if Stripe is enabled
 from airweave.core.config import settings
 from airweave.core.logging import logger
+from airweave.core.shared_models import AuthMethod
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.integrations.auth0_management import auth0_management_client
 from airweave.models import Organization, User, UserOrganization
@@ -147,11 +148,11 @@ class OrganizationService:
                         request_id=str(uuid4()),
                         organization=local_org_schema,
                         user=None,
-                        auth_method="system",
+                        auth_method=AuthMethod.SYSTEM,
                         auth_metadata={"source": "organization_creation"},
                         logger=logger.with_context(
                             organization_id=str(local_org_schema.id),
-                            auth_method="system",
+                            auth_method=AuthMethod.SYSTEM.value,
                             source="organization_creation",
                         ),
                     )
@@ -212,7 +213,7 @@ class OrganizationService:
                 contextual_logger = logger.with_context(
                     request_id=request_id,
                     organization_id=str(org_id),
-                    auth_method="system",
+                    auth_method=AuthMethod.SYSTEM.value,
                     context_base="organization_service",
                     user_id=str(owner_user.id),
                     user_email=owner_user.email,
@@ -222,7 +223,7 @@ class OrganizationService:
                     request_id=request_id,
                     organization=organization,  # Use the full organization object
                     user=owner_user,  # Set the owner as the creator
-                    auth_method="system",
+                    auth_method=AuthMethod.SYSTEM,
                     auth_metadata={"source": "organization_creation"},
                     logger=contextual_logger,
                 )
