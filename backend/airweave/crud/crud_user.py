@@ -79,11 +79,10 @@ class CRUDUser(CRUDBaseUser[User, UserCreate, UserUpdate]):
         for field, value in obj_in.model_dump(exclude_unset=True).items():
             setattr(user, field, value)
 
-        await db.commit()
+        await db.flush()
+        await db.refresh(user)
 
-        stmt = self._get_user_query_with_orgs().where(User.id == user.id)
-        result = await db.execute(stmt)
-        return result.unique().scalar_one()
+        return user
 
     async def get(self, db: AsyncSession, id: UUID, current_user: User) -> Optional[User]:
         """Get a single object by ID.
