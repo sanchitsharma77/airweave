@@ -1,8 +1,9 @@
 """User model."""
 
+from datetime import datetime
 from typing import TYPE_CHECKING, List
 
-from sqlalchemy import UUID, Boolean, String
+from sqlalchemy import UUID, Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from airweave.models._base import Base
@@ -23,6 +24,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_active_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
 
     # Many-to-many relationship with organizations
     user_organizations: Mapped[List["UserOrganization"]] = relationship(
