@@ -135,8 +135,8 @@ class RateLimiter:
             return RateLimitResult(
                 allowed=True,
                 retry_after=0.0,
-                limit=0,
-                remaining=0,
+                limit=9999,
+                remaining=9999,
             )
 
         current_time = time.time()

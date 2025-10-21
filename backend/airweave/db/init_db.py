@@ -10,6 +10,7 @@ from airweave.api.context import ApiContext
 from airweave.core.config import settings
 from airweave.core.exceptions import NotFoundException
 from airweave.core.logging import logger
+from airweave.core.shared_models import AuthMethod
 from airweave.db.init_db_native import (
     init_db_with_entity_definitions,
     init_db_with_native_connections,
@@ -50,7 +51,7 @@ async def init_db(db: AsyncSession) -> None:
                 request_id=str(uuid.uuid4()),
                 user=user,
                 organization=organization,
-                auth_method="system",
+                auth_method=AuthMethod.SYSTEM,
                 logger=logger,
             ),
         )

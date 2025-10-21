@@ -20,6 +20,7 @@ from airweave.api.router import TrailingSlashRouter
 from airweave.core.email_service import send_welcome_email
 from airweave.core.exceptions import NotFoundException
 from airweave.core.logging import logger
+from airweave.core.shared_models import AuthMethod
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.schemas import OrganizationWithRole, User
 
@@ -189,7 +190,7 @@ async def create_or_update_user(
                     request=uuid4(),
                     user=user,
                     organization=organization,
-                    auth_method="auth0",
+                    auth_method=AuthMethod.AUTH0,
                 ),
                 uow=uow,
             )
