@@ -62,8 +62,17 @@ class CRUDUser(CRUDBaseUser[User, UserCreate, UserUpdate]):
             db (AsyncSession): The database session.
             id (UUID): The UUID of the user to update.
             obj_in (UserUpdate): The updated user object.
+
+        Returns:
+            User: The updated user.
+
+        Raises:
+            NotFoundException: If the user with the given ID is not found.
         """
-        user = await self.get(db, id=id)
+        stmt = self._get_user_query_with_orgs().where(User.id == id)
+        result = await db.execute(stmt)
+        user = result.unique().scalar_one_or_none()
+
         if not user:
             raise NotFoundException(f"User with ID {id} not found")
 
@@ -71,8 +80,10 @@ class CRUDUser(CRUDBaseUser[User, UserCreate, UserUpdate]):
             setattr(user, field, value)
 
         await db.commit()
-        await db.refresh(user)
-        return user
+
+        stmt = self._get_user_query_with_orgs().where(User.id == user.id)
+        result = await db.execute(stmt)
+        return result.unique().scalar_one()
 
     async def get(self, db: AsyncSession, id: UUID, current_user: User) -> Optional[User]:
         """Get a single object by ID.
