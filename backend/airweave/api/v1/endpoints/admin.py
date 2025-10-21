@@ -4,7 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud, schemas
@@ -93,10 +93,38 @@ async def list_all_organizations(
     """
     _require_admin(ctx)
 
+    # Import for usage/billing period joins
+    from datetime import datetime
+
+    from airweave.models.billing_period import BillingPeriod
+    from airweave.models.usage import Usage
+    from airweave.schemas.billing_period import BillingPeriodStatus
+
     # Build the base query with billing join
     query = select(Organization).outerjoin(
         OrganizationBilling, Organization.id == OrganizationBilling.organization_id
     )
+
+    # For usage-based sorting, we need to join Usage and BillingPeriod
+    # Only add these joins if sorting by usage fields
+    usage_sort_fields = ["entity_count", "source_connection_count", "query_count"]
+    if sort_by in usage_sort_fields:
+        now = datetime.utcnow()
+        query = query.outerjoin(
+            BillingPeriod,
+            and_(
+                BillingPeriod.organization_id == Organization.id,
+                BillingPeriod.period_start <= now,
+                BillingPeriod.period_end > now,
+                BillingPeriod.status.in_(
+                    [
+                        BillingPeriodStatus.ACTIVE,
+                        BillingPeriodStatus.TRIAL,
+                        BillingPeriodStatus.GRACE,
+                    ]
+                ),
+            ),
+        ).outerjoin(Usage, Usage.billing_period_id == BillingPeriod.id)
 
     # Apply search filter
     if search:
@@ -109,6 +137,12 @@ async def list_all_organizations(
         sort_column = OrganizationBilling.billing_plan
     elif sort_by == "billing_status":
         sort_column = OrganizationBilling.billing_status
+    elif sort_by == "entity_count":
+        sort_column = Usage.entities
+    elif sort_by == "source_connection_count":
+        sort_column = Usage.source_connections
+    elif sort_by == "query_count":
+        sort_column = Usage.queries
     elif sort_by == "is_member":
         # This will be handled client-side, use created_at as default
         sort_column = Organization.created_at
