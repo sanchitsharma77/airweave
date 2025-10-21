@@ -274,8 +274,9 @@ class GuardRailService:
             )
 
             # Check if this specific action type should flush
+            # Use absolute value to handle both positive and negative accumulated changes
             threshold = self.FLUSH_THRESHOLDS.get(action_type, 1)
-            if self.pending_increments[action_type] >= threshold:
+            if abs(self.pending_increments[action_type]) >= threshold:
                 await self._flush_usage_internal(action_type)
 
     async def decrement(self, action_type: ActionType, amount: int = 1) -> None:
@@ -297,8 +298,9 @@ class GuardRailService:
             )
 
             # Check if this specific action type should flush
+            # Use absolute value to handle both increments and decrements
             threshold = self.FLUSH_THRESHOLDS.get(action_type, 1)
-            if self.pending_increments[action_type] >= threshold:
+            if abs(self.pending_increments[action_type]) >= threshold:
                 await self._flush_usage_internal(action_type)
 
     async def _flush_usage_internal(self, action_type: Optional[ActionType] = None) -> None:
@@ -330,11 +332,11 @@ class GuardRailService:
                 return
             increments_to_flush = {action_type: self.pending_increments[action_type]}
         else:
-            # Flush all non-zero increments
+            # Flush all non-zero increments (both positive and negative)
             increments_to_flush = {
                 action_type: count
                 for action_type, count in self.pending_increments.items()
-                if count > 0
+                if count != 0
             }
 
         # Perform database operations outside the lock
