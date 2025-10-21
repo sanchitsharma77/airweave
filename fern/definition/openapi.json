@@ -5398,6 +5398,19 @@
             "description": "Total number of queries (from Usage.queries)",
             "default": 0
           },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At",
+            "description": "Last active timestamp of any user in this organization"
+          },
           "is_member": {
             "type": "boolean",
             "title": "Is Member",
@@ -8646,6 +8659,18 @@
             "type": "boolean",
             "title": "Is Admin",
             "default": false
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At"
           }
         },
         "type": "object",
