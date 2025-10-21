@@ -53,12 +53,20 @@ class UserCreate(UserBase):
     auth0_id: Optional[str] = None
 
 
-class UserUpdate(UserBase):
+class UserUpdate(BaseModel):
     """Schema for updating a User object."""
 
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
     auth0_id: Optional[str] = None
     permissions: Optional[list[str]] = None
     last_active_at: Optional[datetime] = None
+
+    class Config:
+        """Pydantic config for UserUpdate."""
+
+        from_orm = True
+        from_attributes = True
 
 
 class UserInDBBase(UserBase):
