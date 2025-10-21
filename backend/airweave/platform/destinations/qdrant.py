@@ -221,12 +221,24 @@ class QdrantDestination(VectorDBDestination):
                 ef_construct=100,
             )
 
+            # Quantization config for optimal performance with 100GB RAM
+            # int8 scalar quantization with always_ram keeps both quantized and original in memory
+            # Fast initial search (int8) + accurate rescoring (float32) with no disk I/O
+            quantization_config = rest.ScalarQuantization(
+                scalar=rest.ScalarQuantizationConfig(
+                    type=rest.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                )
+            )
+
             await self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config={
                     DEFAULT_VECTOR_NAME: rest.VectorParams(
                         size=self.vector_size,
                         distance=rest.Distance.COSINE,
+                        on_disk=False,  # Keep original vectors in RAM for rescoring
                     ),
                 },
                 sparse_vectors_config={
@@ -239,6 +251,7 @@ class QdrantDestination(VectorDBDestination):
                     indexing_threshold=20000,
                     max_segment_size=200000,  # Smaller segments for better filtering
                 ),
+                quantization_config=quantization_config,
                 on_disk_payload=True,
             )
 
@@ -746,12 +759,13 @@ class QdrantDestination(VectorDBDestination):
                 sparse_vector.as_object() if hasattr(sparse_vector, "as_object") else sparse_vector
             )
 
-            prefetch_limit = 10000
+            prefetch_limit = 5000
             if decay_config is not None:
                 try:
                     weight = max(0.0, min(1.0, float(getattr(decay_config, "weight", 0.0) or 0.0)))
                     if weight > 0.3:
-                        prefetch_limit = int(10000 * (1 + weight))
+                        # Allow up to 10K for high temporal weight
+                        prefetch_limit = int(5000 * (1 + weight))
                 except Exception:
                     pass
 
