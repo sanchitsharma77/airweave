@@ -58,6 +58,7 @@ class UserUpdate(UserBase):
 
     auth0_id: Optional[str] = None
     permissions: Optional[list[str]] = None
+    last_active_at: Optional[datetime] = None
 
 
 class UserInDBBase(UserBase):

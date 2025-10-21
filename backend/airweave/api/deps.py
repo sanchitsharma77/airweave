@@ -51,9 +51,8 @@ async def _authenticate_auth0_user(
         return None, AuthMethod.AUTH0, {}
 
     # Update last active timestamp directly (can't use CRUD during auth flow)
-    from airweave.schemas.user import UserUpdate
 
-    user_update = UserUpdate(last_active_at=datetime.utcnow())
+    user_update = schemas.UserUpdate(last_active_at=datetime.utcnow())
     user = await crud.user.update_user_no_auth(db, id=user.id, obj_in=user_update)
 
     user_context = schemas.User.model_validate(user)
