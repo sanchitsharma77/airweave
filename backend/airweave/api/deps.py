@@ -52,9 +52,7 @@ async def _authenticate_auth0_user(
 
     # Update last active timestamp directly (can't use CRUD during auth flow)
     user.last_active_at = datetime.utcnow()
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    user = await crud.user.update_user_no_auth(db, id=user.id, obj_in=user)
 
     user_context = schemas.User.model_validate(user)
     return user_context, AuthMethod.AUTH0, {"auth0_id": auth0_user.id}
