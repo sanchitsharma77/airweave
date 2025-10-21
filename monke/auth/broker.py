@@ -69,6 +69,38 @@ class ComposioBroker(BaseAuthBroker):
             r.raise_for_status()
             return r.json()
 
+    async def _get_all_accounts(self) -> List[Dict[str, Any]]:
+        """Fetch all connected accounts from Composio with pagination until exhaustion.
+
+        Returns:
+            List of all connected account dictionaries.
+        """
+        all_accounts = []
+        page = 1
+        page_size = 100
+
+        while True:
+            response = await self._get(
+                "/connected_accounts",
+                params={"limit": page_size, "page": page}
+            )
+            items = response.get("items", [])
+
+            if not items:
+                break
+
+            all_accounts.extend(items)
+
+            # Check if there are more pages
+            # If we got fewer items than the page size, we've reached the end
+            if len(items) < page_size:
+                break
+
+            page += 1
+
+        self.logger.info(f"Fetched {len(all_accounts)} total connected accounts from Composio")
+        return all_accounts
+
     async def get_credentials(
         self, source_short_name: str, required_fields: Optional[List[str]] = None
     ) -> Dict[str, Any]:
@@ -93,7 +125,7 @@ class ComposioBroker(BaseAuthBroker):
         else:
             slug = source_short_name
 
-        accounts = (await self._get("/connected_accounts")).get("items", [])
+        accounts = await self._get_all_accounts()
         matching = [a for a in accounts if a.get("toolkit", {}).get("slug") == slug]
 
         if not matching:
