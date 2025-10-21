@@ -113,24 +113,82 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
   const [isUpdating, setIsUpdating] = useState(false);
   const [showPasswordFields, setShowPasswordFields] = useState<Record<string, boolean>>({});
 
+  // Parse cron expression to determine frequency type
+  const parseCronToScheduleConfig = (cron: string): SyncScheduleConfig => {
+    const parts = cron.split(' ');
+    if (parts.length !== 5) {
+      return {
+        type: "scheduled",
+        frequency: "custom",
+        cronExpression: cron
+      };
+    }
+
+    const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+
+    const minuteNum = minute === '*' ? 0 : parseInt(minute, 10);
+    const hourNum = hour === '*' ? 0 : parseInt(hour, 10);
+
+    // Hourly: "N * * * *"
+    if (hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+      return {
+        type: "scheduled",
+        frequency: "hourly",
+        minute: isNaN(minuteNum) ? 0 : minuteNum
+      };
+    }
+
+    // Daily: "N H * * *"
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*' && hour !== '*') {
+      return {
+        type: "scheduled",
+        frequency: "daily",
+        hour: isNaN(hourNum) ? 0 : hourNum,
+        minute: isNaN(minuteNum) ? 0 : minuteNum
+      };
+    }
+
+    // Weekly: "N H * * D"
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek !== '*' && hour !== '*') {
+      const dayOfWeekNum = parseInt(dayOfWeek, 10);
+      return {
+        type: "scheduled",
+        frequency: "weekly",
+        hour: isNaN(hourNum) ? 0 : hourNum,
+        minute: isNaN(minuteNum) ? 0 : minuteNum,
+        dayOfWeek: isNaN(dayOfWeekNum) ? 1 : dayOfWeekNum
+      };
+    }
+
+    // Monthly: "N H D * *"
+    if (dayOfMonth !== '*' && month === '*' && dayOfWeek === '*' && hour !== '*') {
+      const dayOfMonthNum = parseInt(dayOfMonth, 10);
+      return {
+        type: "scheduled",
+        frequency: "monthly",
+        hour: isNaN(hourNum) ? 0 : hourNum,
+        minute: isNaN(minuteNum) ? 0 : minuteNum,
+        dayOfMonth: isNaN(dayOfMonthNum) ? 1 : dayOfMonthNum
+      };
+    }
+
+    // Default to custom if pattern doesn't match
+    return {
+      type: "scheduled",
+      frequency: "custom",
+      cronExpression: cron
+    };
+  };
+
   // Initialize schedule config when sourceConnection changes
   useEffect(() => {
     if (sourceConnection?.schedule?.cron) {
-      const cronParts = sourceConnection.schedule.cron.split(' ');
-      const utcMinute = parseInt(cronParts[0]);
-      const utcHour = cronParts[1] !== '*' ? parseInt(cronParts[1]) : undefined;
-
-      setScheduleConfig({
-        type: "scheduled",
-        frequency: "custom",
-        hour: utcHour,
-        minute: utcMinute,
-        cronExpression: sourceConnection.schedule.cron
-      });
+      const config = parseCronToScheduleConfig(sourceConnection.schedule.cron);
+      setScheduleConfig(config);
     } else {
       setScheduleConfig({
         type: "one-time",
-        frequency: "custom"
+        frequency: "daily" // Default to daily for better UX
       });
     }
   }, [sourceConnection]);

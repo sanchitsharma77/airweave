@@ -161,15 +161,11 @@ export function CronExpressionInput({ value, onChange }: CronExpressionInputProp
   const [isValid, setIsValid] = useState<boolean>(true);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Update the parent component when fields change
+  // Keep a ref to the latest onChange to avoid stale closures - CRITICAL FIX for unresponsive inputs
+  const onChangeRef = useRef(onChange);
   useEffect(() => {
-    const newValue = fields.join(" ");
-    setIsValid(isValidCronExpression(newValue));
-
-    if (newValue !== value) {
-      onChange(newValue);
-    }
-  }, [fields, onChange, value]);
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Update fields when value changes externally
   useEffect(() => {
@@ -178,7 +174,18 @@ export function CronExpressionInput({ value, onChange }: CronExpressionInputProp
       setFields(newFields);
       setIsValid(isValidCronExpression(value));
     }
-  }, [value]);
+  }, [value, fields]);
+
+  // Update the parent component when fields change
+  useEffect(() => {
+    const newValue = fields.join(" ");
+    setIsValid(isValidCronExpression(newValue));
+
+    // Only call onChange if the value actually changed from what's in props
+    if (newValue !== value) {
+      onChangeRef.current(newValue);
+    }
+  }, [fields, value]);
 
   // Handle input change for a specific field
   const handleFieldChange = (index: number, e: ChangeEvent<HTMLInputElement>) => {

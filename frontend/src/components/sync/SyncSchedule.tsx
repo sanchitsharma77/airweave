@@ -73,12 +73,28 @@ export function SyncSchedule({ value, onChange }: SyncScheduleProps) {
   const [activeType, setActiveType] = useState<"one-time" | "scheduled">(value.type);
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Sync activeType with prop changes - CRITICAL FIX for Edit dialog not showing correct state
+  React.useEffect(() => {
+    setActiveType(value.type);
+  }, [value.type]);
+
   const handleTypeChange = (type: "one-time" | "scheduled") => {
     setActiveType(type);
-    onChange({
-      ...value,
-      type
-    });
+
+    // Clean config when switching to one-time
+    const newConfig: SyncScheduleConfig = type === "one-time"
+      ? { type: "one-time" }
+      : {
+        type: "scheduled",
+        frequency: value.frequency || "daily",
+        hour: value.hour,
+        minute: value.minute,
+        dayOfWeek: value.dayOfWeek,
+        dayOfMonth: value.dayOfMonth,
+        cronExpression: value.cronExpression
+      };
+
+    onChange(newConfig);
   };
 
   const handleFrequencyChange = (frequency: string) => {

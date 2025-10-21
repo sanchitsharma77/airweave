@@ -512,8 +512,14 @@ const SourceConnectionStateView: React.FC<Props> = ({
 
   const handleConnectionUpdate = (updatedConnection: SourceConnection) => {
     setSourceConnection(updatedConnection);
-    // Re-fetch to ensure everything is in sync
-    fetchSourceConnection();
+
+    // If using prop data, notify parent to refetch
+    if (sourceConnectionData && onConnectionUpdated) {
+      onConnectionUpdated();
+    } else {
+      // Otherwise fetch directly
+      fetchSourceConnection();
+    }
   };
 
   const handleDeleteConnection = async () => {
