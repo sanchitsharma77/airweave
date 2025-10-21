@@ -42,11 +42,22 @@ async def _authenticate_auth0_user(
     db: AsyncSession, auth0_user: Auth0User
 ) -> Tuple[Optional[schemas.User], AuthMethod, dict]:
     """Authenticate Auth0 user."""
+    from datetime import datetime
+
     try:
         user = await crud.user.get_by_email(db, email=auth0_user.email)
     except NotFoundException:
         logger.error(f"User {auth0_user.email} not found in database")
         return None, AuthMethod.AUTH0, {}
+
+    # Update last active timestamp using CRUD module
+    user = await crud.user.update(
+        db=db,
+        db_obj=user,
+        obj_in={"last_active_at": datetime.utcnow()},
+        current_user=user,  # User updating their own record
+    )
+
     user_context = schemas.User.model_validate(user)
     return user_context, AuthMethod.AUTH0, {"auth0_id": auth0_user.id}
 

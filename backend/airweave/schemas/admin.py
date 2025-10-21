@@ -40,6 +40,9 @@ class OrganizationMetrics(BaseModel):
     )
     entity_count: int = Field(0, description="Total number of entities (from Usage.entities)")
     query_count: int = Field(0, description="Total number of queries (from Usage.queries)")
+    last_active_at: Optional[datetime] = Field(
+        None, description="Last active timestamp of any user in this organization"
+    )
 
     # Admin membership info
     is_member: bool = Field(False, description="Whether the current admin user is already a member")

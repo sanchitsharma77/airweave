@@ -53,12 +53,13 @@ interface OrganizationMetrics {
   source_connection_count: number;
   entity_count: number;
   query_count: number;
+  last_active_at?: string;
   is_member: boolean;
   member_role?: string;
   enabled_features?: string[];
 }
 
-type SortField = 'name' | 'created_at' | 'billing_plan' | 'user_count' | 'source_connection_count' | 'entity_count' | 'query_count' | 'is_member';
+type SortField = 'name' | 'created_at' | 'billing_plan' | 'user_count' | 'source_connection_count' | 'entity_count' | 'query_count' | 'last_active_at' | 'is_member';
 type SortOrder = 'asc' | 'desc';
 type MembershipFilter = 'all' | 'member' | 'non-member';
 
@@ -169,7 +170,7 @@ export function AdminDashboard() {
       filtered = filtered.filter(org => !org.is_member);
     }
 
-    // Apply client-side sorting if sorting by membership
+    // Apply client-side sorting if sorting by membership (not handled by backend)
     if (sortField === 'is_member') {
       filtered = [...filtered].sort((a, b) => {
         const aValue = a.is_member ? 1 : 0;
@@ -471,10 +472,10 @@ export function AdminDashboard() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-          <CardTitle>All Organizations</CardTitle>
-          <CardDescription>
-            View and manage all organizations on the platform
-          </CardDescription>
+              <CardTitle>All Organizations</CardTitle>
+              <CardDescription>
+                View and manage all organizations on the platform
+              </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Select value={membershipFilter} onValueChange={(value: MembershipFilter) => setMembershipFilter(value)}>
@@ -505,13 +506,13 @@ export function AdminDashboard() {
           ) : filteredOrganizations.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               {searchTerm ? 'No organizations match your search' :
-               membershipFilter !== 'all' ? `No ${membershipFilter === 'member' ? 'member' : 'non-member'} organizations found` :
-               'No organizations found'}
+                membershipFilter !== 'all' ? `No ${membershipFilter === 'member' ? 'member' : 'non-member'} organizations found` :
+                  'No organizations found'}
             </div>
           ) : (
             <div className="border-t">
-            <Table>
-              <TableHeader>
+              <Table>
+                <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="w-[220px]">
                       <Button
@@ -595,6 +596,17 @@ export function AdminDashboard() {
                         variant="ghost"
                         size="sm"
                         className="h-8 -ml-3"
+                        onClick={() => handleSort('last_active_at')}
+                      >
+                        Last Active
+                        <ArrowUpDown className="ml-2 h-3 w-3" />
+                      </Button>
+                    </TableHead>
+                    <TableHead className="w-[130px]">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 -ml-3"
                         onClick={() => handleSort('created_at')}
                       >
                         Created
@@ -602,7 +614,7 @@ export function AdminDashboard() {
                       </Button>
                     </TableHead>
                     <TableHead className="text-right w-[200px]">Actions</TableHead>
-                </TableRow>
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredOrganizations.map((org) => (
@@ -645,10 +657,13 @@ export function AdminDashboard() {
                       </TableCell>
                       <TableCell className="text-right py-2 font-mono text-sm">
                         {formatNumber(org.query_count)}
-                    </TableCell>
+                      </TableCell>
                       <TableCell className="py-2 text-xs text-muted-foreground">
-                      {formatDate(org.created_at)}
-                    </TableCell>
+                        {org.last_active_at ? formatDate(org.last_active_at) : '—'}
+                      </TableCell>
+                      <TableCell className="py-2 text-xs text-muted-foreground">
+                        {formatDate(org.created_at)}
+                      </TableCell>
                       <TableCell className="text-right py-2">
                         <div className="flex justify-end gap-1.5">
                           {org.is_member ? (
@@ -699,10 +714,10 @@ export function AdminDashboard() {
                           </Button>
                         </div>
                       </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
