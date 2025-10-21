@@ -215,7 +215,9 @@ class SourceConnectionUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_minimal_change(self):
         """Ensure at least one field is being updated."""
-        if not any([self.name, self.description, self.config, self.schedule, self.authentication]):
+        # Check which fields were explicitly provided (even if None)
+        provided_fields = self.model_fields_set
+        if not provided_fields:
             raise ValueError("At least one field must be provided for update")
         return self
 
