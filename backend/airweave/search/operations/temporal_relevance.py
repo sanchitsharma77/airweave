@@ -72,6 +72,25 @@ class TemporalRelevance(SearchOperation):
         filter_dict = state.get("filter")
         qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
 
+        # Inject tenant filter for multi-tenant isolation
+        tenant_condition = rest.FieldCondition(
+            key="airweave_collection_id",
+            match=rest.MatchValue(value=str(context.collection_id)),
+        )
+
+        if qdrant_filter:
+            # Merge with existing filter
+            if not qdrant_filter.must:
+                qdrant_filter.must = []
+            qdrant_filter.must.append(tenant_condition)
+        else:
+            # Create new filter with just tenant
+            qdrant_filter = rest.Filter(must=[tenant_condition])
+
+        ctx.logger.debug(
+            f"[TemporalRelevance] Applied tenant filter: collection_id={context.collection_id}"
+        )
+
         # Connect to Qdrant (runtime import to avoid circular dependency)
         from airweave.platform.destinations.qdrant import QdrantDestination
 
