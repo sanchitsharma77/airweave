@@ -144,45 +144,52 @@ jobs:
           # To run rate limit tests locally: pytest tests/e2e/smoke -m rate_limit
 
           MAX_RETRIES=2
-          ATTEMPT=0
 
+          # Run all tests first
+          set +e
+          pytest tests/e2e/smoke -m "not rate_limit" -n 3 -v --tb=short 2>&1 | tee pytest_output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "All tests passed!"
+            exit 0
+          fi
+
+          # Count failures from pytest output
+          FAILURES=$(grep -oP '\d+(?= failed)' pytest_output.txt | head -1 || echo "0")
+          echo "Detected $FAILURES test failure(s)"
+
+          # If 3 or more failures, don't retry
+          if [ "$FAILURES" -ge 3 ]; then
+            echo "3 or more tests failed. Not retrying."
+            exit 1
+          fi
+
+          # Retry only the failed tests
+          ATTEMPT=1
           while [ $ATTEMPT -le $MAX_RETRIES ]; do
-            echo "Test attempt $((ATTEMPT + 1)) of $((MAX_RETRIES + 1))..."
+            echo ""
+            echo "=========================================="
+            echo "Retry attempt $ATTEMPT of $MAX_RETRIES (running ONLY failed tests)"
+            echo "=========================================="
+            sleep 5
 
-            # Run pytest and capture output and exit code
             set +e
-            pytest tests/e2e/smoke -m "not rate_limit" -n 3 -v --tb=short 2>&1 | tee pytest_output.txt
+            pytest tests/e2e/smoke -m "not rate_limit" --lf -n 3 -v --tb=short 2>&1 | tee pytest_retry_output.txt
             EXIT_CODE=${PIPESTATUS[0]}
             set -e
 
             if [ $EXIT_CODE -eq 0 ]; then
-              echo "Tests passed!"
+              echo "Failed tests passed on retry!"
               exit 0
             fi
 
-            # Count failures from pytest output
-            FAILURES=$(grep -oP '\d+(?= failed)' pytest_output.txt | head -1 || echo "0")
-            echo "Detected $FAILURES test failure(s)"
-
-            # If 3 or more failures, don't retry
-            if [ "$FAILURES" -ge 3 ]; then
-              echo "3 or more tests failed. Not retrying."
-              break
-            fi
-
-            # If less than 3 failures and we have retries left
-            if [ $ATTEMPT -lt $MAX_RETRIES ]; then
-              echo "Less than 3 tests failed. Retrying..."
-              ATTEMPT=$((ATTEMPT + 1))
-              sleep 5
-            else
-              echo "Max retries reached."
-              break
-            fi
+            ATTEMPT=$((ATTEMPT + 1))
           done
 
-          # If we get here, tests failed
-          echo "Tests failed after all retry attempts"
+          # If we get here, tests failed after retries
+          echo "Tests failed after $MAX_RETRIES retry attempts"
           exit 1
 
       - name: Print service logs on failure
