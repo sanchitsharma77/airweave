@@ -93,11 +93,12 @@ async def list_all_organizations(
     """
     _require_admin(ctx)
 
-    # Import for usage/billing period joins
+    # Import for joins
     from datetime import datetime
 
     from airweave.models.billing_period import BillingPeriod
     from airweave.models.usage import Usage
+    from airweave.models.user import User
     from airweave.schemas.billing_period import BillingPeriodStatus
 
     # Build the base query with billing join
@@ -126,6 +127,25 @@ async def list_all_organizations(
             ),
         ).outerjoin(Usage, Usage.billing_period_id == BillingPeriod.id)
 
+    # For last_active_at sorting, join with User through UserOrganization
+    if sort_by == "last_active_at":
+        # Subquery to get max last_active_at per organization
+        from sqlalchemy import select as sa_select
+
+        max_active_subq = (
+            sa_select(
+                UserOrganization.organization_id,
+                func.max(User.last_active_at).label("max_last_active"),
+            )
+            .join(User, UserOrganization.user_id == User.id)
+            .group_by(UserOrganization.organization_id)
+            .subquery()
+        )
+
+        query = query.outerjoin(
+            max_active_subq, Organization.id == max_active_subq.c.organization_id
+        )
+
     # Apply search filter
     if search:
         query = query.where(Organization.name.ilike(f"%{search}%"))
@@ -143,6 +163,8 @@ async def list_all_organizations(
         sort_column = Usage.source_connections
     elif sort_by == "query_count":
         sort_column = Usage.queries
+    elif sort_by == "last_active_at":
+        sort_column = max_active_subq.c.max_last_active
     elif sort_by == "is_member":
         # This will be handled client-side, use created_at as default
         sort_column = Organization.created_at
@@ -198,6 +220,21 @@ async def list_all_organizations(
         uo.organization_id: uo.role for uo in admin_membership_result.scalars().all()
     }
 
+    # Fetch last active timestamp for each organization (most recent user activity)
+    from airweave.models.user import User
+
+    last_active_query = (
+        select(
+            UserOrganization.organization_id,
+            func.max(User.last_active_at).label("last_active"),
+        )
+        .join(User, UserOrganization.user_id == User.id)
+        .where(UserOrganization.organization_id.in_(org_ids))
+        .group_by(UserOrganization.organization_id)
+    )
+    last_active_result = await db.execute(last_active_query)
+    last_active_map = {row.organization_id: row.last_active for row in last_active_result}
+
     # Fetch current usage for all organizations using CRUD layer
     usage_map = await crud.usage.get_current_usage_for_orgs(db, organization_ids=org_ids)
 
@@ -227,6 +264,7 @@ async def list_all_organizations(
                 source_connection_count=usage_record.source_connections if usage_record else 0,
                 entity_count=usage_record.entities if usage_record else 0,
                 query_count=usage_record.queries if usage_record else 0,
+                last_active_at=last_active_map.get(org.id),
                 is_member=admin_role is not None,
                 member_role=admin_role,
                 enabled_features=enabled_features,
