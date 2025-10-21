@@ -124,6 +124,44 @@ class ComposioAuthProvider(BaseAuthProvider):
             self.logger.error(f"Unexpected error accessing Composio API: {url}, {str(e)}")
             raise
 
+    async def _get_all_connected_accounts(self, client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+        """Fetch all connected accounts from Composio with pagination until exhaustion.
+
+        Args:
+            client: HTTP client
+
+        Returns:
+            List of all connected account dictionaries
+        """
+        all_accounts = []
+        page = 1
+        page_size = 100
+
+        while True:
+            response = await self._get_with_auth(
+                client,
+                "https://backend.composio.dev/api/v3/connected_accounts",
+                params={"limit": page_size, "page": page},
+            )
+            items = response.get("items", [])
+
+            if not items:
+                break
+
+            all_accounts.extend(items)
+
+            # Check if there are more pages
+            # If we got fewer items than the page size, we've reached the end
+            if len(items) < page_size:
+                break
+
+            page += 1
+
+        self.logger.info(
+            f"📊 [Composio] Fetched {len(all_accounts)} total connected accounts from Composio"
+        )
+        return all_accounts
+
     async def get_creds_for_source(
         self, source_short_name: str, source_auth_config_fields: List[str]
     ) -> Dict[str, Any]:
@@ -173,8 +211,6 @@ class ComposioAuthProvider(BaseAuthProvider):
                 source_creds_dict, source_auth_config_fields, source_short_name
             )
 
-            # TODO: pagination
-
             safe_log_credentials(
                 found_credentials,
                 self.logger.info,
@@ -200,24 +236,17 @@ class ComposioAuthProvider(BaseAuthProvider):
         """
         self.logger.info("🌐 [Composio] Fetching connected accounts from Composio API...")
 
-        connected_accounts_response = await self._get_with_auth(
-            client,
-            "https://backend.composio.dev/api/v3/connected_accounts",
-        )
-
-        total_accounts = len(connected_accounts_response.get("items", []))
-        self.logger.info(f"\n📊 [Composio] Total connected accounts found: {total_accounts}\n")
+        all_connected_accounts = await self._get_all_connected_accounts(client)
 
         # Log all available toolkits/slugs for debugging
         all_toolkits = {
-            acc.get("toolkit", {}).get("slug", "unknown")
-            for acc in connected_accounts_response.get("items", [])
+            acc.get("toolkit", {}).get("slug", "unknown") for acc in all_connected_accounts
         }
         self.logger.info(f"\n🔧 [Composio] Available toolkit slugs: {sorted(all_toolkits)}\n")
 
         source_connected_accounts = [
             connected_account
-            for connected_account in connected_accounts_response.get("items", [])
+            for connected_account in all_connected_accounts
             if connected_account.get("toolkit", {}).get("slug") == composio_slug
         ]
 
