@@ -73,7 +73,7 @@ export function SyncSchedule({ value, onChange }: SyncScheduleProps) {
   const [activeType, setActiveType] = useState<"one-time" | "scheduled">(value.type);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Sync activeType with prop changes - CRITICAL FIX for Edit dialog not showing correct state
+  // Sync activeType with prop changes
   React.useEffect(() => {
     setActiveType(value.type);
   }, [value.type]);
@@ -130,7 +130,7 @@ export function SyncSchedule({ value, onChange }: SyncScheduleProps) {
 
   return (
     <Card className="bg-background border-none">
-      <CardContent className="space-y-6">
+      <CardContent className="pt-6 space-y-6">
         {/* Main options as clickable cards */}
         <div className="grid grid-cols-3 gap-4">
           <div
