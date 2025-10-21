@@ -144,9 +144,12 @@ class PdfConverter(DocumentConverter):
             md_content, title = await self._convert_with_pypdf(local_path)
             return DocumentConverterResult(title=title, text_content=md_content)
         except ImportError:
-            return DocumentConverterResult(
-                title=None, text_content="PDF conversion requires Mistral API key or PyPDF2."
+            logger.error(
+                "PDF conversion failed: PyPDF2 library not installed. "
+                "Install PyPDF2 or provide a valid MISTRAL_API_KEY to enable PDF processing."
             )
+            # Return None to signal failure - entity will be skipped and can be retried later
+            return None
         except Exception as e:
             logger.error(f"Error converting PDF with PyPDF2: {str(e)}")
             return None

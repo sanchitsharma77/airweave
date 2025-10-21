@@ -46,13 +46,12 @@ class DocxConverter(DocumentConverter):
                     try:
                         md_content = await self._convert_with_pandoc(local_path)
                     except Exception as e:
-                        logger.error(f"Error converting DOCX with external tools: {str(e)}")
-                        return DocumentConverterResult(
-                            title=None,
-                            text_content=(
-                                "DOCX conversion requires python-docx, mammoth, or pandoc."
-                            ),
+                        logger.error(
+                            f"DOCX conversion failed - no extraction library available: "
+                            f"{str(e)}. Install python-docx, mammoth, or pandoc."
                         )
+
+                        return None
         except Exception as e:
             logger.error(f"Error converting DOCX: {str(e)}")
             return None
