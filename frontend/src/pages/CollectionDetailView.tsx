@@ -462,7 +462,7 @@ const Collections = () => {
         }
 
         try {
-            const response = await apiClient.put(`/collections/${readable_id}`, null, { name: newName });
+            const response = await apiClient.patch(`/collections/${readable_id}`, { name: newName });
             if (!response.ok) throw new Error("Failed to update collection name");
 
             // Update local state after successful API call

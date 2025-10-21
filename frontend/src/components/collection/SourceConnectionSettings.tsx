@@ -49,13 +49,13 @@ interface SourceConnection {
   name: string;
   description?: string;
   short_name: string;
+  readable_collection_id: string;
   config_fields?: Record<string, any>;
   sync_id?: string;
   organization_id: string;
   created_at: string;
   modified_at: string;
   connection_id?: string;
-  collection: string;
   created_by_email: string;
   modified_by_email: string;
   auth_fields?: Record<string, any> | string;
@@ -285,7 +285,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
         return;
       }
 
-      const response = await apiClient.put(`/source-connections/${sourceConnection?.id}`, null, updateData);
+      const response = await apiClient.patch(`/source-connections/${sourceConnection?.id}`, updateData);
 
       if (!response.ok) {
         throw new Error("Failed to update source connection");
