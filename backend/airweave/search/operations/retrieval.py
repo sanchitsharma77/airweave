@@ -113,6 +113,22 @@ class Retrieval(SearchOperation):
         ctx.logger.debug(f"[Retrieval] results: {final_count}")
         state["results"] = final_results
 
+        # Report metrics for analytics
+        fetch_limit = self._calculate_fetch_limit(has_reranking, include_offset=True)
+        self._report_metrics(
+            state,
+            output_count=len(raw_results),  # Before pagination
+            final_count=final_count,  # After pagination (what gets passed forward)
+            search_method=search_method,
+            has_filter=bool(filter_dict),
+            has_temporal_decay=decay_config is not None,
+            decay_weight=decay_config.weight if decay_config else 0.0,
+            prefetch_multiplier=self.RERANK_PREFETCH_MULTIPLIER if has_reranking else 1.0,
+            actual_fetch_limit=fetch_limit,
+            embeddings_used=num_embeddings,
+            was_bulk_search=is_bulk,
+        )
+
         # Emit vector search done with stats
         top_scores = [r.get("score", 0) for r in final_results[:3] if isinstance(r, dict)]
 
