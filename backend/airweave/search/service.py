@@ -50,14 +50,6 @@ class SearchService:
         duration_ms = (time.monotonic() - start_time) * 1000
         ctx.logger.debug(f"Search completed in {duration_ms:.2f}ms")
 
-        await search_helpers.persist_search_data(
-            db=db,
-            search_context=search_context,
-            search_response=response,
-            ctx=ctx,
-            duration_ms=duration_ms,
-        )
-
         # Track search completion to PostHog
         from airweave.analytics.search_analytics import track_search_completion
 
@@ -91,6 +83,15 @@ class SearchService:
             status="success",
             state=state,  # Pass state for automatic metrics extraction
             **search_config,
+        )
+
+        # Persist search data to database
+        await search_helpers.persist_search_data(
+            db=db,
+            search_context=search_context,
+            search_response=response,
+            ctx=ctx,
+            duration_ms=duration_ms,
         )
 
         return response
