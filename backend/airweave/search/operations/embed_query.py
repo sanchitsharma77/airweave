@@ -70,6 +70,15 @@ class EmbedQuery(SearchOperation):
         state["dense_embeddings"] = dense_embeddings
         state["sparse_embeddings"] = sparse_embeddings
 
+        # Report metrics for analytics
+        self._report_metrics(
+            state,
+            embeddings_generated=len(dense_embeddings or sparse_embeddings or []),
+            has_dense=dense_embeddings is not None,
+            has_sparse=sparse_embeddings is not None,
+            strategy=self.strategy.value,
+        )
+
         # Emit embedding done with stats
         await self._emit_embedding_done(dense_embeddings, sparse_embeddings, context.emitter)
 

@@ -63,7 +63,11 @@ class GenerateAnswer(SearchOperation):
 
         # Generate answer with provider fallback
         # Token budgeting happens per-provider since context windows differ
+        chosen_count_for_metrics = 0  # Track for metrics
+
         async def call_provider(provider: BaseProvider) -> str:
+            nonlocal chosen_count_for_metrics
+
             if not provider.model_spec.llm_model:
                 raise RuntimeError("LLM model not configured for provider")
 
@@ -71,6 +75,8 @@ class GenerateAnswer(SearchOperation):
             formatted_context, chosen_count = self._budget_and_format_results(
                 results, context.query, provider
             )
+            chosen_count_for_metrics = chosen_count  # Store for metrics
+
             ctx.logger.debug(
                 f"[GenerateAnswer] {chosen_count} results fit in {provider.__class__.__name__} "
                 f"context window"
@@ -90,12 +96,23 @@ class GenerateAnswer(SearchOperation):
             operation_call=call_provider,
             operation_name="GenerateAnswer",
             ctx=ctx,
+            state=state,
         )
 
         if not completion or not completion.strip():
             raise RuntimeError("Provider returned empty completion")
 
         state["completion"] = completion
+
+        # Report metrics for analytics
+        # Approximate token count (rough estimate: 1 token ≈ 4 characters)
+        completion_tokens = len(completion) // 4
+        self._report_metrics(
+            state,
+            context_documents=chosen_count_for_metrics,
+            completion_tokens=completion_tokens,
+            completion_length=len(completion),
+        )
 
         # Emit completion done
         await context.emitter.emit(
