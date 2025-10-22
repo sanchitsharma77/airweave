@@ -45,25 +45,19 @@ class SearchService:
         )
 
         ctx.logger.debug("Executing search")
-        response = await orchestrator.run(ctx, search_context)
+        response, state = await orchestrator.run(ctx, search_context)
 
         duration_ms = (time.monotonic() - start_time) * 1000
         ctx.logger.debug(f"Search completed in {duration_ms:.2f}ms")
-
-        await search_helpers.persist_search_data(
-            db=db,
-            search_context=search_context,
-            search_response=response,
-            ctx=ctx,
-            duration_ms=duration_ms,
-        )
 
         # Track search completion to PostHog
         from airweave.analytics.search_analytics import track_search_completion
 
         # Extract search configuration for analytics
         search_config = {
-            "retrieval_strategy": search_context.retrieval.strategy.value,
+            "retrieval_strategy": (
+                search_context.retrieval.strategy.value if search_context.retrieval else "none"
+            ),
             "temporal_relevance": (
                 search_context.temporal_relevance.weight
                 if search_context.temporal_relevance
@@ -73,21 +67,31 @@ class SearchService:
             "interpret_filters": search_context.query_interpretation is not None,
             "rerank": search_context.reranking is not None,
             "generate_answer": search_context.generate_answer is not None,
-            "limit": search_context.retrieval.limit,
-            "offset": search_context.retrieval.offset,
+            "limit": search_context.retrieval.limit if search_context.retrieval else 0,
+            "offset": search_context.retrieval.offset if search_context.retrieval else 0,
         }
 
-        # Track the search event
+        # Track the search event with state for automatic metrics extraction
         track_search_completion(
             ctx=ctx,
             query=search_context.query,
             collection_slug=readable_collection_id,
             duration_ms=duration_ms,
             results=response.results,
-            completion=response.completion,  # Include AI-generated completion
+            completion=response.completion,
             search_type="streaming" if stream else "regular",
             status="success",
+            state=state,  # Pass state for automatic metrics extraction
             **search_config,
+        )
+
+        # Persist search data to database
+        await search_helpers.persist_search_data(
+            db=db,
+            search_context=search_context,
+            search_response=response,
+            ctx=ctx,
+            duration_ms=duration_ms,
         )
 
         return response

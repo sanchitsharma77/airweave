@@ -5,8 +5,10 @@ The orchestrator is responsible for:
 2. Determining execution order based on dependencies
 3. Executing operations sequentially, passing state between them
 4. Using the emitter from context for streaming updates
+5. Automatically capturing timing metrics for each operation
 """
 
+import time
 from typing import Any, List, Set
 
 from airweave.api.context import ApiContext
@@ -22,8 +24,18 @@ class SearchOrchestrator:
     based on declared dependencies, then executes operations sequentially.
     """
 
-    async def run(self, ctx: ApiContext, context: SearchContext) -> SearchResponse:
-        """Execute search operations and return response."""
+    async def run(
+        self, ctx: ApiContext, context: SearchContext
+    ) -> tuple[SearchResponse, dict[str, Any]]:
+        """Execute search operations and return response with state.
+
+        Automatically captures timing metrics for each operation and stores them
+        in the state for analytics tracking.
+
+        Returns:
+            Tuple of (SearchResponse, state_dict) where state_dict contains
+            operation metrics for analytics tracking.
+        """
         # Get emitter from context
         emitter = context.emitter
 
@@ -37,13 +49,14 @@ class SearchOrchestrator:
             },
         )
 
-        # Initialize shared state
+        # Initialize shared state with metrics tracking
         state: dict[str, Any] = {}
+        state["_operation_metrics"] = {}
 
         # Resolve execution order
         execution_order = self._resolve_execution_order(context, ctx)
 
-        # Execute operations in order
+        # Execute operations in order with automatic timing
         for operation in execution_order:
             op_name = operation.__class__.__name__
 
@@ -51,8 +64,19 @@ class SearchOrchestrator:
             await emitter.emit("operator_start", {"name": op_name}, op_name=op_name)
 
             try:
+                # Capture start time
+                start_time = time.monotonic()
+
                 # Execute operation (emitter is now in context)
                 await operation.execute(context, state, ctx)
+
+                # Capture end time and calculate duration
+                duration_ms = (time.monotonic() - start_time) * 1000
+
+                # Store timing metric automatically
+                if op_name not in state["_operation_metrics"]:
+                    state["_operation_metrics"][op_name] = {}
+                state["_operation_metrics"][op_name]["duration_ms"] = duration_ms
 
                 # Emit operator_end
                 await emitter.emit("operator_end", {"name": op_name}, op_name=op_name)
@@ -70,7 +94,8 @@ class SearchOrchestrator:
         # Emit done event
         await emitter.emit("done", {"request_id": context.request_id})
 
-        return SearchResponse(results=state.get("results"), completion=state.get("completion"))
+        response = SearchResponse(results=state.get("results"), completion=state.get("completion"))
+        return response, state
 
     def _resolve_execution_order(
         self, context: SearchContext, ctx: ApiContext

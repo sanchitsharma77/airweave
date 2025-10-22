@@ -92,6 +92,7 @@ class QueryExpansion(SearchOperation):
             operation_call=call_provider,
             operation_name="QueryExpansion",
             ctx=ctx,
+            state=state,
         )
 
         # Validate and deduplicate alternatives
@@ -109,6 +110,13 @@ class QueryExpansion(SearchOperation):
 
         # Write alternatives to state (original query remains in context.query)
         state["expanded_queries"] = valid_alternatives
+
+        # Report metrics for analytics
+        self._report_metrics(
+            state,
+            expansions_generated=len(valid_alternatives),
+            has_expansions=len(valid_alternatives) > 0,
+        )
 
         # Emit expansion done with alternatives
         await context.emitter.emit(

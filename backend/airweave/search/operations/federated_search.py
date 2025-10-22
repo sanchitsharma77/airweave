@@ -224,6 +224,17 @@ class FederatedSearch(SearchOperation):
         # Replace results in state with merged results
         state["results"] = final_results
 
+        # Report metrics for analytics
+        self._report_metrics(
+            state,
+            sources_count=len(self.sources),
+            keywords_extracted=len(keywords_to_search),
+            federated_count=len(all_results),
+            vector_count=len(vector_results),
+            merged_count=len(final_results),
+            enabled=True,
+        )
+
         # Emit federated search done
         await context.emitter.emit(
             "federated_search_done",
@@ -288,6 +299,7 @@ class FederatedSearch(SearchOperation):
                 operation_call=call_provider,
                 operation_name="FederatedSearch",
                 ctx=ctx,
+                state=state,
             )
 
             # Normalize and ensure single-word coverage

@@ -26,23 +26,51 @@ class SearchOperation(ABC):
         """Execute the operation."""
         pass
 
+    def _report_metrics(self, state: dict[str, Any], **metrics: Any) -> None:
+        """Report operation-specific metrics for analytics tracking.
+
+        This helper allows operations to report custom metrics that will be
+        automatically collected by the orchestrator and sent to PostHog.
+
+        Args:
+            state: Shared state dictionary
+            **metrics: Key-value pairs of metrics to report
+
+        Example:
+            self._report_metrics(state,
+                input_count=1000,
+                output_count=25,
+                search_method="hybrid"
+            )
+        """
+        op_name = self.__class__.__name__
+        if "_operation_metrics" not in state:
+            state["_operation_metrics"] = {}
+        if op_name not in state["_operation_metrics"]:
+            state["_operation_metrics"][op_name] = {}
+
+        state["_operation_metrics"][op_name].update(metrics)
+
     async def _execute_with_provider_fallback(
         self,
         providers: List[BaseProvider],
         operation_call: Callable[[BaseProvider], Any],
         operation_name: str,
         ctx: ApiContext,
+        state: dict[str, Any] | None = None,
     ) -> T:
         """Execute an operation with provider fallback on retryable errors.
 
         This is a generic fallback handler that tries providers in preference order.
         If a provider fails with a retryable error (429, 5xx), it tries the next one.
+        Automatically tracks which provider succeeded for analytics.
 
         Args:
             providers: List of providers to try in order
             operation_call: Async callable that takes a provider and returns the result
             operation_name: Name of the operation for logging
             ctx: API context for logging
+            state: Optional state dict to track provider usage for analytics
 
         Returns:
             Result from the provider call
@@ -59,9 +87,16 @@ class SearchOperation(ABC):
                     f"({i + 1}/{len(providers)})"
                 )
                 result = await operation_call(provider)
+
+                # Track successful provider for analytics
+                if state is not None:
+                    if "_provider_usage" not in state:
+                        state["_provider_usage"] = {}
+                    state["_provider_usage"][operation_name] = provider.__class__.__name__
+
                 if i > 0:
-                    ctx.logger.debug(
-                        f"[{operation_name}] Succeeded with fallback provider "
+                    ctx.logger.info(
+                        f"[{operation_name}] ✓ Succeeded with fallback provider "
                         f"{provider.__class__.__name__}"
                     )
                 return result

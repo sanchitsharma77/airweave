@@ -97,6 +97,7 @@ class Reranking(SearchOperation):
             operation_call=call_provider,
             operation_name="Reranking",
             ctx=ctx,
+            state=state,
         )
         ctx.logger.debug(f"[Reranking] Rankings: {rankings}")
 
@@ -120,6 +121,22 @@ class Reranking(SearchOperation):
         paginated = self._apply_pagination(reranked, offset, limit)
 
         state["results"] = paginated
+
+        # Report metrics for analytics
+        # Check if we hit provider max_docs limit
+        provider_max_docs = None
+        if self.providers and self.providers[0].model_spec.rerank_model:
+            provider_max_docs = self.providers[0].model_spec.rerank_model.max_documents
+
+        self._report_metrics(
+            state,
+            input_count=len(results),  # How many results sent to reranker
+            output_count=len(reranked),  # After reranking, before pagination
+            final_count=len(paginated),  # After pagination
+            k_value=final_top_n,
+            provider_max_docs=provider_max_docs,
+            capped_to_limit=provider_max_docs and len(results) > provider_max_docs,
+        )
 
         # Emit reranking done
         await context.emitter.emit(

@@ -141,12 +141,20 @@ class QueryInterpretation(SearchOperation):
             operation_call=call_provider,
             operation_name="QueryInterpretation",
             ctx=ctx,
+            state=state,
         )
 
         # Check confidence threshold
         ctx.logger.debug(f"[QueryInterpretation] Confidence: {result.confidence}")
         if result.confidence < self.CONFIDENCE_THRESHOLD:
             # Low confidence - don't apply filters
+            self._report_metrics(
+                state,
+                filters_extracted=0,
+                enabled=True,
+                confidence=result.confidence,
+                skipped=True,
+            )
             await context.emitter.emit(
                 "interpretation_skipped",
                 {
@@ -164,6 +172,13 @@ class QueryInterpretation(SearchOperation):
 
         if not validated_filters:
             # No valid filters to apply
+            self._report_metrics(
+                state,
+                filters_extracted=0,
+                enabled=True,
+                confidence=result.confidence,
+                skipped=True,
+            )
             await context.emitter.emit(
                 "interpretation_skipped",
                 {
@@ -180,6 +195,15 @@ class QueryInterpretation(SearchOperation):
 
         # Write to state (UserFilter will merge with this if it runs)
         state["filter"] = filter_dict
+
+        # Report metrics for analytics
+        self._report_metrics(
+            state,
+            filters_extracted=len(validated_filters),
+            enabled=True,
+            confidence=result.confidence,
+            skipped=False,
+        )
 
         # Emit filter applied
         await context.emitter.emit(
