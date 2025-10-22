@@ -129,12 +129,16 @@ def _flatten_operation_metrics(properties: Dict[str, Any], state: Dict[str, Any]
         # Extract and store timing (captured by orchestrator)
         duration = metrics.get("duration_ms")
         if duration is not None:
-            properties["operation_timings"][f"{op_snake}_ms"] = round(duration, 2)
+            rounded_duration = round(duration, 2)
+            # Store in nested dict for context
+            properties["operation_timings"][f"{op_snake}_ms"] = rounded_duration
+            # ALSO store at top level for PostHog graphs/series
+            properties[f"{op_snake}_ms"] = rounded_duration
 
         # Flatten operation-specific metrics
         for key, value in metrics.items():
             if key == "duration_ms":
-                continue  # Already in operation_timings
+                continue  # Already handled above
 
             # Create flattened property name
             prop_name = f"{op_snake}_{key}"
