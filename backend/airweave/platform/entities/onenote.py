@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import ChunkEntity, FileEntity
 
 
 class OneNoteUserEntity(ChunkEntity):
@@ -26,7 +26,7 @@ class OneNoteUserEntity(ChunkEntity):
 
     Represents a user who owns or has access to OneNote notebooks.
     Based on the Microsoft Graph user resource.
-    
+
     Reference: https://learn.microsoft.com/en-us/graph/api/resources/user
     """
 
@@ -59,8 +59,9 @@ class OneNoteNotebookEntity(ChunkEntity):
     Reference: https://learn.microsoft.com/en-us/graph/api/resources/notebook
     """
 
-    display_name: str = AirweaveField(
-        ..., description="The name of the notebook.", embeddable=True
+    display_name: str = AirweaveField(..., description="The name of the notebook.", embeddable=True)
+    name: str = AirweaveField(
+        ..., description="The name of the notebook (alias for display_name).", embeddable=True
     )
     is_default: Optional[bool] = AirweaveField(
         None, description="Indicates whether this is the user's default notebook."
@@ -104,7 +105,7 @@ class OneNoteSectionGroupEntity(ChunkEntity):
 
     Section groups are containers that can hold sections and other section groups.
     Based on the Microsoft Graph sectionGroup resource.
-    
+
     Reference: https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
     """
 
@@ -116,6 +117,9 @@ class OneNoteSectionGroupEntity(ChunkEntity):
     )
     display_name: str = AirweaveField(
         ..., description="The name of the section group.", embeddable=True
+    )
+    name: str = AirweaveField(
+        ..., description="The name of the section group (alias for display_name).", embeddable=True
     )
     created_datetime: Optional[datetime] = AirweaveField(
         None,
@@ -138,11 +142,13 @@ class OneNoteSectionGroupEntity(ChunkEntity):
         embeddable=True,
     )
     sections_url: Optional[str] = AirweaveField(
-        None, description="The endpoint URL where you can get all the sections in the section group."
+        None,
+        description="The endpoint URL where you can get all the sections in the section group.",
     )
     section_groups_url: Optional[str] = AirweaveField(
         None,
-        description="The endpoint URL where you can get all the section groups nested in this section group.",
+        description="The endpoint URL where you can get all the section groups "
+        "nested in this section group.",
     )
 
 
@@ -151,18 +157,17 @@ class OneNoteSectionEntity(ChunkEntity):
 
     Sections contain pages and can belong to a notebook or section group.
     Based on the Microsoft Graph onenoteSection resource.
-    
+
     Reference: https://learn.microsoft.com/en-us/graph/api/resources/section
     """
 
-    notebook_id: str = AirweaveField(
-        ..., description="ID of the notebook this section belongs to."
-    )
+    notebook_id: str = AirweaveField(..., description="ID of the notebook this section belongs to.")
     parent_section_group_id: Optional[str] = AirweaveField(
         None, description="ID of the parent section group, if any."
     )
-    display_name: str = AirweaveField(
-        ..., description="The name of the section.", embeddable=True
+    display_name: str = AirweaveField(..., description="The name of the section.", embeddable=True)
+    name: str = AirweaveField(
+        ..., description="The name of the section (alias for display_name).", embeddable=True
     )
     is_default: Optional[bool] = AirweaveField(
         None, description="Indicates whether this is the user's default section."
@@ -190,23 +195,19 @@ class OneNoteSectionEntity(ChunkEntity):
     )
 
 
-class OneNotePageEntity(ChunkEntity):
-    """Schema for a Microsoft OneNote page.
+class OneNotePageFileEntity(FileEntity):
+    """Schema for a Microsoft OneNote page as a file entity.
 
     Pages are the actual content containers in OneNote.
     Based on the Microsoft Graph onenotePage resource.
-    
+    Extends FileEntity to leverage Airweave's HTML processing pipeline.
+
     Reference: https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
     """
 
-    notebook_id: str = AirweaveField(
-        ..., description="ID of the notebook this page belongs to."
-    )
+    notebook_id: str = AirweaveField(..., description="ID of the notebook this page belongs to.")
     section_id: str = AirweaveField(..., description="ID of the section this page belongs to.")
     title: str = AirweaveField(..., description="The title of the page.", embeddable=True)
-    content: Optional[str] = AirweaveField(
-        None, description="The HTML content of the page.", embeddable=True
-    )
     content_url: Optional[str] = AirweaveField(
         None, description="The URL for the page's HTML content."
     )
@@ -238,6 +239,23 @@ class OneNotePageEntity(ChunkEntity):
         None, description="Links for opening the page in OneNote client or web."
     )
     user_tags: Optional[List[str]] = AirweaveField(
-        default_factory=list, description="User-defined tags associated with the page.", embeddable=True
+        default_factory=list,
+        description="User-defined tags associated with the page.",
+        embeddable=True,
     )
 
+    def __init__(self, **data):
+        """Initialize the entity and set file_type and mime_type for HTML processing."""
+        # Set HTML-specific values for OneNote pages
+        data.setdefault("mime_type", "text/html")
+        data.setdefault("file_type", "html")
+        data.setdefault("download_url", data.get("content_url", ""))
+        data.setdefault("file_id", data.get("entity_id", ""))
+
+        # Ensure name has .html extension for proper file processing
+        title = data.get("title", "Untitled Page")
+        if not title.endswith(".html"):
+            title = f"{title}.html"
+        data.setdefault("name", title)
+
+        super().__init__(**data)
