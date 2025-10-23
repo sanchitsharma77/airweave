@@ -1609,19 +1609,6 @@ class SourceConnectionService:
             ctx=ctx,
         )
 
-        # Verify the status was actually updated by refreshing from DB
-        # Use db.refresh() with expire to force a fresh query
-        await db.refresh(sync_job, attribute_names=["status"])
-        if sync_job.status != SyncJobStatus.CANCELLING:
-            ctx.logger.error(
-                f"Failed to set sync job {job_id} to CANCELLING status. "
-                f"Current status: {sync_job.status}"
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to update job status to cancelling (current: {sync_job.status})",
-            )
-
         # Fire-and-forget cancellation request to Temporal
         cancel_ack = await temporal_service.cancel_sync_job_workflow(str(job_id), ctx)
         if not cancel_ack:
@@ -1641,7 +1628,9 @@ class SourceConnectionService:
                 status_code=502, detail="Failed to request cancellation from Temporal"
             )
 
-        # Status already refreshed above, sync_job now has CANCELLING status
+        # Fetch the updated job from database
+        await db.refresh(sync_job)
+
         # Convert to SourceConnectionJob response
         sync_job_schema = schemas.SyncJob.model_validate(sync_job, from_attributes=True)
         return sync_job_schema.to_source_connection_job(source_connection_id)
