@@ -556,56 +556,76 @@ class OneNoteSource(BaseSource):
                         entity_id=notebook_id, name=notebook_name[:50], type="notebook"
                     )
 
-                    # 3) Process sections from expanded data (no additional API calls needed!)
+                    # 3) Process sections from expanded data with concurrent processing
                     if sections_data:
                         self.logger.info(
-                            f"Processing {len(sections_data)} sections from expanded data"
+                            f"Processing {len(sections_data)} sections from expanded data (concurrent)"
                         )
 
-                        for section_data in sections_data:
-                            section_id = section_data.get("id")
-                            section_name = section_data.get("displayName", "Unknown Section")
+                        # Use concurrent processing for sections to improve performance
+                        def _create_section_worker(nb_breadcrumb, nb_id):
+                            async def _section_worker(section_data):
+                                section_id = section_data.get("id")
+                                section_name = section_data.get("displayName", "Unknown Section")
 
-                            # Create section entity
-                            section_entity = OneNoteSectionEntity(
-                                entity_id=section_id,
-                                breadcrumbs=[notebook_breadcrumb],
-                                notebook_id=notebook_id,
-                                display_name=section_name,
-                                name=section_name,  # Set name field for title display
-                                created_datetime=self._parse_datetime(
-                                    section_data.get("createdDateTime")
-                                ),
-                                last_modified_datetime=self._parse_datetime(
-                                    section_data.get("lastModifiedDateTime")
-                                ),
-                                created_by=section_data.get("createdBy"),
-                                last_modified_by=section_data.get("lastModifiedBy"),
-                                links=section_data.get("links"),
-                                self_url=section_data.get("self"),
-                            )
-
-                            entity_count += 1
-                            self.logger.info(
-                                f"Yielding entity #{entity_count}: Section - {section_name}"
-                            )
-                            yield section_entity
-
-                            # Create section breadcrumb
-                            section_breadcrumb = Breadcrumb(
-                                entity_id=section_id, name=section_name[:50], type="section"
-                            )
-                            section_breadcrumbs = [notebook_breadcrumb, section_breadcrumb]
-
-                            # Generate pages for this section
-                            async for page_entity in self._generate_page_entities(
-                                client, section_id, section_name, notebook_id, section_breadcrumbs
-                            ):
-                                entity_count += 1
-                                self.logger.debug(
-                                    f"Yielding entity #{entity_count}: Page - {page_entity.title}"
+                                # Create section entity
+                                section_entity = OneNoteSectionEntity(
+                                    entity_id=section_id,
+                                    breadcrumbs=[nb_breadcrumb],
+                                    notebook_id=nb_id,
+                                    display_name=section_name,
+                                    name=section_name,  # Set name field for title display
+                                    created_datetime=self._parse_datetime(
+                                        section_data.get("createdDateTime")
+                                    ),
+                                    last_modified_datetime=self._parse_datetime(
+                                        section_data.get("lastModifiedDateTime")
+                                    ),
+                                    created_by=section_data.get("createdBy"),
+                                    last_modified_by=section_data.get("lastModifiedBy"),
+                                    links=section_data.get("links"),
+                                    self_url=section_data.get("self"),
                                 )
-                                yield page_entity
+
+                                # Create section breadcrumb
+                                section_breadcrumb = Breadcrumb(
+                                    entity_id=section_id, name=section_name[:50], type="section"
+                                )
+                                section_breadcrumbs = [nb_breadcrumb, section_breadcrumb]
+
+                                # Yield section entity
+                                yield section_entity
+
+                                # Generate pages for this section
+                                async for page_entity in self._generate_page_entities(
+                                    client, section_id, section_name, nb_id, section_breadcrumbs
+                                ):
+                                    yield page_entity
+
+                            return _section_worker
+
+                        # Process sections concurrently for better performance
+                        section_worker = _create_section_worker(notebook_breadcrumb, notebook_id)
+                        async for entity in self.process_entities_concurrent(
+                            items=sections_data,
+                            worker=section_worker,
+                            batch_size=getattr(
+                                self, "batch_size", 10
+                            ),  # Conservative for OneNote API
+                            preserve_order=False,
+                            stop_on_error=False,
+                            max_queue_size=getattr(self, "max_queue_size", 50),
+                        ):
+                            entity_count += 1
+                            if hasattr(entity, "display_name"):
+                                self.logger.info(
+                                    f"Yielding entity #{entity_count}: Section - {entity.display_name}"
+                                )
+                            else:
+                                self.logger.debug(
+                                    f"Yielding entity #{entity_count}: Page - {entity.title}"
+                                )
+                            yield entity
 
         except Exception as e:
             self.logger.error(f"Error in entity generation: {str(e)}", exc_info=True)
