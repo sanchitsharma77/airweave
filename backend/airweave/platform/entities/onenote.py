@@ -2,10 +2,8 @@
 
 Entity schemas for Microsoft OneNote objects based on Microsoft Graph API:
  - Notebook (top-level container)
- - Section Group (organizational container)
  - Section (contains pages)
  - Page (content pages)
- - User (notebook owners/contributors)
 
 Reference:
   https://learn.microsoft.com/en-us/graph/api/resources/onenote
@@ -19,37 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
 from airweave.platform.entities._base import ChunkEntity, FileEntity
-
-
-class OneNoteUserEntity(ChunkEntity):
-    """Schema for a Microsoft OneNote user.
-
-    Represents a user who owns or has access to OneNote notebooks.
-    Based on the Microsoft Graph user resource.
-
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/user
-    """
-
-    display_name: Optional[str] = AirweaveField(
-        None, description="The name displayed in the address book for the user.", embeddable=True
-    )
-    user_principal_name: Optional[str] = AirweaveField(
-        None,
-        description="The user principal name (UPN) of the user (e.g., user@contoso.com).",
-        embeddable=True,
-    )
-    mail: Optional[str] = AirweaveField(
-        None, description="The SMTP address for the user.", embeddable=True
-    )
-    job_title: Optional[str] = AirweaveField(
-        None, description="The user's job title.", embeddable=True
-    )
-    department: Optional[str] = AirweaveField(
-        None, description="The department in which the user works.", embeddable=True
-    )
-    office_location: Optional[str] = AirweaveField(
-        None, description="The office location in the user's place of business.", embeddable=True
-    )
 
 
 class OneNoteNotebookEntity(ChunkEntity):
