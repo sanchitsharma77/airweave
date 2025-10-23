@@ -227,7 +227,7 @@ integrations:
     url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
     backend_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
     grant_type: "authorization_code"
-    client_id: "75961685-0b58-4b63-95ac-2ffaa646ea38"
+    client_id: "cbd62f0d-9c87-4aa2-b420-debf53b46d30"
     client_secret: "onenote-client-secret-key"
     content_type: "application/x-www-form-urlencoded"
     client_credential_location: "body"
