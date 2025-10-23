@@ -89,6 +89,8 @@ navigation:
       path: docs/pages/connectors/notion/main.mdx
     - page: Onedrive
       path: docs/pages/connectors/onedrive/main.mdx
+    - page: Onenote
+      path: docs/pages/connectors/onenote/main.mdx
     - page: Outlook Calendar
       path: docs/pages/connectors/outlook_calendar/main.mdx
     - page: Outlook Mail
