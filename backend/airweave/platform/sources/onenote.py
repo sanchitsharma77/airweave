@@ -134,8 +134,54 @@ class OneNoteSource(BaseSource):
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            self.logger.error(f"Error in API request to {url}: {str(e)}")
+            # Provide more descriptive error messages for common OAuth scope issues
+            error_msg = self._get_descriptive_error_message(url, str(e))
+            self.logger.error(f"Error in API request to {url}: {error_msg}")
             raise
+
+    def _get_descriptive_error_message(self, url: str, error: str) -> str:
+        """Get descriptive error message for common OAuth scope issues.
+
+        Args:
+            url: The API URL that failed
+            error: The original error message
+
+        Returns:
+            Enhanced error message with helpful guidance
+        """
+        # Check for 401 Unauthorized errors
+        if "401" in error or "Unauthorized" in error:
+            if "/onenote/" in url:
+                return (
+                    f"{error}\n\n"
+                    "🔧 OneNote API requires specific OAuth scopes. Please ensure your auth provider "
+                    "(Composio, Pipedream, etc.) includes the following scopes:\n"
+                    "• Notes.Read - Required to read OneNote notebooks, sections, and pages\n"
+                    "• User.Read - Required to access user information\n"
+                    "• offline_access - Required for token refresh\n\n"
+                    "If using Composio, make sure to add 'Notes.Read' to your OneDrive integration scopes."
+                )
+            elif "/me" in url and "select=" in url:
+                return (
+                    f"{error}\n\n"
+                    "🔧 User profile access requires the User.Read scope. Please ensure your auth provider "
+                    "includes this scope in the OAuth configuration."
+                )
+
+        # Check for 403 Forbidden errors
+        if "403" in error or "Forbidden" in error:
+            if "/onenote/" in url:
+                return (
+                    f"{error}\n\n"
+                    "🔧 OneNote access is forbidden. This usually means:\n"
+                    "• The Notes.Read scope is missing from your OAuth configuration\n"
+                    "• The user hasn't granted permission to access OneNote\n"
+                    "• The OneNote service is not available for this user/tenant\n\n"
+                    "Please check your OAuth scopes and user permissions."
+                )
+
+        # Return original error if no specific guidance available
+        return error
 
     def _parse_datetime(self, dt_str: Optional[str]) -> Optional[datetime]:
         """Parse datetime string from Microsoft Graph API format.
@@ -227,6 +273,78 @@ class OneNoteSource(BaseSource):
             )
             # Don't raise - user entity is optional for OneNote sync
 
+    async def _generate_notebook_entities_with_sections(
+        self, client: httpx.AsyncClient
+    ) -> AsyncGenerator[tuple[OneNoteNotebookEntity, list], None]:
+        """Generate OneNoteNotebookEntity objects with their sections data.
+
+        Uses $expand to fetch sections in the same call for better performance.
+
+        Args:
+            client: HTTP client for API requests
+
+        Yields:
+            Tuple of (OneNoteNotebookEntity, sections_data_list)
+        """
+        self.logger.info("Starting notebook entity generation with sections")
+        url = f"{self.GRAPH_BASE_URL}/me/onenote/notebooks"
+        # Use $expand to get sections in the same call, and $select to reduce payload
+        params = {
+            "$top": 100,
+            "$expand": "sections",
+            "$select": "id,displayName,isDefault,isShared,userRole,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,links,self",
+        }
+
+        try:
+            notebook_count = 0
+            while url:
+                self.logger.debug(f"Fetching notebooks from: {url}")
+                data = await self._get_with_auth(client, url, params=params)
+                notebooks = data.get("value", [])
+                self.logger.info(f"Retrieved {len(notebooks)} notebooks with sections")
+
+                for notebook_data in notebooks:
+                    notebook_count += 1
+                    notebook_id = notebook_data.get("id")
+                    display_name = notebook_data.get("displayName", "Unknown Notebook")
+
+                    self.logger.debug(f"Processing notebook #{notebook_count}: {display_name}")
+
+                    notebook_entity = OneNoteNotebookEntity(
+                        entity_id=notebook_id,
+                        breadcrumbs=[],
+                        display_name=display_name,
+                        name=display_name,  # Set name field for title display
+                        is_default=notebook_data.get("isDefault"),
+                        is_shared=notebook_data.get("isShared"),
+                        user_role=notebook_data.get("userRole"),
+                        created_datetime=self._parse_datetime(notebook_data.get("createdDateTime")),
+                        last_modified_datetime=self._parse_datetime(
+                            notebook_data.get("lastModifiedDateTime")
+                        ),
+                        created_by=notebook_data.get("createdBy"),
+                        last_modified_by=notebook_data.get("lastModifiedBy"),
+                        links=notebook_data.get("links"),
+                        self_url=notebook_data.get("self"),
+                    )
+
+                    # Get sections data from expanded response
+                    sections_data = notebook_data.get("sections", [])
+
+                    yield notebook_entity, sections_data
+
+                # Handle pagination
+                url = data.get("@odata.nextLink")
+                if url:
+                    self.logger.debug("Following pagination to next page")
+                    params = None  # params are included in the nextLink
+
+            self.logger.info(f"Completed notebook generation. Total notebooks: {notebook_count}")
+
+        except Exception as e:
+            self.logger.error(f"Error generating notebook entities: {str(e)}")
+            raise
+
     async def _generate_notebook_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[OneNoteNotebookEntity, None]:
@@ -248,7 +366,7 @@ class OneNoteSource(BaseSource):
                 self.logger.debug(f"Fetching notebooks from: {url}")
                 data = await self._get_with_auth(client, url, params=params)
                 notebooks = data.get("value", [])
-                self.logger.info(f"Retrieved {len(notebooks)} notebooks")
+                self.logger.info(f"Retrieved {len(notebooks)} notebooks with sections")
 
                 for notebook_data in notebooks:
                     notebook_count += 1
@@ -380,6 +498,7 @@ class OneNoteSource(BaseSource):
         """
         self.logger.info(f"Starting page generation for section: {section_name}")
         url = f"{self.GRAPH_BASE_URL}/me/onenote/sections/{section_id}/pages"
+        # Start with basic params - $select will be added after testing
         params = {"$top": 50}
 
         try:
@@ -474,7 +593,7 @@ class OneNoteSource(BaseSource):
                     )
                     yield user_entity
 
-                # 2) Generate notebook entities
+                # 2) Generate notebook entities (temporarily using old approach to fix pages)
                 self.logger.info("Generating notebook entities...")
                 async for notebook_entity in self._generate_notebook_entities(client):
                     entity_count += 1
