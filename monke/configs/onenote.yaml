@@ -7,6 +7,12 @@ connector:
   type: "onenote"
   auth_mode: composio
   composio_config:
+    # Please ensure to add the following scopes to your OneNote integration:
+    # - Notes.Read
+    # - User.Read
+    # - offline_access
+    # - Notes.Create
+    # - Notes.ReadWrite
     account_id: ${ONENOTE_AUTH_PROVIDER_ACCOUNT_ID}
     auth_config_id: ${ONENOTE_AUTH_PROVIDER_AUTH_CONFIG_ID}
   config_fields:

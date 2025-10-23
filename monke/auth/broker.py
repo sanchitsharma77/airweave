@@ -81,8 +81,7 @@ class ComposioBroker(BaseAuthBroker):
 
         while True:
             response = await self._get(
-                "/connected_accounts",
-                params={"limit": page_size, "page": page}
+                "/connected_accounts", params={"limit": page_size, "page": page}
             )
             items = response.get("items", [])
 
@@ -98,7 +97,9 @@ class ComposioBroker(BaseAuthBroker):
 
             page += 1
 
-        self.logger.info(f"Fetched {len(all_accounts)} total connected accounts from Composio")
+        self.logger.info(
+            f"Fetched {len(all_accounts)} total connected accounts from Composio"
+        )
         return all_accounts
 
     async def get_credentials(
@@ -114,6 +115,7 @@ class ComposioBroker(BaseAuthBroker):
             "onedrive": "one_drive",
             "sharepoint": "one_drive",  # this is not a bug, we are using the one drive token for sharepoint given overlapping scopes
             "teams": "microsoft_teams",
+            "onenote": "one_drive",  # OneNote uses OneDrive integration (same Graph API)
         }
 
         # Check if we have an explicit mapping

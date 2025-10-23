@@ -218,7 +218,8 @@ class OneNoteBongo(BaseBongo):
                     )
 
                     if r.status_code == 204:
-                        deleted.append(ent.get("token", page_id))
+                        # Return the page ID (not token) for proper entity tracking
+                        deleted.append(page_id)
                         self.logger.info(
                             f"✅ Deleted page: {ent.get('title', 'Unknown')[:50]}"
                         )
