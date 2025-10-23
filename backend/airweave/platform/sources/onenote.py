@@ -14,9 +14,9 @@ Reference:
   https://learn.microsoft.com/en-us/graph/api/section-list-pages
 """
 
+import re
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional
-import re
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -25,9 +25,8 @@ from airweave.platform.decorators import source
 from airweave.platform.entities._base import Breadcrumb, ChunkEntity
 from airweave.platform.entities.onenote import (
     OneNoteNotebookEntity,
-    OneNotePageEntity,
+    OneNotePageFileEntity,
     OneNoteSectionEntity,
-    OneNoteSectionGroupEntity,
     OneNoteUserEntity,
 )
 from airweave.platform.sources._base import BaseSource
@@ -51,8 +50,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 class OneNoteSource(BaseSource):
     """Microsoft OneNote source connector integrates with the Microsoft Graph API.
 
-    Synchronizes data from Microsoft OneNote including notebooks, sections, section groups,
-    and pages.
+    Synchronizes data from Microsoft OneNote including notebooks, sections, and pages.
 
     It provides comprehensive access to OneNote resources with proper token refresh
     and rate limiting.
@@ -81,7 +79,10 @@ class OneNoteSource(BaseSource):
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
     )
     async def _get_with_auth(
-        self, client: httpx.AsyncClient, url: str, params: Optional[dict] = None
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        params: Optional[dict] = None,
     ) -> dict:
         """Make an authenticated GET request to Microsoft Graph API.
 
@@ -131,8 +132,7 @@ class OneNoteSource(BaseSource):
                 response = await client.get(url, headers=headers, params=params)
 
             response.raise_for_status()
-            data = response.json()
-            return data
+            return response.json()
         except Exception as e:
             self.logger.error(f"Error in API request to {url}: {str(e)}")
             raise
@@ -159,6 +159,8 @@ class OneNoteSource(BaseSource):
     def _strip_html_tags(self, html_content: Optional[str]) -> Optional[str]:
         """Strip HTML tags from content for better text search.
 
+        Uses the same pattern as the base entity class for consistency.
+
         Args:
             html_content: HTML content string
 
@@ -168,9 +170,13 @@ class OneNoteSource(BaseSource):
         if not html_content:
             return None
         try:
-            # Remove HTML tags
-            text = re.sub(r"<[^>]+>", " ", html_content)
-            # Remove extra whitespace
+            # Use the same pattern as BaseEntity._strip_html for consistency
+            import html as html_lib
+
+            # Remove HTML tags and unescape entities
+            no_tags = re.sub(r"<[^>]+>", " ", html_content)
+            text = html_lib.unescape(no_tags)
+            # Normalize whitespace
             text = re.sub(r"\s+", " ", text).strip()
             return text if text else None
         except Exception as e:
@@ -215,8 +221,11 @@ class OneNoteSource(BaseSource):
             self.logger.info("Completed user entity generation")
 
         except Exception as e:
-            self.logger.error(f"Error generating user entity: {str(e)}")
-            # Don't raise - continue with other entities
+            self.logger.warning(
+                f"Failed to generate user entity (this is optional): {str(e)}. "
+                f"Continuing with notebook and page sync..."
+            )
+            # Don't raise - user entity is optional for OneNote sync
 
     async def _generate_notebook_entities(
         self, client: httpx.AsyncClient
@@ -252,6 +261,7 @@ class OneNoteSource(BaseSource):
                         entity_id=notebook_id,
                         breadcrumbs=[],
                         display_name=display_name,
+                        name=display_name,  # Set name field for title display
                         is_default=notebook_data.get("isDefault"),
                         is_shared=notebook_data.get("isShared"),
                         user_role=notebook_data.get("userRole"),
@@ -276,75 +286,6 @@ class OneNoteSource(BaseSource):
         except Exception as e:
             self.logger.error(f"Error generating notebook entities: {str(e)}")
             raise
-
-    async def _generate_section_group_entities(
-        self, client: httpx.AsyncClient, notebook_id: str, notebook_name: str
-    ) -> AsyncGenerator[OneNoteSectionGroupEntity, None]:
-        """Generate OneNoteSectionGroupEntity objects for section groups in a notebook.
-
-        Args:
-            client: HTTP client for API requests
-            notebook_id: ID of the notebook
-            notebook_name: Name of the notebook
-
-        Yields:
-            OneNoteSectionGroupEntity objects
-        """
-        self.logger.info(f"Starting section group entity generation for notebook: {notebook_name}")
-        url = f"{self.GRAPH_BASE_URL}/me/onenote/notebooks/{notebook_id}/sectionGroups"
-        params = {"$top": 100}
-
-        try:
-            section_group_count = 0
-            while url:
-                self.logger.debug(f"Fetching section groups from: {url}")
-                data = await self._get_with_auth(client, url, params=params)
-                section_groups = data.get("value", [])
-                self.logger.info(
-                    f"Retrieved {len(section_groups)} section groups for notebook {notebook_name}"
-                )
-
-                for sg_data in section_groups:
-                    section_group_count += 1
-                    sg_id = sg_data.get("id")
-                    display_name = sg_data.get("displayName", "Unknown Section Group")
-
-                    self.logger.debug(f"Processing section group #{section_group_count}: {display_name}")
-
-                    yield OneNoteSectionGroupEntity(
-                        entity_id=sg_id,
-                        breadcrumbs=[
-                            Breadcrumb(entity_id=notebook_id, name=notebook_name[:50], type="notebook")
-                        ],
-                        notebook_id=notebook_id,
-                        parent_section_group_id=sg_data.get("parentSectionGroupId"),
-                        display_name=display_name,
-                        created_datetime=self._parse_datetime(sg_data.get("createdDateTime")),
-                        last_modified_datetime=self._parse_datetime(
-                            sg_data.get("lastModifiedDateTime")
-                        ),
-                        created_by=sg_data.get("createdBy"),
-                        last_modified_by=sg_data.get("lastModifiedBy"),
-                        sections_url=sg_data.get("sectionsUrl"),
-                        section_groups_url=sg_data.get("sectionGroupsUrl"),
-                    )
-
-                # Handle pagination
-                url = data.get("@odata.nextLink")
-                if url:
-                    self.logger.debug("Following pagination to next page")
-                    params = None
-
-            self.logger.info(
-                f"Completed section group generation for notebook {notebook_name}. "
-                f"Total section groups: {section_group_count}"
-            )
-
-        except Exception as e:
-            self.logger.error(
-                f"Error generating section group entities for notebook {notebook_name}: {str(e)}"
-            )
-            # Don't raise - continue with other notebooks
 
     async def _generate_section_entities(
         self,
@@ -389,6 +330,7 @@ class OneNoteSource(BaseSource):
                         notebook_id=notebook_id,
                         parent_section_group_id=section_data.get("parentSectionGroupId"),
                         display_name=display_name,
+                        name=display_name,  # Set name field for title display
                         is_default=section_data.get("isDefault"),
                         created_datetime=self._parse_datetime(section_data.get("createdDateTime")),
                         last_modified_datetime=self._parse_datetime(
@@ -423,8 +365,8 @@ class OneNoteSource(BaseSource):
         section_name: str,
         notebook_id: str,
         section_breadcrumbs: list[Breadcrumb],
-    ) -> AsyncGenerator[OneNotePageEntity, None]:
-        """Generate OneNotePageEntity objects for pages in a section.
+    ) -> AsyncGenerator[ChunkEntity, None]:
+        """Generate processed OneNote page entities for pages in a section.
 
         Args:
             client: HTTP client for API requests
@@ -434,7 +376,7 @@ class OneNoteSource(BaseSource):
             section_breadcrumbs: Breadcrumbs for the section
 
         Yields:
-            OneNotePageEntity objects
+            Processed ChunkEntity objects (HTML content converted to text)
         """
         self.logger.info(f"Starting page generation for section: {section_name}")
         url = f"{self.GRAPH_BASE_URL}/me/onenote/sections/{section_id}/pages"
@@ -452,33 +394,29 @@ class OneNoteSource(BaseSource):
                     page_count += 1
                     page_id = page_data.get("id")
                     title = page_data.get("title", "Untitled Page")
+                    content_url = page_data.get("contentUrl")
 
                     self.logger.debug(f"Processing page #{page_count}: {title}")
 
-                    # Fetch page content if contentUrl is available
-                    content = None
-                    content_url = page_data.get("contentUrl")
-                    if content_url:
-                        try:
-                            # Get the HTML content of the page
-                            content_response = await self._get_with_auth(client, content_url)
-                            # content_response is already parsed as dict/str depending on response
-                            if isinstance(content_response, str):
-                                content = self._strip_html_tags(content_response)
-                            elif isinstance(content_response, bytes):
-                                content = self._strip_html_tags(content_response.decode("utf-8"))
-                        except Exception as e:
-                            self.logger.warning(
-                                f"Failed to fetch content for page {title}: {str(e)}"
-                            )
+                    # Skip pages without content URL (can't be processed as files)
+                    if not content_url:
+                        self.logger.warning(f"Skipping page '{title}' - no content URL")
+                        continue
 
-                    yield OneNotePageEntity(
+                    # Skip empty pages (no title)
+                    if not title or title == "Untitled Page":
+                        self.logger.info(f"Skipping empty page '{title}'")
+                        continue
+
+                    self.logger.info(f"Page '{title}': {content_url}")
+
+                    # Create the file entity
+                    file_entity = OneNotePageFileEntity(
                         entity_id=page_id,
                         breadcrumbs=section_breadcrumbs,
                         notebook_id=notebook_id,
                         section_id=section_id,
                         title=title,
-                        content=content,
                         content_url=content_url,
                         level=page_data.get("level"),
                         order=page_data.get("order"),
@@ -491,6 +429,11 @@ class OneNoteSource(BaseSource):
                         links=page_data.get("links"),
                         user_tags=page_data.get("userTags", []),
                     )
+
+                    # Process the file entity (downloads content and sets local_path)
+                    processed_entity = await self.process_file_entity(file_entity)
+                    if processed_entity:
+                        yield processed_entity
 
                 # Handle pagination
                 url = data.get("@odata.nextLink")
@@ -512,9 +455,8 @@ class OneNoteSource(BaseSource):
         Yields entities in the following order:
           - OneNoteUserEntity for the authenticated user
           - OneNoteNotebookEntity for user's notebooks
-          - OneNoteSectionGroupEntity for section groups in each notebook
           - OneNoteSectionEntity for sections in each notebook
-          - OneNotePageEntity for pages in each section
+          - OneNotePageFileEntity for pages in each section (processed as HTML files)
         """
         self.logger.info("===== STARTING MICROSOFT ONENOTE ENTITY GENERATION =====")
         entity_count = 0
@@ -537,7 +479,8 @@ class OneNoteSource(BaseSource):
                 async for notebook_entity in self._generate_notebook_entities(client):
                     entity_count += 1
                     self.logger.info(
-                        f"Yielding entity #{entity_count}: Notebook - {notebook_entity.display_name}"
+                        f"Yielding entity #{entity_count}: Notebook - "
+                        f"{notebook_entity.display_name}"
                     )
                     yield notebook_entity
 
@@ -548,15 +491,7 @@ class OneNoteSource(BaseSource):
                         entity_id=notebook_id, name=notebook_name[:50], type="notebook"
                     )
 
-                    # 3) Generate section groups for this notebook
-                    async for section_group_entity in self._generate_section_group_entities(
-                        client, notebook_id, notebook_name
-                    ):
-                        entity_count += 1
-                        self.logger.info(
-                            f"Yielding entity #{entity_count}: SectionGroup - {section_group_entity.display_name}"
-                        )
-                        yield section_group_entity
+                    # 3) Skip section groups - they're organizational containers, not content
 
                     # 4) Generate sections for this notebook
                     async for section_entity in self._generate_section_entities(
@@ -606,4 +541,3 @@ class OneNoteSource(BaseSource):
             headers={"Accept": "application/json"},
             timeout=10.0,
         )
-
