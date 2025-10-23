@@ -13,8 +13,8 @@ connector:
     # - offline_access
     # - Notes.Create
     # - Notes.ReadWrite
-    account_id: ${ONENOTE_AUTH_PROVIDER_ACCOUNT_ID}
-    auth_config_id: ${ONENOTE_AUTH_PROVIDER_AUTH_CONFIG_ID}
+    account_id: ca_II-DEW1snMAo
+    auth_config_id: ac_sxY5y9B8yVAA
   config_fields:
     openai_model: "gpt-4.1-mini"
 
