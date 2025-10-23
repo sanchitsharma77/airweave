@@ -27,7 +27,6 @@ from airweave.platform.entities.onenote import (
     OneNoteNotebookEntity,
     OneNotePageFileEntity,
     OneNoteSectionEntity,
-    OneNoteUserEntity,
 )
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
@@ -154,18 +153,19 @@ class OneNoteSource(BaseSource):
             if "/onenote/" in url:
                 return (
                     f"{error}\n\n"
-                    "🔧 OneNote API requires specific OAuth scopes. Please ensure your auth provider "
-                    "(Composio, Pipedream, etc.) includes the following scopes:\n"
+                    "🔧 OneNote API requires specific OAuth scopes. Please ensure your auth "
+                    "provider (Composio, Pipedream, etc.) includes the following scopes:\n"
                     "• Notes.Read - Required to read OneNote notebooks, sections, and pages\n"
                     "• User.Read - Required to access user information\n"
                     "• offline_access - Required for token refresh\n\n"
-                    "If using Composio, make sure to add 'Notes.Read' to your OneDrive integration scopes."
+                    "If using Composio, make sure to add 'Notes.Read' to your OneDrive integration "
+                    "scopes."
                 )
             elif "/me" in url and "select=" in url:
                 return (
                     f"{error}\n\n"
-                    "🔧 User profile access requires the User.Read scope. Please ensure your auth provider "
-                    "includes this scope in the OAuth configuration."
+                    "🔧 User profile access requires the User.Read scope. Please ensure your auth "
+                    "provider includes this scope in the OAuth configuration."
                 )
 
         # Check for 403 Forbidden errors
@@ -229,50 +229,6 @@ class OneNoteSource(BaseSource):
             self.logger.warning(f"Error stripping HTML tags: {str(e)}")
             return html_content
 
-    async def _generate_user_entity(
-        self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[OneNoteUserEntity, None]:
-        """Generate OneNoteUserEntity for the authenticated user.
-
-        Args:
-            client: HTTP client for API requests
-
-        Yields:
-            OneNoteUserEntity object
-        """
-        self.logger.info("Fetching authenticated user information")
-        url = f"{self.GRAPH_BASE_URL}/me"
-        params = {
-            "$select": "id,displayName,userPrincipalName,mail,jobTitle,department,officeLocation"
-        }
-
-        try:
-            user_data = await self._get_with_auth(client, url, params=params)
-            user_id = user_data.get("id")
-            display_name = user_data.get("displayName", "Unknown User")
-
-            self.logger.debug(f"Processing user: {display_name}")
-
-            yield OneNoteUserEntity(
-                entity_id=user_id,
-                breadcrumbs=[],
-                display_name=display_name,
-                user_principal_name=user_data.get("userPrincipalName"),
-                mail=user_data.get("mail"),
-                job_title=user_data.get("jobTitle"),
-                department=user_data.get("department"),
-                office_location=user_data.get("officeLocation"),
-            )
-
-            self.logger.info("Completed user entity generation")
-
-        except Exception as e:
-            self.logger.warning(
-                f"Failed to generate user entity (this is optional): {str(e)}. "
-                f"Continuing with notebook and page sync..."
-            )
-            # Don't raise - user entity is optional for OneNote sync
-
     async def _generate_notebook_entities_with_sections(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[tuple[OneNoteNotebookEntity, list], None]:
@@ -292,7 +248,10 @@ class OneNoteSource(BaseSource):
         params = {
             "$top": 100,
             "$expand": "sections",
-            "$select": "id,displayName,isDefault,isShared,userRole,createdDateTime,lastModifiedDateTime,createdBy,lastModifiedBy,links,self",
+            "$select": (
+                "id,displayName,isDefault,isShared,userRole,createdDateTime,"
+                "lastModifiedDateTime,createdBy,lastModifiedBy,links,self"
+            ),
         }
 
         try:
@@ -515,7 +474,6 @@ class OneNoteSource(BaseSource):
         """Generate all Microsoft OneNote entities.
 
         Yields entities in the following order:
-          - OneNoteUserEntity for the authenticated user
           - OneNoteNotebookEntity for user's notebooks
           - OneNoteSectionEntity for sections in each notebook
           - OneNotePageFileEntity for pages in each section (processed as HTML files)
@@ -527,16 +485,7 @@ class OneNoteSource(BaseSource):
             async with self.http_client() as client:
                 self.logger.info("HTTP client created, starting entity generation")
 
-                # 1) Generate user entity
-                self.logger.info("Generating user entity...")
-                async for user_entity in self._generate_user_entity(client):
-                    entity_count += 1
-                    self.logger.debug(
-                        f"Yielding entity #{entity_count}: User - {user_entity.display_name}"
-                    )
-                    yield user_entity
-
-                # 2) Generate notebook entities with sections (performance optimized)
+                # 1) Generate notebook entities with sections (performance optimized)
                 self.logger.info("Generating notebook entities with sections...")
                 async for (
                     notebook_entity,
@@ -559,7 +508,8 @@ class OneNoteSource(BaseSource):
                     # 3) Process sections from expanded data with concurrent processing
                     if sections_data:
                         self.logger.info(
-                            f"Processing {len(sections_data)} sections from expanded data (concurrent)"
+                            f"Processing {len(sections_data)} sections from expanded data "
+                            f"(concurrent)"
                         )
 
                         # Use concurrent processing for sections to improve performance
@@ -609,9 +559,7 @@ class OneNoteSource(BaseSource):
                         async for entity in self.process_entities_concurrent(
                             items=sections_data,
                             worker=section_worker,
-                            batch_size=getattr(
-                                self, "batch_size", 10
-                            ),  # Conservative for OneNote API
+                            batch_size=getattr(self, "batch_size", 10),  # Conservative
                             preserve_order=False,
                             stop_on_error=False,
                             max_queue_size=getattr(self, "max_queue_size", 50),
@@ -619,7 +567,8 @@ class OneNoteSource(BaseSource):
                             entity_count += 1
                             if hasattr(entity, "display_name"):
                                 self.logger.info(
-                                    f"Yielding entity #{entity_count}: Section - {entity.display_name}"
+                                    f"Yielding entity #{entity_count}: Section - "
+                                    f"{entity.display_name}"
                                 )
                             else:
                                 self.logger.debug(
