@@ -378,6 +378,12 @@ class OneNoteConfig(SourceConfig):
     pass
 
 
+class WordConfig(SourceConfig):
+    """Microsoft Word configuration schema."""
+
+    pass
+
+
 class CTTIConfig(SourceConfig):
     """CTTI AACT configuration schema."""
 
