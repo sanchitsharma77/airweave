@@ -77,6 +77,8 @@ navigation:
       path: docs/pages/connectors/gmail/main.mdx
     - page: Google Calendar
       path: docs/pages/connectors/google_calendar/main.mdx
+    - page: Google Docs
+      path: docs/pages/connectors/google_docs/main.mdx
     - page: Google Drive
       path: docs/pages/connectors/google_drive/main.mdx
     - page: Hubspot
