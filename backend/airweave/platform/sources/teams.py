@@ -34,7 +34,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
 @source(
-    name="Microsoft Teams",
+    name="Teams",
     short_name="teams",
     auth_methods=[
         AuthenticationMethod.OAUTH_BROWSER,

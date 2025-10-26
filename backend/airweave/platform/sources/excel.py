@@ -31,7 +31,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
 @source(
-    name="Microsoft Excel",
+    name="Excel",
     short_name="excel",
     auth_methods=[
         AuthenticationMethod.OAUTH_BROWSER,
