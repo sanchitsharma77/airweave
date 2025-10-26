@@ -228,7 +228,7 @@ detect_changed_connectors() {
 # Get hybrid connector list: core + changed
 get_hybrid_connectors() {
     # Core connectors that always run
-    local core_connectors=("github" "asana" "linear" "google_docs", "word")
+    local core_connectors=("github" "asana" "linear" "google_docs" "word")
     local changed_connectors=()
 
     # Try to detect changed connectors
