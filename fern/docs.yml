@@ -81,6 +81,8 @@ navigation:
       path: docs/pages/connectors/google_docs/main.mdx
     - page: Google Drive
       path: docs/pages/connectors/google_drive/main.mdx
+    - page: Google Slides
+      path: docs/pages/connectors/google_slides/main.mdx
     - page: Hubspot
       path: docs/pages/connectors/hubspot/main.mdx
     - page: Jira
