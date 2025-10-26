@@ -33,7 +33,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
 @source(
-    name="Microsoft OneNote",
+    name="OneNote",
     short_name="onenote",
     auth_methods=[
         AuthenticationMethod.OAUTH_BROWSER,
