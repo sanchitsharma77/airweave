@@ -409,11 +409,11 @@ class GoogleSlidesBongo(BaseBongo):
                     self.logger.info(
                         f"🔍 Found {len(files)} orphaned test presentations"
                     )
-                    for pres in files:
+                    for presentation in files:
                         try:
                             await self._pace()
                             del_r = await client.delete(
-                                f"{DRIVE_API}/files/{pres['id']}",
+                                f"{DRIVE_API}/files/{presentation['id']}",
                                 headers={
                                     "Authorization": f"Bearer {self.access_token}"
                                 },
@@ -421,14 +421,14 @@ class GoogleSlidesBongo(BaseBongo):
                             if del_r.status_code == 204:
                                 stats["presentations_deleted"] += 1
                                 self.logger.info(
-                                    f"✅ Deleted orphaned presentation: {pres.get('name', 'Unknown')}"
+                                    f"✅ Deleted orphaned presentation: {presentation.get('name', 'Unknown')}"
                                 )
                             else:
                                 stats["errors"] += 1
                         except Exception as e:
                             stats["errors"] += 1
                             self.logger.warning(
-                                f"⚠️ Failed to delete presentation {pres['id']}: {e}"
+                                f"⚠️ Failed to delete presentation {presentation['id']}: {e}"
                             )
         except Exception as e:
             self.logger.warning(f"⚠️ Could not search for orphaned presentations: {e}")
