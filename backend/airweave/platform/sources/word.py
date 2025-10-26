@@ -30,7 +30,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
 @source(
-    name="Microsoft Word",
+    name="Word",
     short_name="word",
     auth_methods=[
         AuthenticationMethod.OAUTH_BROWSER,
