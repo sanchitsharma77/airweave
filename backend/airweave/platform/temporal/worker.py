@@ -5,6 +5,7 @@ import signal
 from datetime import timedelta
 from typing import Any
 
+from aiohttp import web
 from temporalio.worker import Worker
 
 from airweave.core.config import settings
@@ -30,10 +31,14 @@ class TemporalWorker:
         """Initialize the Temporal worker."""
         self.worker: Worker | None = None
         self.running = False
+        self.metrics_server = None
 
     async def start(self) -> None:
         """Start the Temporal worker."""
         try:
+            # Start control server for /drain endpoint
+            await self._start_control_server()
+
             client = await temporal_client.get_client()
             task_queue = settings.TEMPORAL_TASK_QUEUE
             logger.info(f"Starting Temporal worker on task queue: {task_queue}")
@@ -60,9 +65,17 @@ class TemporalWorker:
                 # Speed up cancel delivery by flushing heartbeats frequently
                 default_heartbeat_throttle_interval=timedelta(seconds=2),
                 max_heartbeat_throttle_interval=timedelta(seconds=2),
+                # Configure graceful shutdown
+                graceful_shutdown_timeout=timedelta(
+                    seconds=settings.TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT
+                ),
             )
 
             self.running = True
+            logger.info(
+                f"Worker started with graceful shutdown timeout: "
+                f"{settings.TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT}s"
+            )
             await self.worker.run()
 
         except Exception as e:
@@ -72,12 +85,61 @@ class TemporalWorker:
     async def stop(self) -> None:
         """Stop the Temporal worker."""
         if self.worker and self.running:
-            logger.info("Stopping Temporal worker...")
+            logger.info("Stopping worker gracefully")
             self.running = False
             await self.worker.shutdown()
 
+        # Cleanup metrics server
+        if self.metrics_server:
+            await self.metrics_server.cleanup()
+
         # Always close temporal client to prevent resource leaks
         await temporal_client.close()
+
+    async def _start_control_server(self):
+        """Start HTTP server for drain control."""
+        app = web.Application()
+        app.router.add_post("/drain", self._handle_drain)
+        app.router.add_get("/health", self._handle_health)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "localhost", settings.WORKER_METRICS_PORT)
+        await site.start()
+        self.metrics_server = runner
+        logger.info(f"Control server started on localhost:{settings.WORKER_METRICS_PORT}")
+
+    async def _handle_drain(self, request):
+        """Handle drain request from PreStop hook.
+
+        Initiates graceful shutdown which:
+        1. Stops polling the task queue for new activities
+        2. Allows current activities to complete
+        3. Worker process exits when all activities are done
+        """
+        logger.warning("🚨 DRAIN: Initiating graceful worker shutdown")
+
+        # Tell Temporal SDK to stop polling for new activities
+        if self.worker:
+            asyncio.create_task(self._shutdown_worker())
+
+        return web.Response(text="Drain initiated")
+
+    async def _shutdown_worker(self):
+        """Shutdown worker to stop polling."""
+        try:
+            logger.info("Calling worker.shutdown() - stops polling for new work")
+            if self.worker:
+                await self.worker.shutdown()
+            logger.info("Worker shutdown complete - activities finished, process will exit")
+        except Exception as e:
+            logger.error(f"Error during worker shutdown: {e}")
+
+    async def _handle_health(self, request):
+        """Health check endpoint."""
+        if not self.running:
+            return web.Response(text="NOT_RUNNING", status=503)
+        return web.Response(text="OK", status=200)
 
     def _get_sandbox_config(self):
         """Determine the appropriate sandbox configuration."""
