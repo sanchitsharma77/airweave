@@ -1,5 +1,6 @@
 """Sparse embedder using fastembed BM25 for keyword search."""
 
+import asyncio
 from typing import List
 
 from fastembed import SparseEmbedding, SparseTextEmbedding
@@ -51,6 +52,25 @@ class SparseEmbedder(BaseEmbedder):
         """
         if not texts:
             return []
+
+        # Split into smaller batches to avoid blocking and allow heartbeats
+        # Max 200 texts per sub-batch to prevent long blocking periods
+        MAX_TEXTS_PER_SUBBATCH = 200
+
+        if len(texts) > MAX_TEXTS_PER_SUBBATCH:
+            if sync_context and hasattr(sync_context, "logger"):
+                sync_context.logger.debug(
+                    f"Splitting {len(texts)} texts into sub-batches of {MAX_TEXTS_PER_SUBBATCH} "
+                    f"to allow heartbeats and prevent Temporal timeout"
+                )
+            all_embeddings = []
+            for i in range(0, len(texts), MAX_TEXTS_PER_SUBBATCH):
+                sub_batch = texts[i : i + MAX_TEXTS_PER_SUBBATCH]
+                sub_embeddings = await self.embed_many(sub_batch, sync_context)
+                all_embeddings.extend(sub_embeddings)
+                # Yield control to event loop between sub-batches
+                await asyncio.sleep(0)
+            return all_embeddings
 
         try:
 

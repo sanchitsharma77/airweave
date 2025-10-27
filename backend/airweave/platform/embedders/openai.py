@@ -1,5 +1,6 @@
 """OpenAI dense embedder using text-embedding-3-large."""
 
+import asyncio
 from typing import List
 
 import tiktoken
@@ -81,9 +82,25 @@ class DenseEmbedder(BaseEmbedder):
 
         sync_context.logger.debug(f"Embedding {len(texts)} texts with {total_tokens} total tokens")
 
+        # Split into smaller batches to avoid blocking and allow heartbeats
+        # Max 200 texts per sub-batch to prevent long blocking periods
+        MAX_TEXTS_PER_SUBBATCH = 200
+
+        if len(texts) > MAX_TEXTS_PER_SUBBATCH:
+            sync_context.logger.debug(
+                f"Splitting {len(texts)} texts into sub-batches of {MAX_TEXTS_PER_SUBBATCH} "
+                f"to allow heartbeats and prevent Temporal timeout"
+            )
+            all_embeddings = []
+            for i in range(0, len(texts), MAX_TEXTS_PER_SUBBATCH):
+                sub_batch = texts[i : i + MAX_TEXTS_PER_SUBBATCH]
+                sub_embeddings = await self.embed_many(sub_batch, sync_context)
+                all_embeddings.extend(sub_embeddings)
+                # Yield control to event loop between sub-batches
+                await asyncio.sleep(0)
+            return all_embeddings
+
         # Check if we need to split due to token limit
-        # Batch size is typically 64, so even if all texts are 8192 tokens (unlikely),
-        # one split in half is sufficient: 64*8192=524288 → 524288/2=262144 < 300K
         if total_tokens > self.MAX_TOKENS_PER_REQUEST:
             sync_context.logger.debug(
                 f"Batch exceeds {self.MAX_TOKENS_PER_REQUEST} tokens, splitting in half"
