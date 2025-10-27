@@ -8,7 +8,6 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from airweave import schemas
-from airweave.core.constants.reserved_ids import NATIVE_TEXT2VEC_UUID
 from airweave.core.shared_models import SyncStatus
 
 
@@ -17,7 +16,6 @@ class SyncBase(BaseModel):
 
     name: str
     source_connection_id: UUID  # system connection id
-    embedding_model_connection_id: UUID = Field(default=NATIVE_TEXT2VEC_UUID)
     destination_connection_ids: list[UUID]
     description: Optional[str] = None
     cron_schedule: Optional[str] = None  # Full sync schedule (hourly/daily/weekly)

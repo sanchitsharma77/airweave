@@ -12,7 +12,6 @@ from firecrawl import AsyncFirecrawlApp
 
 from airweave.core.config import settings
 from airweave.core.logging import ContextualLogger
-from airweave.platform.decorators import transformer
 from airweave.platform.entities._base import WebEntity
 from airweave.platform.entities.web import WebFileEntity
 from airweave.platform.sync.async_helpers import run_in_thread_pool
@@ -257,11 +256,13 @@ async def _retry_with_backoff(
     raise last_exception
 
 
-@transformer(name="Web Fetcher")
+# NOTE: This function was previously a @transformer but transformers have been removed
+# in the new sync architecture. This function is kept for potential future use or
+# manual invocation, but is not automatically integrated into the sync pipeline.
 async def web_fetcher(web_entity: WebEntity, logger: ContextualLogger) -> List[WebFileEntity]:
     """Fetch web content using Firecrawl and convert to FileEntity.
 
-    This transformer:
+    This function (formerly a transformer):
     1. Takes a WebEntity with a URL
     2. Uses Firecrawl to crawl the URL and convert to markdown
        (or retrieves from storage for CTTI entities)

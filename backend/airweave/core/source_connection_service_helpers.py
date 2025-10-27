@@ -18,7 +18,6 @@ from airweave.core import credentials
 from airweave.core.config import settings as core_settings
 from airweave.core.constants.reserved_ids import (
     NATIVE_QDRANT_UUID,
-    NATIVE_TEXT2VEC_UUID,
 )
 from airweave.core.shared_models import (
     ConnectionStatus,
@@ -465,7 +464,6 @@ class SourceConnectionHelpers:
             name=f"Sync for {name}",
             description=f"Auto-generated sync for {name}",
             source_connection_id=connection_id,
-            embedding_model_connection_id=NATIVE_TEXT2VEC_UUID,
             destination_connection_ids=destination_ids,
             cron_schedule=cron_schedule,
             status=SyncStatus.ACTIVE,
@@ -498,7 +496,6 @@ class SourceConnectionHelpers:
             name=f"Sync for {name}",
             description=f"Auto-generated sync for {name}",
             source_connection_id=connection_id,
-            embedding_model_connection_id=NATIVE_TEXT2VEC_UUID,
             destination_connection_ids=destination_ids,
             cron_schedule=cron_schedule,
             status=SyncStatus.ACTIVE,
