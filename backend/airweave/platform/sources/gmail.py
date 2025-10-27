@@ -806,10 +806,16 @@ class GmailSource(BaseSource):
                     # Determine file type from mime_type
                     file_type = mime_type.split("/")[0] if "/" in mime_type else "file"
 
+                    # Create stable entity_id using message_id + filename
+                    # Note: attachment_id is ephemeral and changes between API calls
+                    # Using filename ensures same attachment has same entity_id across syncs
+                    safe_filename = self._safe_filename(filename)
+                    stable_entity_id = f"attach_{message_id}_{safe_filename}"
+
                     # Create FileEntity wrapper
                     file_entity = GmailAttachmentEntity(
                         # Base fields
-                        entity_id=f"attach_{message_id}_{attachment_id}",
+                        entity_id=stable_entity_id,
                         breadcrumbs=breadcrumbs,
                         name=filename,
                         created_at=None,  # Attachments don't have timestamps
@@ -897,9 +903,15 @@ class GmailSource(BaseSource):
                     # Determine file type from mime_type
                     file_type = mime_type.split("/")[0] if "/" in mime_type else "file"
 
+                    # Create stable entity_id using message_id + filename
+                    # Note: attachment_id is ephemeral and changes between API calls
+                    # Using filename ensures same attachment has same entity_id across syncs
+                    safe_filename = self._safe_filename(filename)
+                    stable_entity_id = f"attach_{message_id}_{safe_filename}"
+
                     file_entity = GmailAttachmentEntity(
                         # Base fields
-                        entity_id=f"attach_{message_id}_{attachment_id}",
+                        entity_id=stable_entity_id,
                         breadcrumbs=breadcrumbs,
                         name=filename,
                         created_at=None,  # Attachments don't have timestamps
