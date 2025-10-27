@@ -15,14 +15,13 @@ Reference:
     https://developers.google.com/drive/api/v3/reference/files
 """
 
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_slides import (
     GoogleSlidesPresentationEntity,
 )
@@ -121,16 +120,32 @@ class GoogleSlidesSource(BaseSource):
     # -----------------------
     # Data generation
     # -----------------------
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate Google Slides entities."""
         async for presentation in self._fetch_presentations():
-            # Process the file entity (download and set local_path)
-            processed_entity = await self.process_file_entity(
-                file_entity=presentation,
-                access_token=await self.get_access_token(),
-            )
-            if processed_entity:
-                yield processed_entity
+            # Download the file using file downloader
+            try:
+                await self.file_downloader.download_from_url(
+                    entity=presentation,
+                    http_client_factory=lambda: httpx.AsyncClient(timeout=60.0),
+                    access_token_provider=self.get_access_token,
+                    logger=self.logger,
+                )
+
+                # Verify download succeeded
+                if not presentation.local_path:
+                    self.logger.error(
+                        f"Download failed - no local path set for {presentation.name}"
+                    )
+                    continue
+
+                self.logger.debug(f"Successfully downloaded presentation: {presentation.name}")
+                yield presentation
+
+            except Exception as e:
+                self.logger.error(f"Failed to download presentation {presentation.title}: {e}")
+                # Continue with other presentations
+                continue
 
     # -----------------------
     # Presentation fetching
@@ -223,49 +238,35 @@ class GoogleSlidesSource(BaseSource):
                 f"?mimeType=application/pdf"
             )
 
-            # Parse timestamps
-            created_time = None
-            if file_data.get("createdTime"):
-                created_time = datetime.fromisoformat(
-                    file_data["createdTime"].replace("Z", "+00:00")
-                )
+            # Parse timestamps (keep as strings for flexibility)
+            created_time = file_data.get("createdTime")
+            modified_time = file_data.get("modifiedTime")
+            modified_by_me_time = file_data.get("modifiedByMeTime")
+            viewed_by_me_time = file_data.get("viewedByMeTime")
+            shared_with_me_time = file_data.get("sharedWithMeTime")
 
-            modified_time = None
-            if file_data.get("modifiedTime"):
-                modified_time = datetime.fromisoformat(
-                    file_data["modifiedTime"].replace("Z", "+00:00")
-                )
-
-            modified_by_me_time = None
-            if file_data.get("modifiedByMeTime"):
-                modified_by_me_time = datetime.fromisoformat(
-                    file_data["modifiedByMeTime"].replace("Z", "+00:00")
-                )
-
-            viewed_by_me_time = None
-            if file_data.get("viewedByMeTime"):
-                viewed_by_me_time = datetime.fromisoformat(
-                    file_data["viewedByMeTime"].replace("Z", "+00:00")
-                )
-
-            shared_with_me_time = None
-            if file_data.get("sharedWithMeTime"):
-                shared_with_me_time = datetime.fromisoformat(
-                    file_data["sharedWithMeTime"].replace("Z", "+00:00")
-                )
-
-            # Create breadcrumbs
-            breadcrumbs = []
-            if file_data.get("parents"):
-                # Add parent folder breadcrumbs (simplified)
-                breadcrumbs.append(Breadcrumb(entity_id="root", name="Google Drive", type="folder"))
+            # Prepare name with .pdf extension for file processing
+            pres_name = file_data.get("name", "Untitled Presentation")
+            if not pres_name.endswith(".pdf"):
+                pres_name_with_ext = f"{pres_name}.pdf"
+            else:
+                pres_name_with_ext = pres_name
 
             return GoogleSlidesPresentationEntity(
+                # Base fields
                 entity_id=file_id,
-                file_id=file_id,
-                name=file_data.get("name", "Untitled Presentation"),
-                title=file_data.get("name", "Untitled Presentation"),
+                breadcrumbs=[],
+                name=pres_name_with_ext,
+                created_at=created_time,
+                updated_at=modified_time,
+                # File fields
+                url=file_data.get("webViewLink"),
+                size=file_data.get("size", 0),
+                file_type="google_slides",
                 mime_type="application/pdf",  # Standard PDF export
+                local_path=None,  # Will be set after download
+                # API fields
+                title=file_data.get("name", "Untitled Presentation"),
                 description=file_data.get("description"),
                 starred=file_data.get("starred", False),
                 trashed=file_data.get("trashed", False),
@@ -282,12 +283,10 @@ class GoogleSlidesSource(BaseSource):
                 modified_time=modified_time,
                 modified_by_me_time=modified_by_me_time,
                 viewed_by_me_time=viewed_by_me_time,
-                size=file_data.get("size"),
                 version=file_data.get("version"),
                 export_mime_type="application/pdf",  # Standard PDF export
+                # Set download_url for the export URL
                 download_url=download_url,
-                breadcrumbs=breadcrumbs,
-                url=file_data.get("webViewLink"),
             )
 
         except Exception as e:

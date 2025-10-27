@@ -22,7 +22,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.onenote import (
     OneNoteNotebookEntity,
     OneNotePageFileEntity,
@@ -270,17 +270,17 @@ class OneNoteSource(BaseSource):
                     self.logger.debug(f"Processing notebook #{notebook_count}: {display_name}")
 
                     notebook_entity = OneNoteNotebookEntity(
+                        # Base fields
                         entity_id=notebook_id,
                         breadcrumbs=[],
+                        name=display_name,
+                        created_at=self._parse_datetime(notebook_data.get("createdDateTime")),
+                        updated_at=self._parse_datetime(notebook_data.get("lastModifiedDateTime")),
+                        # API fields
                         display_name=display_name,
-                        name=display_name,  # Set name field for title display
                         is_default=notebook_data.get("isDefault"),
                         is_shared=notebook_data.get("isShared"),
                         user_role=notebook_data.get("userRole"),
-                        created_datetime=self._parse_datetime(notebook_data.get("createdDateTime")),
-                        last_modified_datetime=self._parse_datetime(
-                            notebook_data.get("lastModifiedDateTime")
-                        ),
                         created_by=notebook_data.get("createdBy"),
                         last_modified_by=notebook_data.get("lastModifiedBy"),
                         links=notebook_data.get("links"),
@@ -342,17 +342,17 @@ class OneNoteSource(BaseSource):
                     self.logger.debug(f"Processing section #{section_count}: {display_name}")
 
                     yield OneNoteSectionEntity(
+                        # Base fields
                         entity_id=section_id,
                         breadcrumbs=[notebook_breadcrumb],
+                        name=display_name,
+                        created_at=self._parse_datetime(section_data.get("createdDateTime")),
+                        updated_at=self._parse_datetime(section_data.get("lastModifiedDateTime")),
+                        # API fields
                         notebook_id=notebook_id,
                         parent_section_group_id=section_data.get("parentSectionGroupId"),
                         display_name=display_name,
-                        name=display_name,  # Set name field for title display
                         is_default=section_data.get("isDefault"),
-                        created_datetime=self._parse_datetime(section_data.get("createdDateTime")),
-                        last_modified_datetime=self._parse_datetime(
-                            section_data.get("lastModifiedDateTime")
-                        ),
                         created_by=section_data.get("createdBy"),
                         last_modified_by=section_data.get("lastModifiedBy"),
                         pages_url=section_data.get("pagesUrl"),
@@ -382,7 +382,7 @@ class OneNoteSource(BaseSource):
         section_name: str,
         notebook_id: str,
         section_breadcrumbs: list[Breadcrumb],
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate processed OneNote page entities for pages in a section.
 
         Args:
@@ -393,7 +393,7 @@ class OneNoteSource(BaseSource):
             section_breadcrumbs: Breadcrumbs for the section
 
         Yields:
-            Processed ChunkEntity objects (HTML content converted to text)
+            Processed BaseEntity objects (HTML content converted to text)
         """
         self.logger.info(f"Starting page generation for section: {section_name}")
         url = f"{self.GRAPH_BASE_URL}/me/onenote/sections/{section_id}/pages"
@@ -431,30 +431,58 @@ class OneNoteSource(BaseSource):
 
                     self.logger.info(f"Page '{title}': {content_url}")
 
+                    # Add .html extension to title for proper file processing
+                    page_name = f"{title}.html" if not title.endswith(".html") else title
+
                     # Create the file entity
                     file_entity = OneNotePageFileEntity(
+                        # Base fields
                         entity_id=page_id,
                         breadcrumbs=section_breadcrumbs,
+                        name=page_name,
+                        created_at=self._parse_datetime(page_data.get("createdDateTime")),
+                        updated_at=self._parse_datetime(page_data.get("lastModifiedDateTime")),
+                        # File fields
+                        url=content_url,
+                        size=0,  # Content will be downloaded
+                        file_type="html",
+                        mime_type="text/html",
+                        local_path=None,  # Will be set after download
+                        # API fields
                         notebook_id=notebook_id,
                         section_id=section_id,
                         title=title,
                         content_url=content_url,
                         level=page_data.get("level"),
                         order=page_data.get("order"),
-                        created_datetime=self._parse_datetime(page_data.get("createdDateTime")),
-                        last_modified_datetime=self._parse_datetime(
-                            page_data.get("lastModifiedDateTime")
-                        ),
                         created_by=page_data.get("createdBy"),
                         last_modified_by=page_data.get("lastModifiedBy"),
                         links=page_data.get("links"),
                         user_tags=page_data.get("userTags", []),
                     )
 
-                    # Process the file entity (downloads content and sets local_path)
-                    processed_entity = await self.process_file_entity(file_entity)
-                    if processed_entity:
-                        yield processed_entity
+                    # Download the page HTML using file downloader
+                    try:
+                        await self.file_downloader.download_from_url(
+                            entity=file_entity,
+                            http_client_factory=self.http_client,
+                            access_token_provider=self.get_access_token,
+                            logger=self.logger,
+                        )
+
+                        # Verify download succeeded
+                        if not file_entity.local_path:
+                            raise ValueError(
+                                f"Download failed - no local path set for {file_entity.name}"
+                            )
+
+                        self.logger.debug(f"Successfully downloaded page: {file_entity.name}")
+                        yield file_entity
+
+                    except Exception as e:
+                        self.logger.error(f"Failed to download page {title}: {e}")
+                        # Continue with other pages
+                        continue
 
                 # Handle pagination
                 url = data.get("@odata.nextLink")
@@ -470,7 +498,7 @@ class OneNoteSource(BaseSource):
             self.logger.error(f"Error generating pages for section {section_name}: {str(e)}")
             # Don't raise - continue with other sections
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Microsoft OneNote entities.
 
         Yields entities in the following order:
@@ -500,10 +528,7 @@ class OneNoteSource(BaseSource):
 
                     # Create notebook breadcrumb
                     notebook_id = notebook_entity.entity_id
-                    notebook_name = notebook_entity.display_name
-                    notebook_breadcrumb = Breadcrumb(
-                        entity_id=notebook_id, name=notebook_name[:50], type="notebook"
-                    )
+                    notebook_breadcrumb = Breadcrumb(entity_id=notebook_id)
 
                     # 3) Process sections from expanded data with concurrent processing
                     if sections_data:
@@ -520,27 +545,30 @@ class OneNoteSource(BaseSource):
 
                                 # Create section entity
                                 section_entity = OneNoteSectionEntity(
+                                    # Base fields
                                     entity_id=section_id,
                                     breadcrumbs=[nb_breadcrumb],
-                                    notebook_id=nb_id,
-                                    display_name=section_name,
-                                    name=section_name,  # Set name field for title display
-                                    created_datetime=self._parse_datetime(
+                                    name=section_name,
+                                    created_at=self._parse_datetime(
                                         section_data.get("createdDateTime")
                                     ),
-                                    last_modified_datetime=self._parse_datetime(
+                                    updated_at=self._parse_datetime(
                                         section_data.get("lastModifiedDateTime")
                                     ),
+                                    # API fields
+                                    notebook_id=nb_id,
+                                    parent_section_group_id=section_data.get(
+                                        "parentSectionGroupId"
+                                    ),
+                                    display_name=section_name,
+                                    is_default=section_data.get("isDefault"),
                                     created_by=section_data.get("createdBy"),
                                     last_modified_by=section_data.get("lastModifiedBy"),
-                                    links=section_data.get("links"),
-                                    self_url=section_data.get("self"),
+                                    pages_url=section_data.get("pagesUrl"),
                                 )
 
                                 # Create section breadcrumb
-                                section_breadcrumb = Breadcrumb(
-                                    entity_id=section_id, name=section_name[:50], type="section"
-                                )
+                                section_breadcrumb = Breadcrumb(entity_id=section_id)
                                 section_breadcrumbs = [nb_breadcrumb, section_breadcrumb]
 
                                 # Yield section entity

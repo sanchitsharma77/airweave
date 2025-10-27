@@ -20,7 +20,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.excel import (
     ExcelTableEntity,
     ExcelWorkbookEntity,
@@ -209,7 +209,7 @@ class ExcelSource(BaseSource):
             self.logger.warning(f"Error parsing datetime {dt_str}: {str(e)}")
             return None
 
-    async def _discover_excel_files_recursive(
+    async def _discover_excel_files_recursive(  # noqa: C901
         self, client: httpx.AsyncClient, folder_id: Optional[str] = None, depth: int = 0
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Recursively discover Excel files in drive folders.
@@ -298,16 +298,16 @@ class ExcelSource(BaseSource):
                     self.logger.info(f"Found workbook #{workbook_count}: {display_name}")
 
                 yield ExcelWorkbookEntity(
+                    # Base fields
                     entity_id=workbook_id,
                     breadcrumbs=[],
                     name=display_name,
+                    created_at=self._parse_datetime(item_data.get("createdDateTime")),
+                    updated_at=self._parse_datetime(item_data.get("lastModifiedDateTime")),
+                    # API fields
                     file_name=file_name,
                     web_url=item_data.get("webUrl"),
                     size=item_data.get("size"),
-                    created_datetime=self._parse_datetime(item_data.get("createdDateTime")),
-                    last_modified_datetime=self._parse_datetime(
-                        item_data.get("lastModifiedDateTime")
-                    ),
                     created_by=item_data.get("createdBy"),
                     last_modified_by=item_data.get("lastModifiedBy"),
                     parent_reference=item_data.get("parentReference"),
@@ -393,11 +393,15 @@ class ExcelSource(BaseSource):
                         cell_data = None
 
                     yield ExcelWorksheetEntity(
+                        # Base fields
                         entity_id=worksheet_id,
                         breadcrumbs=[workbook_breadcrumb],
+                        name=worksheet_name,
+                        created_at=None,  # Worksheets don't have creation timestamp
+                        updated_at=self._parse_datetime(worksheet_data.get("lastModifiedDateTime")),
+                        # API fields
                         workbook_id=workbook_id,
                         workbook_name=workbook_name,
-                        name=worksheet_name,
                         position=worksheet_data.get("position"),
                         visibility=worksheet_data.get("visibility"),
                         range_address=cell_data.get("range_address") if cell_data else None,
@@ -427,7 +431,7 @@ class ExcelSource(BaseSource):
         worksheet_id: str,
         worksheet_name: str,
         worksheet_breadcrumbs: list[Breadcrumb],
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate table entities for tables in a worksheet.
 
         Optimized with larger page size and concurrent fetching.
@@ -483,13 +487,17 @@ class ExcelSource(BaseSource):
                         ]
 
                     yield ExcelTableEntity(
+                        # Base fields
                         entity_id=table_id,
                         breadcrumbs=worksheet_breadcrumbs,
+                        name=table_name,
+                        created_at=None,  # Tables don't have creation timestamp
+                        updated_at=self._parse_datetime(table_data.get("lastModifiedDateTime")),
+                        # API fields
                         workbook_id=workbook_id,
                         workbook_name=workbook_name,
                         worksheet_id=worksheet_id,
                         worksheet_name=worksheet_name,
-                        name=table_name,
                         display_name=table_data.get("displayName"),
                         show_headers=table_data.get("showHeaders"),
                         show_totals=table_data.get("showTotals"),
@@ -627,7 +635,7 @@ class ExcelSource(BaseSource):
             self.logger.warning(f"Failed to fetch content for worksheet {worksheet_name}: {e}")
             return None
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Microsoft Excel entities.
 
         Yields entities in the following order:
@@ -654,9 +662,7 @@ class ExcelSource(BaseSource):
                     # Create workbook breadcrumb
                     workbook_id = workbook_entity.entity_id
                     workbook_name = workbook_entity.name
-                    workbook_breadcrumb = Breadcrumb(
-                        entity_id=workbook_id, name=workbook_name[:50], type="workbook"
-                    )
+                    workbook_breadcrumb = Breadcrumb(entity_id=workbook_id)
 
                     # 2) Generate worksheet entities for this workbook
                     async for worksheet_entity in self._generate_worksheet_entities(
@@ -671,9 +677,7 @@ class ExcelSource(BaseSource):
                         # Create worksheet breadcrumb
                         worksheet_id = worksheet_entity.entity_id
                         worksheet_name = worksheet_entity.name
-                        worksheet_breadcrumb = Breadcrumb(
-                            entity_id=worksheet_id, name=worksheet_name[:50], type="worksheet"
-                        )
+                        worksheet_breadcrumb = Breadcrumb(entity_id=worksheet_id)
                         worksheet_breadcrumbs = [workbook_breadcrumb, worksheet_breadcrumb]
 
                         # 3) Generate table entities for this worksheet
