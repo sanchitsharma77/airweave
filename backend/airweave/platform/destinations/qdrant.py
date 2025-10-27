@@ -396,7 +396,13 @@ class QdrantDestination(VectorDBDestination):
     async def _upsert_points_with_fallback(
         self, points: list[rest.PointStruct], *, min_batch: int = 50
     ) -> None:
-        """Try full batch; on write-timeout/transport error, split in half and retry."""
+        """Upsert points in batches to prevent timeouts and allow heartbeats.
+
+        Proactively splits large batches to avoid blocking and timeouts.
+        Falls back to smaller batches on errors.
+        """
+        import asyncio
+
         # Build exception tuples safely without C408 (use literals)
         rhex: tuple[type[BaseException], ...] = ()
         try:
@@ -420,6 +426,21 @@ class QdrantDestination(VectorDBDestination):
             )
         except Exception:  # pragma: no cover
             timeout_errors = ()
+
+        # Proactively batch large upserts to prevent timeouts and allow heartbeats
+        MAX_BATCH_SIZE = 500
+
+        if len(points) > MAX_BATCH_SIZE:
+            self.logger.debug(
+                f"[Qdrant] Batching {len(points)} points into chunks of {MAX_BATCH_SIZE} "
+                f"to prevent timeout and allow heartbeats"
+            )
+            for i in range(0, len(points), MAX_BATCH_SIZE):
+                batch = points[i : i + MAX_BATCH_SIZE]
+                await self._upsert_points_with_fallback(batch, min_batch=min_batch)
+                # Yield control to event loop between batches (for heartbeats)
+                await asyncio.sleep(0)
+            return
 
         try:
             self.logger.debug(
