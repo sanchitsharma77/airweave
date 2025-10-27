@@ -216,7 +216,7 @@ class SemanticChunker(BaseChunker):
 
         return semantic_results
 
-    def _apply_safety_net_batched(
+    def _apply_safety_net_batched(  # noqa: C901
         self, semantic_results: List[List[Any]]
     ) -> List[List[Dict[str, Any]]]:
         """Split oversized chunks using batched sentence chunking.
@@ -314,6 +314,11 @@ class SemanticChunker(BaseChunker):
                 f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens"
             )
             split_results = self._sentence_chunker.chunk_batch(oversized_texts)
+
+            for split_chunks in split_results:
+                for chunk in split_chunks:
+                    chunk.token_count = len(self._tiktoken_tokenizer.encode(chunk.text))
+
             split_results_by_position = dict(enumerate(split_results))
 
         # Reconstruct final results
