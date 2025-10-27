@@ -372,8 +372,9 @@ class QdrantDestination(VectorDBDestination):
             raise ValueError(f"Entity {entity.entity_id} has no sync_id in system metadata")
 
         # Get entity data as dict, excluding vectors to avoid numpy serialization issues
+        # Keep None values so Qdrant temporal relevance can detect missing timestamps
         entity_data = entity.model_dump(
-            mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
+            mode="json", exclude={"airweave_system_metadata": {"vectors"}}
         )
 
         # Add tenant metadata for filtering
@@ -954,7 +955,7 @@ class QdrantDestination(VectorDBDestination):
         if decay_config:
             decay_weight = getattr(decay_config, "weight", 0)
             decay_field = decay_config.datetime_field
-            decay_scale = getattr(decay_config, "scale_value", None)
+            decay_scale = getattr(decay_config, "scale_seconds", None)
             self.logger.debug(
                 "[Qdrant] Decay strategy: weight=%.1f, field=%s, scale=%ss",
                 decay_weight,
