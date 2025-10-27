@@ -11,7 +11,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.trello import (
     TrelloBoardEntity,
     TrelloCardEntity,
@@ -250,7 +250,7 @@ class TrelloSource(BaseSource):
 
     async def _generate_board_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate board entities for the authenticated user."""
         # Get boards for the authenticated user
         boards_data = await self._get_with_oauth1(
@@ -268,9 +268,13 @@ class TrelloSource(BaseSource):
                 continue
 
             yield TrelloBoardEntity(
+                # Base fields
                 entity_id=board["id"],
                 breadcrumbs=[],
                 name=board.get("name", "Untitled Board"),
+                created_at=None,  # Boards don't have creation timestamp
+                updated_at=None,  # Boards don't have update timestamp
+                # API fields
                 trello_id=board["id"],
                 desc=board.get("desc"),
                 closed=board.get("closed", False),
@@ -283,7 +287,7 @@ class TrelloSource(BaseSource):
 
     async def _generate_list_entities(
         self, client: httpx.AsyncClient, board: Dict, board_breadcrumb: Breadcrumb
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate list entities for a board."""
         lists_data = await self._get_with_oauth1(
             client,
@@ -293,9 +297,13 @@ class TrelloSource(BaseSource):
 
         for list_item in lists_data:
             yield TrelloListEntity(
+                # Base fields
                 entity_id=list_item["id"],
                 breadcrumbs=[board_breadcrumb],
                 name=list_item.get("name", "Untitled List"),
+                created_at=None,  # Lists don't have creation timestamp
+                updated_at=None,  # Lists don't have update timestamp
+                # API fields
                 trello_id=list_item["id"],
                 id_board=list_item["idBoard"],
                 board_name=board.get("name", ""),
@@ -333,7 +341,7 @@ class TrelloSource(BaseSource):
         board: Dict,
         list_item: Dict,
         list_breadcrumbs: List[Breadcrumb],
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate card entities for a list."""
         cards_data = await self._get_with_oauth1(
             client,
@@ -350,9 +358,13 @@ class TrelloSource(BaseSource):
             members = await self._get_members_for_card(client, card["id"])
 
             yield TrelloCardEntity(
+                # Base fields
                 entity_id=card["id"],
                 breadcrumbs=list_breadcrumbs,
                 name=card.get("name", "Untitled Card"),
+                created_at=None,  # Cards don't have creation timestamp
+                updated_at=card.get("dateLastActivity"),
+                # API fields
                 trello_id=card["id"],
                 desc=card.get("desc"),
                 id_board=card["idBoard"],
@@ -382,7 +394,7 @@ class TrelloSource(BaseSource):
         client: httpx.AsyncClient,
         card: Dict,
         card_breadcrumbs: List[Breadcrumb],
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate checklist entities for a card."""
         # Get checklists for the card
         checklists_data = await self._get_with_oauth1(
@@ -393,9 +405,13 @@ class TrelloSource(BaseSource):
 
         for checklist in checklists_data:
             yield TrelloChecklistEntity(
+                # Base fields
                 entity_id=checklist["id"],
                 breadcrumbs=card_breadcrumbs,
                 name=checklist.get("name", "Checklist"),
+                created_at=None,  # Checklists don't have creation timestamp
+                updated_at=None,  # Checklists don't have update timestamp
+                # API fields
                 trello_id=checklist["id"],
                 id_board=checklist.get("idBoard", card.get("idBoard", "")),
                 id_card=checklist["idCard"],
@@ -406,7 +422,7 @@ class TrelloSource(BaseSource):
 
     async def _generate_member_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate member entity for the authenticated user."""
         # Get authenticated user's member info
         member_data = await self._get_with_oauth1(
@@ -417,9 +433,17 @@ class TrelloSource(BaseSource):
             },
         )
 
+        # Get member name from full_name or username
+        member_name = member_data.get("fullName") or member_data.get("username", "unknown")
+
         yield TrelloMemberEntity(
+            # Base fields
             entity_id=member_data["id"],
             breadcrumbs=[],
+            name=member_name,
+            created_at=None,  # Members don't have creation timestamp
+            updated_at=None,  # Members don't have update timestamp
+            # API fields
             username=member_data.get("username", "unknown"),
             trello_id=member_data["id"],
             full_name=member_data.get("fullName"),
@@ -431,7 +455,7 @@ class TrelloSource(BaseSource):
             member_type=member_data.get("memberType"),
         )
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from Trello.
 
         Hierarchy: Board → List → Card → Checklist
@@ -449,11 +473,7 @@ class TrelloSource(BaseSource):
                 self.logger.debug(f"Processing board: {board_entity.name}")
                 yield board_entity
 
-                board_breadcrumb = Breadcrumb(
-                    entity_id=board_entity.entity_id,
-                    name=board_entity.name,
-                    type="board",
-                )
+                board_breadcrumb = Breadcrumb(entity_id=board_entity.entity_id)
 
                 # Generate lists for this board
                 async for list_entity in self._generate_list_entities(
@@ -464,11 +484,7 @@ class TrelloSource(BaseSource):
                     self.logger.debug(f"Processing list: {list_entity.name}")
                     yield list_entity
 
-                    list_breadcrumb = Breadcrumb(
-                        entity_id=list_entity.entity_id,
-                        name=list_entity.name,
-                        type="list",
-                    )
+                    list_breadcrumb = Breadcrumb(entity_id=list_entity.entity_id)
                     list_breadcrumbs = [board_breadcrumb, list_breadcrumb]
 
                     # Generate cards for this list
@@ -482,11 +498,7 @@ class TrelloSource(BaseSource):
                         yield card_entity
 
                         # Generate checklists for this card
-                        card_breadcrumb = Breadcrumb(
-                            entity_id=card_entity.entity_id,
-                            name=card_entity.name,
-                            type="card",
-                        )
+                        card_breadcrumb = Breadcrumb(entity_id=card_entity.entity_id)
                         card_breadcrumbs = [*list_breadcrumbs, card_breadcrumb]
 
                         async for checklist_entity in self._generate_checklist_entities(

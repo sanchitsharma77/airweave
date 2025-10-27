@@ -210,34 +210,63 @@ class LinearSource(BaseSource):
                 # Generate a unique ID for this attachment
                 attachment_id = str(uuid4())
 
+                # Determine file type from URL/filename
+                import mimetypes
+
+                mime_type = mimetypes.guess_type(file_name)[0]
+                if mime_type and "/" in mime_type:
+                    file_type = mime_type.split("/")[0]
+                else:
+                    import os
+
+                    ext = os.path.splitext(file_name)[1].lower().lstrip(".")
+                    file_type = ext if ext else "file"
+
                 # Create the attachment entity
                 attachment_entity = LinearAttachmentEntity(
+                    # Base fields
                     entity_id=attachment_id,
-                    file_id=attachment_id,
                     breadcrumbs=breadcrumbs.copy(),
-                    # FileEntity required fields
                     name=file_name,
-                    download_url=url,
-                    # LinearAttachmentEntity specific fields
+                    created_at=None,  # Description links don't have timestamps
+                    updated_at=None,  # Description links don't have timestamps
+                    # File fields
+                    url=url,
+                    size=0,  # Size unknown from description link
+                    file_type=file_type,
+                    mime_type=mime_type or "application/octet-stream",
+                    local_path=None,  # Will be set after download
+                    # API fields
                     issue_id=issue_id,
                     issue_identifier=issue_identifier,
                     title=file_name,
                     subtitle="Extracted from issue description",
                     source={"type": "description_link"},
-                    created_at=None,
-                    updated_at=None,
-                    metadata={"extracted_from": "description"},
                 )
 
                 try:
-                    processed_entity = await self.process_file_entity(
-                        file_entity=attachment_entity,
-                        headers={"Authorization": f"Bearer {self.access_token}"},
+                    # Download file using file downloader
+                    await self.file_downloader.download_from_url(
+                        entity=attachment_entity,
+                        http_client_factory=self.http_client,
+                        access_token_provider=self.get_access_token,
+                        logger=self.logger,
                     )
-                    yield processed_entity
+
+                    # Verify download succeeded
+                    if not attachment_entity.local_path:
+                        raise ValueError(
+                            f"Download failed - no local path set for {attachment_entity.name}"
+                        )
+
+                    self.logger.debug(
+                        f"Successfully downloaded attachment: {attachment_entity.name}"
+                    )
+                    yield attachment_entity
+
                 except Exception as e:
                     self.logger.error(
-                        f"Error processing attachment {attachment_id} from description: {str(e)}"
+                        f"Error downloading attachment {attachment_id} from description: {str(e)}"
                     )
 
     async def _process_issue_comments(
@@ -281,24 +310,28 @@ class LinearSource(BaseSource):
             # Create comment URL
             comment_url = f"https://linear.app/issue/{issue_identifier}#comment-{comment_id}"
 
+            # Create comment name from body preview
+            comment_name = comment_body[:50] + "..." if len(comment_body) > 50 else comment_body
+
             # Create and yield LinearCommentEntity
             comment_entity = LinearCommentEntity(
+                # Base fields
                 entity_id=comment_id,
-                title=f"Comment on {issue_identifier}",
                 breadcrumbs=issue_breadcrumbs.copy(),
-                url=comment_url,
-                # LinearCommentEntity specific fields
+                name=comment_name,
+                created_at=comment.get("createdAt"),
+                updated_at=comment.get("updatedAt"),
+                # API fields
                 issue_id=issue_id,
                 issue_identifier=issue_identifier,
                 body=comment_body,
                 user_id=user_id,
                 user_name=user_name,
-                created_at=comment.get("createdAt"),
-                updated_at=comment.get("updatedAt"),
                 team_id=team_id,
                 team_name=team_name,
                 project_id=project_id,
                 project_name=project_name,
+                url=comment_url,
             )
 
             yield comment_entity
@@ -388,7 +421,7 @@ class LinearSource(BaseSource):
             if issue.get("team"):
                 team_id = issue["team"].get("id")
                 team_name = issue["team"].get("name")
-                team_breadcrumb = Breadcrumb(entity_id=team_id, name=team_name, type="team")
+                team_breadcrumb = Breadcrumb(entity_id=team_id)
                 breadcrumbs.append(team_breadcrumb)
 
             # Add project breadcrumb if available
@@ -397,9 +430,7 @@ class LinearSource(BaseSource):
             if issue.get("project"):
                 project_id = issue["project"].get("id")
                 project_name = issue["project"].get("name")
-                project_breadcrumb = Breadcrumb(
-                    entity_id=project_id, name=project_name, type="project"
-                )
+                project_breadcrumb = Breadcrumb(entity_id=project_id)
                 breadcrumbs.append(project_breadcrumb)
 
             # Create issue URL
@@ -408,33 +439,33 @@ class LinearSource(BaseSource):
 
             # Create and yield LinearIssueEntity
             issue_entity = LinearIssueEntity(
+                # Base fields
                 entity_id=issue_id,
-                title=issue.get("title", ""),
                 breadcrumbs=breadcrumbs,
-                url=issue_url,
-                # LinearIssueEntity specific fields
+                name=issue.get("title", ""),
+                created_at=issue.get("createdAt"),
+                updated_at=issue.get("updatedAt"),
+                # API fields
                 identifier=issue_identifier,
+                title=issue.get("title", ""),
                 description=issue_description,
                 priority=issue.get("priority"),
                 state=issue.get("state", {}).get("name"),
+                completed_at=issue.get("completedAt"),
+                due_date=issue.get("dueDate"),
                 team_id=team_id,
                 team_name=team_name,
                 project_id=project_id,
                 project_name=project_name,
                 assignee=issue.get("assignee", {}).get("name") if issue.get("assignee") else None,
-                created_at=issue.get("createdAt"),
-                updated_at=issue.get("updatedAt"),
-                completed_at=issue.get("completedAt"),
-                due_date=issue.get("dueDate"),
+                url=issue_url,
             )
 
             # First yield the issue entity
             yield issue_entity
 
             # Create issue breadcrumb for comments and attachments
-            issue_breadcrumb = Breadcrumb(
-                entity_id=issue_entity.entity_id, name=issue_entity.title, type="issue"
-            )
+            issue_breadcrumb = Breadcrumb(entity_id=issue_entity.entity_id)
 
             # Combine breadcrumbs with issue breadcrumb
             issue_breadcrumbs = breadcrumbs + [issue_breadcrumb]
@@ -536,9 +567,8 @@ class LinearSource(BaseSource):
             breadcrumbs = []
 
             # Add team breadcrumbs if available
-            for i, team_id in enumerate(team_ids):
-                team_name = team_names[i]
-                team_breadcrumb = Breadcrumb(entity_id=team_id, name=team_name, type="team")
+            for team_id in team_ids:
+                team_breadcrumb = Breadcrumb(entity_id=team_id)
                 breadcrumbs.append(team_breadcrumb)
 
             # Create project URL
@@ -546,25 +576,26 @@ class LinearSource(BaseSource):
 
             # Create and yield LinearProjectEntity
             yield LinearProjectEntity(
+                # Base fields
                 entity_id=project_id,
-                name=project.get("name", ""),
                 breadcrumbs=breadcrumbs,
-                url=project_url,
-                # LinearProjectEntity specific fields
+                name=project.get("name", ""),
+                created_at=project.get("createdAt"),
+                updated_at=project.get("updatedAt"),
+                # API fields
                 slug_id=project.get("slugId"),
                 description=project.get("description"),
                 priority=project.get("priority"),
                 state=project.get("state"),
-                team_ids=team_ids if team_ids else None,
-                team_names=team_names if team_names else None,
-                created_at=project.get("createdAt"),
-                updated_at=project.get("updatedAt"),
                 completed_at=project.get("completedAt"),
                 started_at=project.get("startedAt"),
                 target_date=project.get("targetDate"),
                 start_date=project.get("startDate"),
+                team_ids=team_ids if team_ids else None,
+                team_names=team_names if team_names else None,
                 progress=project.get("progress"),
                 lead=project.get("lead", {}).get("name") if project.get("lead") else None,
+                url=project_url,
             )
 
         # Use the paginated query helper
@@ -630,27 +661,28 @@ class LinearSource(BaseSource):
             # Create team URL
             team_url = f"https://linear.app/team/{team.get('key')}"
 
-            # Build breadcrumbs list
-            breadcrumbs = [Breadcrumb(entity_id=team_id, name=team_name, type="team")]
+            # Build breadcrumbs list (self-reference for consistency)
+            breadcrumbs = [Breadcrumb(entity_id=team_id)]
 
             # Create and yield LinearTeamEntity
             yield LinearTeamEntity(
+                # Base fields
                 entity_id=team_id,
-                name=team_name,
                 breadcrumbs=breadcrumbs,
-                url=team_url,
-                # LinearTeamEntity specific fields
+                name=team_name,
+                created_at=team.get("createdAt"),
+                updated_at=team.get("updatedAt"),
+                # API fields
                 key=team_key,
                 description=team.get("description", ""),
                 color=team.get("color", ""),
                 icon=team.get("icon", ""),
                 private=team.get("private", False),
                 timezone=team.get("timezone", ""),
-                created_at=team.get("createdAt", ""),
-                updated_at=team.get("updatedAt", ""),
                 parent_id=team_parent_id,
                 parent_name=team_parent_name,
                 issue_count=team.get("issueCount", 0),
+                url=team_url,
             )
 
         try:
@@ -730,9 +762,8 @@ class LinearSource(BaseSource):
 
             # Build breadcrumbs list - add team breadcrumbs
             breadcrumbs = []
-            for i, team_id in enumerate(team_ids):
-                team_name = team_names[i]
-                team_breadcrumb = Breadcrumb(entity_id=team_id, name=team_name, type="team")
+            for team_id in team_ids:
+                team_breadcrumb = Breadcrumb(entity_id=team_id)
                 breadcrumbs.append(team_breadcrumb)
 
             # Create user URL
@@ -740,11 +771,13 @@ class LinearSource(BaseSource):
 
             # Create and yield LinearUserEntity
             yield LinearUserEntity(
+                # Base fields
                 entity_id=user_id,
-                name=user_name,
                 breadcrumbs=breadcrumbs,
-                url=user_url,
-                # LinearUserEntity specific fields
+                name=user_name,
+                created_at=user.get("createdAt"),
+                updated_at=user.get("updatedAt"),
+                # API fields
                 display_name=display_name,
                 email=user.get("email"),
                 avatar_url=user.get("avatarUrl"),
@@ -760,8 +793,7 @@ class LinearSource(BaseSource):
                 created_issue_count=user.get("createdIssueCount"),
                 team_ids=team_ids if team_ids else None,
                 team_names=team_names if team_names else None,
-                created_at=user.get("createdAt"),
-                updated_at=user.get("updatedAt"),
+                url=user_url,
             )
 
         # Use the paginated query helper

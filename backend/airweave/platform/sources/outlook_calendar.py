@@ -17,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_calendar import (
     OutlookCalendarAttachmentEntity,
     OutlookCalendarCalendarEntity,
@@ -131,9 +131,13 @@ class OutlookCalendarSource(BaseSource):
                     self.logger.debug(f"Processing calendar #{calendar_count}: {calendar_name}")
 
                     yield OutlookCalendarCalendarEntity(
+                        # Base fields
                         entity_id=calendar_id,
                         breadcrumbs=[],
                         name=calendar_name,
+                        created_at=None,  # Calendars don't have creation timestamp
+                        updated_at=None,  # Calendars don't have update timestamp
+                        # API fields
                         color=calendar_data.get("color"),
                         hex_color=calendar_data.get("hexColor"),
                         change_key=calendar_data.get("changeKey"),
@@ -167,7 +171,7 @@ class OutlookCalendarSource(BaseSource):
         self,
         client: httpx.AsyncClient,
         calendar: OutlookCalendarCalendarEntity,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate OutlookCalendarEventEntity objects and their attachments.
 
         Endpoint: GET /me/calendars/{calendar_id}/events
@@ -181,11 +185,7 @@ class OutlookCalendarSource(BaseSource):
         event_count = 0
 
         # Create breadcrumb for this calendar
-        cal_breadcrumb = Breadcrumb(
-            entity_id=calendar_id,
-            name=calendar_name[:50] if calendar_name else "Unknown Calendar",
-            type="calendar",
-        )
+        cal_breadcrumb = Breadcrumb(entity_id=calendar_id)
 
         try:
             while url:
@@ -267,8 +267,13 @@ class OutlookCalendarSource(BaseSource):
         end_info = event_data.get("end", {})
 
         return OutlookCalendarEventEntity(
+            # Base fields
             entity_id=event_id,
             breadcrumbs=[cal_breadcrumb],
+            name=event_subject,
+            created_at=self._parse_simple_datetime(event_data.get("createdDateTime")),
+            updated_at=self._parse_simple_datetime(event_data.get("lastModifiedDateTime")),
+            # API fields
             subject=event_subject,
             body_preview=event_data.get("bodyPreview"),
             body_content=(
@@ -294,8 +299,6 @@ class OutlookCalendarSource(BaseSource):
             location=event_data.get("location"),
             locations=event_data.get("locations", []),
             categories=event_data.get("categories", []),
-            created_at=self._parse_simple_datetime(event_data.get("createdDateTime")),
-            updated_at=self._parse_simple_datetime(event_data.get("lastModifiedDateTime")),
             web_link=event_data.get("webLink"),
             online_meeting_url=event_data.get("onlineMeetingUrl"),
             online_meeting_provider=event_data.get("onlineMeetingProvider"),
@@ -317,7 +320,7 @@ class OutlookCalendarSource(BaseSource):
         client: httpx.AsyncClient,
         event_data: Dict,
         cal_breadcrumb: Breadcrumb,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process a single event and its attachments."""
         event_id = event_data["id"]
         event_subject = event_data.get("subject", "No Subject")
@@ -330,11 +333,7 @@ class OutlookCalendarSource(BaseSource):
         self.logger.debug(f"Event entity yielded for {event_subject}")
 
         # Create event breadcrumb for attachments
-        event_breadcrumb = Breadcrumb(
-            entity_id=event_id,
-            name=event_subject[:50] if event_subject else f"Event {event_id[:8]}",
-            type="event",
-        )
+        event_breadcrumb = Breadcrumb(entity_id=event_id)
 
         # Process attachments if the event has any
         if event_entity.has_attachments:
@@ -354,10 +353,6 @@ class OutlookCalendarSource(BaseSource):
                 )
             except Exception as e:
                 self.logger.error(f"Error processing attachments for event {event_id}: {str(e)}")
-
-    async def _create_content_stream(self, binary_data: bytes):
-        """Create an async generator for binary content."""
-        yield binary_data
 
     async def _process_event_attachments(
         self,
@@ -433,28 +428,6 @@ class OutlookCalendarSource(BaseSource):
                     self.logger.warning(f"No content found for attachment {attachment_name}")
                     return None
 
-            # Create file entity
-            file_entity = OutlookCalendarAttachmentEntity(
-                entity_id=f"{event_id}_attachment_{attachment_id}",
-                breadcrumbs=breadcrumbs,
-                file_id=attachment_id,
-                name=attachment_name,
-                mime_type=attachment.get("contentType"),
-                size=attachment.get("size", 0),
-                download_url=f"outlook://calendar/attachment/{event_id}/{attachment_id}",
-                event_id=event_id,
-                attachment_id=attachment_id,
-                content_type=attachment.get("contentType"),
-                is_inline=attachment.get("isInline", False),
-                content_id=attachment.get("contentId"),
-                last_modified_at=attachment.get("lastModifiedDateTime"),
-                metadata={
-                    "source": "outlook_calendar",
-                    "event_id": event_id,
-                    "attachment_id": attachment_id,
-                },
-            )
-
             # Decode the base64 data
             try:
                 binary_data = base64.b64decode(content_bytes)
@@ -462,28 +435,65 @@ class OutlookCalendarSource(BaseSource):
                 self.logger.error(f"Error decoding attachment content: {str(e)}")
                 return None
 
-            # Process using the BaseSource method
-            self.logger.debug(
-                f"Processing file entity for {attachment_name} with direct content stream"
-            )
-            processed_entity = await self.process_file_entity_with_content(
-                file_entity=file_entity,
-                content_stream=self._create_content_stream(binary_data),
-                metadata={"source": "outlook_calendar", "event_id": event_id},
+            # Determine file type from mime_type
+            mime_type = attachment.get("contentType") or "application/octet-stream"
+            size = attachment.get("size", 0)
+            if mime_type and "/" in mime_type:
+                file_type = mime_type.split("/")[0]
+            else:
+                import os
+
+                ext = os.path.splitext(attachment_name)[1].lower().lstrip(".")
+                file_type = ext if ext else "file"
+
+            # Create file entity
+            file_entity = OutlookCalendarAttachmentEntity(
+                # Base fields
+                entity_id=f"{event_id}_attachment_{attachment_id}",
+                breadcrumbs=breadcrumbs,
+                name=attachment_name,
+                created_at=None,  # Attachments don't have creation timestamp
+                updated_at=None,  # Attachments don't have update timestamp
+                # File fields
+                url=f"outlook://calendar/attachment/{event_id}/{attachment_id}",
+                size=size,
+                file_type=file_type,
+                mime_type=mime_type,
+                local_path=None,  # Will be set after saving
+                # API fields
+                event_id=event_id,
+                attachment_id=attachment_id,
+                content_type=attachment.get("contentType"),
+                is_inline=attachment.get("isInline", False),
+                content_id=attachment.get("contentId"),
+                last_modified_at=attachment.get("lastModifiedDateTime"),
             )
 
-            if processed_entity:
+            # Save bytes using file downloader
+            try:
+                await self.file_downloader.save_bytes(
+                    entity=file_entity,
+                    content=binary_data,
+                    filename_with_extension=attachment_name,  # Attachment name from API
+                    logger=self.logger,
+                )
+
+                # Verify save succeeded
+                if not file_entity.local_path:
+                    raise ValueError(f"Save failed - no local path set for {file_entity.name}")
+
                 self.logger.debug(f"Successfully processed attachment: {attachment_name}")
-                return processed_entity
-            else:
-                self.logger.warning(f"Processing failed for attachment: {attachment_name}")
+                return file_entity
+
+            except Exception as e:
+                self.logger.error(f"Failed to save attachment {attachment_name}: {e}")
                 return None
 
         except Exception as e:
             self.logger.error(f"Error processing attachment {attachment_id}: {str(e)}")
             return None
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Outlook Calendar entities: Calendars, Events and Attachments."""
         self.logger.info("===== STARTING OUTLOOK CALENDAR ENTITY GENERATION =====")
         entity_count = 0

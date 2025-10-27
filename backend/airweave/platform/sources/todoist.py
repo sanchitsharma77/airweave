@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.todoist import (
     TodoistCommentEntity,
     TodoistProjectEntity,
@@ -85,8 +85,13 @@ class TodoistSource(BaseSource):
         # 'projects' should be a list of project objects
         for project in projects:
             yield TodoistProjectEntity(
+                # Base fields
                 entity_id=project["id"],
+                breadcrumbs=[],
                 name=project["name"],
+                created_at=None,  # Projects don't have creation timestamp
+                updated_at=None,  # Projects don't have update timestamp
+                # API fields
                 color=project.get("color"),
                 comment_count=project.get("comment_count", 0),
                 order=project.get("order", 0),
@@ -117,9 +122,13 @@ class TodoistSource(BaseSource):
 
         for section in sections:
             yield TodoistSectionEntity(
+                # Base fields
                 entity_id=section["id"],
                 breadcrumbs=[project_breadcrumb],
                 name=section["name"],
+                created_at=None,  # Sections don't have creation timestamp
+                updated_at=None,  # Sections don't have update timestamp
+                # API fields
                 project_id=section["project_id"],
                 order=section.get("order", 0),
             )
@@ -177,8 +186,13 @@ class TodoistSource(BaseSource):
                 deadline_date = task["deadline"].get("date")
 
             yield TodoistTaskEntity(
+                # Base fields
                 entity_id=task["id"],
                 breadcrumbs=breadcrumbs,
+                name=task["content"],
+                created_at=task.get("created_at"),
+                updated_at=None,  # Tasks don't have update timestamp
+                # API fields
                 content=task["content"],
                 description=task.get("description"),
                 comment_count=task.get("comment_count", 0),
@@ -190,7 +204,6 @@ class TodoistSource(BaseSource):
                 section_id=task.get("section_id"),
                 parent_id=task.get("parent_id"),
                 creator_id=task.get("creator_id"),
-                created_at=task.get("created_at"),
                 assignee_id=task.get("assignee_id"),
                 assigner_id=task.get("assigner_id"),
                 due_date=(task["due"]["date"] if task.get("due") else None),
@@ -229,15 +242,26 @@ class TodoistSource(BaseSource):
             return
 
         for comment in comments:
+            # Create comment name from content preview
+            content = comment.get("content", "")
+            comment_name = content[:50] + "..." if len(content) > 50 else content
+            if not comment_name:
+                comment_name = f"Comment {comment['id']}"
+
             yield TodoistCommentEntity(
+                # Base fields
                 entity_id=comment["id"],
                 breadcrumbs=task_breadcrumbs,
+                name=comment_name,
+                created_at=comment["posted_at"],
+                updated_at=None,  # Comments don't have update timestamp
+                # API fields
                 task_id=str(comment.get("task_id") or ""),
-                content=comment.get("content"),
+                content=content,
                 posted_at=comment["posted_at"],
             )
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from Todoist: Projects, Sections, Tasks, and Comments.
 
         For each project:
@@ -254,11 +278,7 @@ class TodoistSource(BaseSource):
                 yield project_entity
 
                 # Create a breadcrumb for this project
-                project_breadcrumb = Breadcrumb(
-                    entity_id=project_entity.entity_id,
-                    name=project_entity.name,
-                    type="project",
-                )
+                project_breadcrumb = Breadcrumb(entity_id=project_entity.entity_id)
 
                 # 2) Generate (and yield) all Sections for this project
                 async for section_entity in self._generate_section_entities(
@@ -283,11 +303,7 @@ class TodoistSource(BaseSource):
 
                 # 3) For each section, yield tasks that belong to it, plus comments
                 for section_data in sections:
-                    section_breadcrumb = Breadcrumb(
-                        entity_id=section_data["id"],
-                        name=section_data["name"],
-                        type="section",
-                    )
+                    section_breadcrumb = Breadcrumb(entity_id=section_data["id"])
                     project_section_breadcrumbs = [project_breadcrumb, section_breadcrumb]
 
                     async for task_entity in self._generate_task_entities(
@@ -299,11 +315,7 @@ class TodoistSource(BaseSource):
                     ):
                         yield task_entity
                         # generate comments for each task
-                        task_breadcrumb = Breadcrumb(
-                            entity_id=task_entity.entity_id,
-                            name=task_entity.content,
-                            type="task",
-                        )
+                        task_breadcrumb = Breadcrumb(entity_id=task_entity.entity_id)
                         async for comment_entity in self._generate_comment_entities(
                             client,
                             task_entity,
@@ -321,11 +333,7 @@ class TodoistSource(BaseSource):
                 ):
                     yield task_entity
                     # generate comments for each of these tasks as well
-                    task_breadcrumb = Breadcrumb(
-                        entity_id=task_entity.entity_id,
-                        name=task_entity.content,
-                        type="task",
-                    )
+                    task_breadcrumb = Breadcrumb(entity_id=task_entity.entity_id)
                     async for comment_entity in self._generate_comment_entities(
                         client,
                         task_entity,
