@@ -217,9 +217,12 @@ class SemanticChunker(BaseChunker):
         return semantic_results
 
     def _recursive_safety_split(
-        self, split_results: List[List[Any]], max_iterations: int = 10
+        self, split_results: List[List[Any]], max_iterations: int = 5
     ) -> List[List[Any]]:
         """Recursively split chunks until all are within MAX_TOKENS_PER_CHUNK.
+
+        Dynamically reduces chunk size by 1000 tokens on each iteration to account
+        for tokenizer mismatch between Chonkie and tiktoken.
 
         Args:
             split_results: List of chunk lists from SentenceChunker
@@ -229,6 +232,7 @@ class SemanticChunker(BaseChunker):
             List of chunk lists with all chunks within token limit
         """
         iteration = 0
+        CHUNK_SIZE_REDUCTION = 1000  # Reduce by 1000 tokens each iteration
 
         while iteration < max_iterations:
             # Recount all chunks with tiktoken
@@ -251,13 +255,30 @@ class SemanticChunker(BaseChunker):
                 logger.debug(f"Safety net recursive split completed after {iteration} iterations")
                 return split_results
 
-            # Re-split the oversized chunks
-            logger.warning(
-                f"Safety net iteration {iteration + 1}: {len(still_oversized)} chunks still exceed "
-                f"{self.MAX_TOKENS_PER_CHUNK} tokens after previous split. Re-splitting..."
+            # Calculate reduced chunk size for this iteration
+            # Start at MAX_TOKENS_PER_CHUNK, reduce by 1000 each iteration
+            reduced_chunk_size = max(
+                1000,  # Minimum chunk size (safety floor)
+                self.MAX_TOKENS_PER_CHUNK - (iteration * CHUNK_SIZE_REDUCTION),
             )
 
-            re_split_results = self._sentence_chunker.chunk_batch(still_oversized)
+            # Re-split the oversized chunks with smaller chunk size
+            logger.warning(
+                f"Safety net iteration {iteration + 1}: {len(still_oversized)} chunks still exceed "
+                f"{self.MAX_TOKENS_PER_CHUNK} tokens. "
+                f"Re-splitting with chunk_size={reduced_chunk_size}..."
+            )
+
+            # Create temporary SentenceChunker with reduced chunk size
+            from chonkie.chunker.sentence import SentenceChunker
+
+            reduced_chunker = SentenceChunker(
+                tokenizer=self._sentence_chunker.tokenizer,
+                chunk_size=reduced_chunk_size,
+                chunk_overlap=0,
+            )
+
+            re_split_results = reduced_chunker.chunk_batch(still_oversized)
 
             # Replace oversized chunks with their re-split sub-chunks
             for (doc_idx, chunk_idx), re_split_chunks in zip(
