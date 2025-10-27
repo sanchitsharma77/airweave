@@ -809,49 +809,56 @@ class EntityPipeline:
                     continue
 
         # Step 3: Batch convert each partition and append to entities
+        # Process in smaller sub-batches for progressive completion (especially for Mistral)
+        CONVERTER_BATCH_SIZE = 10  # Max files per converter batch (prevents waterfall delay)
+
         for converter, file_entities in converter_groups.items():
-            file_paths = [e.local_path for e in file_entities]
+            # Split into sub-batches to avoid blocking on large Mistral uploads
+            for i in range(0, len(file_entities), CONVERTER_BATCH_SIZE):
+                sub_batch = file_entities[i : i + CONVERTER_BATCH_SIZE]
+                file_paths = [e.local_path for e in sub_batch]
 
-            try:
-                # Batch convert returns Dict[file_path, text_content]
-                results = await converter.convert_batch(file_paths)
+                try:
+                    # Batch convert returns Dict[file_path, text_content]
+                    results = await converter.convert_batch(file_paths)
 
-                # Append content to each entity's textual_representation
-                # Track entities that fail (None results)
-                for entity in file_entities:
-                    text_content = results.get(entity.local_path)
+                    # Append content to each entity's textual_representation
+                    # Track entities that fail (None results)
+                    for entity in sub_batch:
+                        text_content = results.get(entity.local_path)
 
-                    if not text_content:
-                        sync_context.logger.warning(
-                            f"Conversion returned no content for "
-                            f"{entity.__class__.__name__}[{entity.entity_id}] "
-                            f"at {entity.local_path} - entity will be skipped"
-                        )
-                        # Mark for removal - don't process this entity further
-                        failed_entities.append(entity)
-                        continue
+                        if not text_content:
+                            sync_context.logger.warning(
+                                f"Conversion returned no content for "
+                                f"{entity.__class__.__name__}[{entity.entity_id}] "
+                                f"at {entity.local_path} - entity will be skipped"
+                            )
+                            # Mark for removal - don't process this entity further
+                            failed_entities.append(entity)
+                            continue
 
-                    # Append content section
-                    entity.textual_representation += f"\n\n# Content\n\n{text_content}"
+                        # Append content section
+                        entity.textual_representation += f"\n\n# Content\n\n{text_content}"
 
-            except SyncFailureError:
-                # Infrastructure failure from converter - propagate to fail entire sync
-                raise
-            except Exception as e:
-                # Unexpected errors - mark entire batch as failed but continue with other converters
-                converter_name = converter.__class__.__name__
-                sync_context.logger.error(
-                    f"Batch conversion failed for {converter_name}: {e}", exc_info=True
-                )
-                # Mark all entities in this batch as failed
-                failed_entities.extend(file_entities)
-                # Log each entity being skipped
-                for entity in file_entities:
-                    sync_context.logger.warning(
-                        f"Skipping {entity.__class__.__name__}[{entity.entity_id}] "
-                        f"due to batch failure"
+                except SyncFailureError:
+                    # Infrastructure failure from converter - propagate to fail entire sync
+                    raise
+                except Exception as e:
+                    # Unexpected errors - mark entire sub-batch as failed but continue
+                    converter_name = converter.__class__.__name__
+                    sync_context.logger.error(
+                        f"Batch conversion failed for {converter_name} sub-batch: {e}",
+                        exc_info=True,
                     )
-                # Don't raise - continue with other converters
+                    # Mark all entities in this sub-batch as failed
+                    failed_entities.extend(sub_batch)
+                    # Log each entity being skipped
+                    for entity in sub_batch:
+                        sync_context.logger.warning(
+                            f"Skipping {entity.__class__.__name__}[{entity.entity_id}] "
+                            f"due to batch failure"
+                        )
+                    # Don't raise - continue with other sub-batches/converters
 
         # Remove failed entities from the entities list and mark as skipped
         # This cleanup ALWAYS runs now since we don't raise exceptions above
