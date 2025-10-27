@@ -321,20 +321,16 @@ class QdrantDestination(VectorDBDestination):
         """Upsert a single entity into Qdrant."""
         await self.ensure_client_readiness()
 
-        # Get entity data as dict (UUIDs->strings, datetimes->ISO)
-        data_object = entity.model_dump(mode="json", exclude_none=True)
-
         # Sanity checks
         if not entity.airweave_system_metadata or not entity.airweave_system_metadata.vectors:
             raise ValueError(f"Entity {entity.entity_id} has no vector in system metadata")
         if not entity.airweave_system_metadata.sync_id:
             raise ValueError(f"Entity {entity.entity_id} has no sync_id in system metadata")
 
-        # Remove vectors from payload (store them only in vector fields)
-        if "airweave_system_metadata" in data_object and isinstance(
-            data_object["airweave_system_metadata"], dict
-        ):
-            data_object["airweave_system_metadata"].pop("vectors", None)
+        # Get entity data as dict, excluding vectors to avoid numpy serialization issues
+        data_object = entity.model_dump(
+            mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
+        )
 
         # Add tenant metadata for filtering
         data_object["airweave_collection_id"] = str(self.collection_id)
@@ -366,9 +362,7 @@ class QdrantDestination(VectorDBDestination):
     # --------- NEW: helpers to keep bulk_insert simple (fixes C901) -------------------
     def _build_point_struct(self, entity: BaseEntity) -> rest.PointStruct:
         """Convert a BaseEntity to a Qdrant PointStruct with tenant metadata."""
-        # Get entity data as dict (UUIDs->strings, datetimes->ISO)
-        entity_data = entity.model_dump(mode="json", exclude_none=True)
-
+        # Validate required fields first
         if not entity.airweave_system_metadata:
             raise ValueError(f"Entity {entity.entity_id} has no system metadata")
         if not entity.airweave_system_metadata.vectors:
@@ -376,11 +370,10 @@ class QdrantDestination(VectorDBDestination):
         if not entity.airweave_system_metadata.sync_id:
             raise ValueError(f"Entity {entity.entity_id} has no sync_id in system metadata")
 
-        # Remove vectors from payload
-        if "airweave_system_metadata" in entity_data and isinstance(
-            entity_data["airweave_system_metadata"], dict
-        ):
-            entity_data["airweave_system_metadata"].pop("vectors", None)
+        # Get entity data as dict, excluding vectors to avoid numpy serialization issues
+        entity_data = entity.model_dump(
+            mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
+        )
 
         # Add tenant metadata for filtering
         entity_data["airweave_collection_id"] = str(self.collection_id)

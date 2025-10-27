@@ -70,8 +70,11 @@ class EntityPipeline:
 
         async with get_db_context() as db:
             await crud.entity.bulk_remove(db=db, ids=db_ids, ctx=sync_context.ctx)
+            await db.commit()
 
         await sync_context.progress.increment("deleted", len(orphaned_entities))
+
+        # Update entity state tracker (already has the right logic)
         await self._update_entity_state_tracker(orphaned_entities, sync_context)
 
     async def _update_entity_state_tracker(
@@ -537,7 +540,7 @@ class EntityPipeline:
     # Delete Handling
     # ------------------------------------------------------------------------------------
 
-    async def _handle_deletes(
+    async def _handle_deletes(  # noqa: C901
         self,
         partitions: Dict[str, Any],
         sync_context: SyncContext,
@@ -588,7 +591,24 @@ class EntityPipeline:
         if db_ids:
             async with get_db_context() as db:
                 await crud.entity.bulk_remove(db, ids=db_ids, ctx=sync_context.ctx)
+                await db.commit()
             sync_context.logger.debug(f"Deleted {len(db_ids)} DB records")
+
+            # Update entity state tracker for real-time UI updates
+            if hasattr(sync_context, "entity_state_tracker") and sync_context.entity_state_tracker:
+                counts_by_def: Dict[UUID, int] = defaultdict(int)
+                for entity in deletes:
+                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    key = (entity.entity_id, entity_def_id) if entity_def_id else None
+                    if key and key in existing_map:
+                        counts_by_def[entity_def_id] += 1
+
+                for def_id, count in counts_by_def.items():
+                    await sync_context.entity_state_tracker.update_entity_count(
+                        entity_definition_id=def_id,
+                        action="delete",
+                        delta=count,
+                    )
 
     # ------------------------------------------------------------------------------------
     # Textual Representation Building
@@ -1335,8 +1355,47 @@ class EntityPipeline:
                         await crud.entity.bulk_update_hash(db, rows=update_pairs)
                         sync_context.logger.debug(f"Updated {len(update_pairs)} hashes")
 
+                # Commit the transaction
+                await db.commit()
+
         # Execute with deadlock retry
         await _with_deadlock_retry(_execute_db_operations)
+
+        # Update entity state tracker for real-time UI updates via pubsub
+        if hasattr(sync_context, "entity_state_tracker") and sync_context.entity_state_tracker:
+            # Track inserts
+            if inserts:
+                counts_by_def: Dict[UUID, int] = defaultdict(int)
+                sample_name_by_def: Dict[UUID, str] = {}
+                for entity in inserts:
+                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    if entity_def_id:
+                        counts_by_def[entity_def_id] += 1
+                        sample_name_by_def.setdefault(entity_def_id, entity.__class__.__name__)
+
+                for def_id, count in counts_by_def.items():
+                    await sync_context.entity_state_tracker.update_entity_count(
+                        entity_definition_id=def_id,
+                        action="insert",
+                        delta=count,
+                        entity_name=sample_name_by_def.get(def_id),
+                        entity_type=sample_name_by_def.get(def_id),
+                    )
+
+            # Track updates
+            if updates:
+                counts_by_def_updates: Dict[UUID, int] = defaultdict(int)
+                for entity in updates:
+                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    if entity_def_id:
+                        counts_by_def_updates[entity_def_id] += 1
+
+                for def_id, count in counts_by_def_updates.items():
+                    await sync_context.entity_state_tracker.update_entity_count(
+                        entity_definition_id=def_id,
+                        action="update",
+                        delta=count,
+                    )
 
         sync_context.logger.debug(
             f"Database persistence complete: {len(inserts)} inserts, {len(updates)} updates"
