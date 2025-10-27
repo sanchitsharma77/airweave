@@ -78,14 +78,24 @@ class TemporalRelevance(SearchOperation):
             match=rest.MatchValue(value=str(context.collection_id)),
         )
 
+        # CRITICAL: Filter to only documents with updated_at field
+        # This prevents Qdrant decay formula errors on documents without timestamps
+        has_timestamp_condition = rest.IsNullCondition(
+            is_null=rest.PayloadField(key=self.DATETIME_FIELD)
+        )
+
         if qdrant_filter:
             # Merge with existing filter
             if not qdrant_filter.must:
                 qdrant_filter.must = []
             qdrant_filter.must.append(tenant_condition)
+            # Ensure documents have the timestamp field for decay calculation
+            if not qdrant_filter.must_not:
+                qdrant_filter.must_not = []
+            qdrant_filter.must_not.append(has_timestamp_condition)
         else:
-            # Create new filter with just tenant
-            qdrant_filter = rest.Filter(must=[tenant_condition])
+            # Create new filter with tenant and timestamp requirements
+            qdrant_filter = rest.Filter(must=[tenant_condition], must_not=[has_timestamp_condition])
 
         ctx.logger.debug(
             f"[TemporalRelevance] Applied tenant filter: collection_id={context.collection_id}"
@@ -176,8 +186,48 @@ class TemporalRelevance(SearchOperation):
         )
         ctx.logger.debug(f"[TemporalRelevance] Decay config: {decay_config}")
 
-        # Write to state
+        # Write to state - includes both decay config AND updated filter with timestamp requirement
         state["decay_config"] = decay_config
+
+        # CRITICAL: Update the filter in state to exclude documents without timestamps
+        # This ensures Retrieval operation only searches documents compatible with decay formula
+        filter_with_timestamp = self._build_filter_excluding_null_timestamps(filter_dict)
+        state["filter"] = filter_with_timestamp
+        ctx.logger.debug(
+            f"[TemporalRelevance] Updated filter to require {self.DATETIME_FIELD} field "
+            "for decay calculation"
+        )
+
+    def _build_filter_excluding_null_timestamps(self, filter_dict: Optional[dict]) -> dict:
+        """Build filter that excludes documents without updated_at field.
+
+        This is critical for temporal decay - Qdrant's decay formulas fail on
+        documents without the timestamp field. By filtering them out, we ensure
+        only timestamped documents are included in temporal relevance searches.
+
+        Args:
+            filter_dict: Existing filter dict from state (may be None)
+
+        Returns:
+            Filter dict with must_not condition to exclude null timestamps
+        """
+        # Build the IsNull condition to exclude documents without timestamps
+        is_null_condition = {"is_null": {"key": self.DATETIME_FIELD}}
+
+        if not filter_dict:
+            # No existing filter - create new one with just the timestamp exclusion
+            return {"must_not": [is_null_condition]}
+
+        # Merge with existing filter
+        updated_filter = filter_dict.copy()
+
+        if "must_not" not in updated_filter:
+            updated_filter["must_not"] = []
+
+        # Add timestamp exclusion to must_not conditions
+        updated_filter["must_not"].append(is_null_condition)
+
+        return updated_filter
 
     def _convert_to_qdrant_filter(self, filter_dict: Optional[dict]) -> Optional[rest.Filter]:
         """Convert filter dict to Qdrant Filter object."""
@@ -223,20 +273,20 @@ class TemporalRelevance(SearchOperation):
         qdrant_filter: Optional[rest.Filter],
     ) -> tuple[Optional[datetime], Optional[datetime]]:
         """Fetch oldest and newest timestamps using ordered scrolls."""
-        # Get oldest
+        # Get oldest (fetch both updated_at and created_at for fallback)
         oldest_points = await destination.client.scroll(
             collection_name=destination.collection_name,
             limit=1,
-            with_payload=[self.DATETIME_FIELD],
+            with_payload=[self.DATETIME_FIELD, "created_at"],
             order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="asc"),
             scroll_filter=qdrant_filter,
         )
 
-        # Get newest
+        # Get newest (fetch both updated_at and created_at for fallback)
         newest_points = await destination.client.scroll(
             collection_name=destination.collection_name,
             limit=1,
-            with_payload=[self.DATETIME_FIELD],
+            with_payload=[self.DATETIME_FIELD, "created_at"],
             order_by=rest.OrderBy(key=self.DATETIME_FIELD, direction="desc"),
             scroll_filter=qdrant_filter,
         )
