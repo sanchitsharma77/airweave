@@ -14,20 +14,27 @@ Reference:
   https://learn.microsoft.com/en-us/graph/api/resources/driveitem
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import ChunkEntity, FileEntity
+from airweave.platform.entities._base import BaseEntity, FileEntity
 
 
-class SharePointUserEntity(ChunkEntity):
+class SharePointUserEntity(BaseEntity):
     """Schema for a SharePoint user.
 
-    Based on the Microsoft Graph user resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/user
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/user
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the user ID)
+    # - breadcrumbs (empty - users are top-level)
+    # - name (from display_name)
+    # - created_at (None - users don't have creation timestamp)
+    # - updated_at (None - users don't have update timestamp)
+
+    # API fields
     display_name: Optional[str] = AirweaveField(
         None, description="The name displayed in the address book for the user.", embeddable=True
     )
@@ -49,23 +56,31 @@ class SharePointUserEntity(ChunkEntity):
         None, description="The office location in the user's place of business.", embeddable=True
     )
     mobile_phone: Optional[str] = AirweaveField(
-        None, description="The primary cellular telephone number for the user."
+        None, description="The primary cellular telephone number for the user.", embeddable=False
     )
     business_phones: Optional[List[str]] = AirweaveField(
-        None, description="The telephone numbers for the user."
+        None, description="The telephone numbers for the user.", embeddable=False
     )
     account_enabled: Optional[bool] = AirweaveField(
-        None, description="Whether the account is enabled."
+        None, description="Whether the account is enabled.", embeddable=False
     )
 
 
-class SharePointGroupEntity(ChunkEntity):
+class SharePointGroupEntity(BaseEntity):
     """Schema for a SharePoint group.
 
-    Based on the Microsoft Graph group resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/group
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/group
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the group ID)
+    # - breadcrumbs (empty - groups are top-level)
+    # - name (from display_name)
+    # - created_at (from createdDateTime)
+    # - updated_at (None - groups don't have update timestamp)
+
+    # API fields
     display_name: Optional[str] = AirweaveField(
         None, description="The display name for the group.", embeddable=True
     )
@@ -76,10 +91,10 @@ class SharePointGroupEntity(ChunkEntity):
         None, description="The SMTP address for the group.", embeddable=True
     )
     mail_enabled: Optional[bool] = AirweaveField(
-        None, description="Whether the group is mail-enabled."
+        None, description="Whether the group is mail-enabled.", embeddable=False
     )
     security_enabled: Optional[bool] = AirweaveField(
-        None, description="Whether the group is a security group."
+        None, description="Whether the group is a security group.", embeddable=False
     )
     group_types: List[str] = AirweaveField(
         default_factory=list,
@@ -89,63 +104,60 @@ class SharePointGroupEntity(ChunkEntity):
     visibility: Optional[str] = AirweaveField(
         None,
         description="Visibility of the group (Public, Private, HiddenMembership).",
-        embeddable=True,
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp when the group was created.",
-        is_created_at=True,
-        embeddable=True,
+        embeddable=False,
     )
 
 
-class SharePointSiteEntity(ChunkEntity):
+class SharePointSiteEntity(BaseEntity):
     """Schema for a SharePoint site.
 
-    Based on the Microsoft Graph site resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/site
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/site
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the site ID)
+    # - breadcrumbs (empty - sites are top-level)
+    # - name (from display_name)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # API fields
     display_name: Optional[str] = AirweaveField(
         None, description="The full title for the site.", embeddable=True
     )
-    name: Optional[str] = AirweaveField(
+    site_name: Optional[str] = AirweaveField(
         None, description="The name/title of the site.", embeddable=True
     )
     description: Optional[str] = AirweaveField(
         None, description="The descriptive text for the site.", embeddable=True
     )
     web_url: Optional[str] = AirweaveField(
-        None, description="URL that displays the site in the browser."
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the site was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the site was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+        None, description="URL that displays the site in the browser.", embeddable=False
     )
     is_personal_site: Optional[bool] = AirweaveField(
-        None, description="Whether the site is a personal site."
+        None, description="Whether the site is a personal site.", embeddable=False
     )
     site_collection: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Details about the site's site collection."
+        None, description="Details about the site's site collection.", embeddable=False
     )
 
 
-class SharePointDriveEntity(ChunkEntity):
+class SharePointDriveEntity(BaseEntity):
     """Schema for a SharePoint drive (document library).
 
-    Based on the Microsoft Graph drive resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/drive
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/drive
     """
 
-    name: Optional[str] = AirweaveField(None, description="The name of the drive.", embeddable=True)
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the drive ID)
+    # - breadcrumbs (site breadcrumb)
+    # - name (from drive name)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # API fields
     description: Optional[str] = AirweaveField(
         None, description="User-visible description of the drive.", embeddable=True
     )
@@ -154,67 +166,62 @@ class SharePointDriveEntity(ChunkEntity):
         description="Type of drive (documentLibrary, business, etc.).",
         embeddable=True,
     )
-    web_url: Optional[str] = AirweaveField(None, description="URL to view the drive in a browser.")
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the drive was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the drive was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+    web_url: Optional[str] = AirweaveField(
+        None, description="URL to view the drive in a browser.", embeddable=False
     )
     owner: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Information about the drive's owner.", embeddable=True
     )
     quota: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Information about the drive's storage quota."
+        None, description="Information about the drive's storage quota.", embeddable=False
     )
     site_id: Optional[str] = AirweaveField(
-        None, description="ID of the site that contains this drive."
+        None, description="ID of the site that contains this drive.", embeddable=False
     )
 
 
 class SharePointDriveItemEntity(FileEntity):
     """Schema for a SharePoint drive item (file or folder).
 
-    Based on the Microsoft Graph driveItem resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/driveitem
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/driveitem
     """
 
-    name: str = AirweaveField(
-        ..., description="The name of the item (file or folder).", embeddable=True
-    )
+    # Base fields are inherited from BaseEntity:
+    # - entity_id (the drive item ID)
+    # - breadcrumbs (site and drive breadcrumbs)
+    # - name (from item name)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # File fields are inherited from FileEntity:
+    # - url (download URL)
+    # - size (file size in bytes)
+    # - file_type (determined from mime_type)
+    # - mime_type
+    # - local_path (set after download)
+
+    # API fields (SharePoint-specific)
     description: Optional[str] = AirweaveField(
         None, description="User-visible description of the item.", embeddable=True
     )
     web_url: Optional[str] = AirweaveField(
-        None, description="URL to display the item in a browser."
+        None, description="URL to display the item in a browser.", embeddable=False
     )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the item was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the item was last modified.",
-        is_updated_at=True,
-        embeddable=True,
-    )
-    size: Optional[int] = AirweaveField(None, description="Size of the item in bytes.")
     file: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="File metadata if the item is a file (e.g., mimeType, hashes)."
+        None,
+        description="File metadata if the item is a file (e.g., mimeType, hashes).",
+        embeddable=False,
     )
     folder: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Folder metadata if the item is a folder (e.g., childCount)."
+        None,
+        description="Folder metadata if the item is a folder (e.g., childCount).",
+        embeddable=False,
     )
     parent_reference: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Information about the parent of this item (driveId, path, etc)."
+        None,
+        description="Information about the parent of this item (driveId, path, etc).",
+        embeddable=False,
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the item.", embeddable=True
@@ -223,74 +230,70 @@ class SharePointDriveItemEntity(FileEntity):
         None, description="Identity of the user who last modified the item.", embeddable=True
     )
     site_id: Optional[str] = AirweaveField(
-        None, description="ID of the site that contains this item."
+        None, description="ID of the site that contains this item.", embeddable=False
     )
     drive_id: Optional[str] = AirweaveField(
-        None, description="ID of the drive that contains this item."
+        None, description="ID of the drive that contains this item.", embeddable=False
     )
 
 
-class SharePointListEntity(ChunkEntity):
+class SharePointListEntity(BaseEntity):
     """Schema for a SharePoint list.
 
-    Based on the Microsoft Graph list resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/list
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/list
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the list ID)
+    # - breadcrumbs (site breadcrumb)
+    # - name (from display_name)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # API fields
     display_name: Optional[str] = AirweaveField(
         None, description="The displayable title of the list.", embeddable=True
     )
-    name: Optional[str] = AirweaveField(None, description="The name of the list.", embeddable=True)
+    list_name: Optional[str] = AirweaveField(
+        None, description="The name of the list.", embeddable=True
+    )
     description: Optional[str] = AirweaveField(
         None, description="The description of the list.", embeddable=True
     )
-    web_url: Optional[str] = AirweaveField(None, description="URL to view the list in browser.")
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the list was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the list was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+    web_url: Optional[str] = AirweaveField(
+        None, description="URL to view the list in browser.", embeddable=False
     )
     list_info: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Additional list metadata (template, hidden, etc)."
+        None, description="Additional list metadata (template, hidden, etc).", embeddable=False
     )
     site_id: Optional[str] = AirweaveField(
-        None, description="ID of the site that contains this list."
+        None, description="ID of the site that contains this list.", embeddable=False
     )
 
 
-class SharePointListItemEntity(ChunkEntity):
+class SharePointListItemEntity(BaseEntity):
     """Schema for a SharePoint list item.
 
-    Based on the Microsoft Graph listItem resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/listitem
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/listitem
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the list item ID)
+    # - breadcrumbs (site and list breadcrumbs)
+    # - name (from fields data or item ID)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # API fields
     fields: Optional[Dict[str, Any]] = AirweaveField(
         None,
         description="The values of the columns set on this list item (dynamic schema).",
         embeddable=True,
     )
     content_type: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="The content type of this list item."
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the item was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the item was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+        None, description="The content type of this list item.", embeddable=False
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the item.", embeddable=True
@@ -298,26 +301,38 @@ class SharePointListItemEntity(ChunkEntity):
     last_modified_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who last modified the item.", embeddable=True
     )
-    web_url: Optional[str] = AirweaveField(None, description="URL to view the item in browser.")
+    web_url: Optional[str] = AirweaveField(
+        None, description="URL to view the item in browser.", embeddable=False
+    )
     list_id: Optional[str] = AirweaveField(
-        None, description="ID of the list that contains this item."
+        None, description="ID of the list that contains this item.", embeddable=False
     )
     site_id: Optional[str] = AirweaveField(
-        None, description="ID of the site that contains this item."
+        None, description="ID of the site that contains this item.", embeddable=False
     )
 
 
-class SharePointPageEntity(ChunkEntity):
+class SharePointPageEntity(BaseEntity):
     """Schema for a SharePoint site page.
 
-    Based on the Microsoft Graph sitePage resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/sitepage
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/sitepage
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the page ID)
+    # - breadcrumbs (site breadcrumb)
+    # - name (from title)
+    # - created_at (from createdDateTime)
+    # - updated_at (from lastModifiedDateTime)
+
+    # API fields
     title: Optional[str] = AirweaveField(
         None, description="The title of the page.", embeddable=True
     )
-    name: Optional[str] = AirweaveField(None, description="The name of the page.", embeddable=True)
+    page_name: Optional[str] = AirweaveField(
+        None, description="The name of the page.", embeddable=True
+    )
     content: Optional[str] = AirweaveField(
         None,
         description="The actual page content (extracted from webParts).",
@@ -327,20 +342,10 @@ class SharePointPageEntity(ChunkEntity):
         None, description="Description or summary of the page content.", embeddable=True
     )
     page_layout: Optional[str] = AirweaveField(
-        None, description="The layout type of the page (article, home, etc).", embeddable=True
+        None, description="The layout type of the page (article, home, etc).", embeddable=False
     )
-    web_url: Optional[str] = AirweaveField(None, description="URL to view the page in browser.")
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the page was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Date and time the page was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+    web_url: Optional[str] = AirweaveField(
+        None, description="URL to view the page in browser.", embeddable=False
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the page.", embeddable=True
@@ -349,8 +354,8 @@ class SharePointPageEntity(ChunkEntity):
         None, description="Identity of the user who last modified the page.", embeddable=True
     )
     publishing_state: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Publishing status of the page."
+        None, description="Publishing status of the page.", embeddable=False
     )
     site_id: Optional[str] = AirweaveField(
-        None, description="ID of the site that contains this page."
+        None, description="ID of the site that contains this page.", embeddable=False
     )

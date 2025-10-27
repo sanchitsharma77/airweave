@@ -5,28 +5,32 @@ we define entity schemas for the following core objects:
   • Drive
   • DriveItem
 
-Each schema inherits from ChunkEntity, which provides an entity_id field to
-store the OneDrive object's unique ID (e.g., drive.id or driveItem.id).
-
 References:
   https://learn.microsoft.com/en-us/graph/api/resources/drive?view=graph-rest-1.0
   https://learn.microsoft.com/en-us/graph/api/resources/driveitem?view=graph-rest-1.0
 """
 
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import ChunkEntity, FileEntity
+from airweave.platform.entities._base import BaseEntity, FileEntity
 
 
-class OneDriveDriveEntity(ChunkEntity):
+class OneDriveDriveEntity(BaseEntity):
     """Schema for a OneDrive Drive object.
 
-    The inherited entity_id stores the drive's unique ID. Additional key fields come
-    from the Microsoft Graph drive resource.
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/drive?view=graph-rest-1.0
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the drive ID)
+    # - breadcrumbs (empty - drives are top-level)
+    # - name (from drive name or drive_type)
+    # - created_at (from createdDateTime timestamp)
+    # - updated_at (from lastModifiedDateTime timestamp)
+
+    # API fields
     drive_type: Optional[str] = AirweaveField(
         None,
         description=(
@@ -43,17 +47,7 @@ class OneDriveDriveEntity(ChunkEntity):
     quota: Optional[Dict[str, Any]] = AirweaveField(
         None,
         description="Information about the drive's storage quota (total, used, remaining, etc.).",
-    )
-
-    created_at: Optional[datetime] = AirweaveField(
-        None,
-        description="Datetime when the drive was created (from createdDateTime).",
-        is_created_at=True,
-    )
-    updated_at: Optional[datetime] = AirweaveField(
-        None,
-        description="Datetime when the drive was last modified (from lastModifiedDateTime).",
-        is_updated_at=True,
+        embeddable=False,
     )
 
 
@@ -61,61 +55,56 @@ class OneDriveDriveItemEntity(FileEntity):
     """Schema for a OneDrive DriveItem object (file or folder).
 
     Inherits from FileEntity to support file processing capabilities.
-    The inherited entity_id stores the DriveItem's unique ID.
+
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/driveitem?view=graph-rest-1.0
     """
 
-    name: Optional[str] = AirweaveField(None, description="The name of the item (folder or file).")
+    # Base fields are inherited from BaseEntity:
+    # - entity_id (the DriveItem ID)
+    # - breadcrumbs (drive breadcrumb)
+    # - name (from item name)
+    # - created_at (from createdDateTime timestamp)
+    # - updated_at (from lastModifiedDateTime timestamp)
+
+    # File fields are inherited from FileEntity:
+    # - url (download URL)
+    # - size (file size in bytes)
+    # - file_type (determined from mime_type)
+    # - mime_type
+    # - local_path (set after download)
+
+    # API fields (OneDrive-specific)
     description: Optional[str] = AirweaveField(
-        None, description="Description of the item (if available)."
+        None, description="Description of the item (if available).", embeddable=True
     )
     etag: Optional[str] = AirweaveField(
-        None, description="An eTag for the content of the item. Used for change tracking."
+        None,
+        description="An eTag for the content of the item. Used for change tracking.",
+        embeddable=False,
     )
     ctag: Optional[str] = AirweaveField(
-        None, description="A cTag for the content of the item. Used for internal sync."
-    )
-
-    created_at: Optional[datetime] = AirweaveField(
         None,
-        description="Datetime when the item was created (from createdDateTime).",
-        is_created_at=True,
+        description="A cTag for the content of the item. Used for internal sync.",
+        embeddable=False,
     )
-    updated_at: Optional[datetime] = AirweaveField(
-        None,
-        description="Datetime when the item was last modified (from lastModifiedDateTime).",
-        is_updated_at=True,
-    )
-
-    size: Optional[int] = AirweaveField(None, description="Size of the item in bytes.")
     web_url: Optional[str] = AirweaveField(
-        None, description="URL that displays the resource in the browser."
+        None, description="URL that displays the resource in the browser.", embeddable=False
     )
-
-    # Microsoft Graph API specific fields
     file: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="File metadata if the item is a file (e.g., mimeType, hashes)."
+        None,
+        description="File metadata if the item is a file (e.g., mimeType, hashes).",
+        embeddable=False,
     )
     folder: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Folder metadata if the item is a folder (e.g., childCount)."
+        None,
+        description="Folder metadata if the item is a folder (e.g., childCount).",
+        embeddable=False,
     )
-
-    # Parent reference typically contains info like driveId, id, path, etc.
     parent_reference: Optional[Dict[str, Any]] = AirweaveField(
         None,
         description=(
             "Information about the parent of this item, such as driveId or parent folder path."
         ),
+        embeddable=False,
     )
-
-    # Override FileEntity fields to provide OneDrive-specific defaults
-    def __init__(self, **data):
-        """Initialize OneDriveDriveItemEntity with OneDrive-specific defaults."""
-        # Set default metadata if not provided
-        if "metadata" not in data:
-            data["metadata"] = {}
-
-        # Extract MIME type from file facet if available
-        if "file" in data and data["file"] and "mimeType" in data["file"]:
-            data["metadata"]["mimeType"] = data["file"]["mimeType"]
-
-        super().__init__(**data)
