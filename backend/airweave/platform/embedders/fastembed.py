@@ -32,7 +32,7 @@ class SparseEmbedder(BaseEmbedder):
             raise SyncFailureError(f"Failed to load sparse embedding model: {e}")
 
     async def embed_many(
-        self, texts: List[str], sync_context: SyncContext
+        self, texts: List[str], sync_context: SyncContext = None
     ) -> List[SparseEmbedding]:
         """Embed batch of texts for keyword search.
 
@@ -41,7 +41,7 @@ class SparseEmbedder(BaseEmbedder):
 
         Args:
             texts: List of text strings to embed
-            sync_context: Sync context with logger
+            sync_context: Optional sync context with logger (for sync operations)
 
         Returns:
             List of SparseEmbedding objects
@@ -64,5 +64,26 @@ class SparseEmbedder(BaseEmbedder):
             return await run_in_thread_pool(_embed_sync)
 
         except Exception as e:
-            sync_context.logger.error(f"Sparse embedding failed: {e}")
+            if sync_context and hasattr(sync_context, "logger"):
+                sync_context.logger.error(f"Sparse embedding failed: {e}")
             raise SyncFailureError(f"Sparse embedding failed: {e}")
+
+    async def embed(self, text: str) -> SparseEmbedding:
+        """Embed single text for keyword search.
+
+        Convenience method for single text embedding (used by search module).
+
+        Args:
+            text: Text string to embed
+
+        Returns:
+            SparseEmbedding object
+
+        Raises:
+            SyncFailureError: On any error
+        """
+        if not text:
+            raise SyncFailureError("Cannot embed empty text")
+
+        embeddings = await self.embed_many([text])
+        return embeddings[0]

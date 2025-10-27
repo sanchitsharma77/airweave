@@ -1017,14 +1017,14 @@ class EntityPipeline:
             )
 
         if not supported_entities:
-            sync_context.logger.info("No supported code entities to chunk")
+            sync_context.logger.debug("No supported code entities to chunk")
             return []
 
         # Chunk only supported entities
         chunker = CodeChunker()
         texts = [e.textual_representation for e in supported_entities]
 
-        sync_context.logger.info(
+        sync_context.logger.debug(
             f"Chunking {len(supported_entities)} code entities with CodeChunker"
         )
 
@@ -1048,7 +1048,7 @@ class EntityPipeline:
         chunker = SemanticChunker()
         texts = [e.textual_representation for e in entities]
 
-        sync_context.logger.info(f"Chunking {len(entities)} textual entities with SemanticChunker")
+        sync_context.logger.debug(f"Chunking {len(entities)} textual entities with SemanticChunker")
 
         try:
             chunk_lists = await chunker.chunk_batch(texts)
@@ -1114,12 +1114,12 @@ class EntityPipeline:
                 for chunk_entity in all_chunk_entities
             ]
 
-            sync_context.logger.info(
+            sync_context.logger.debug(
                 f"Chunk statistics: min={min(token_counts)}, max={max(token_counts)}, "
                 f"avg={sum(token_counts) / len(token_counts):.1f} tokens"
             )
 
-        sync_context.logger.info(
+        sync_context.logger.debug(
             f"Entity multiplication: {len(entities)} → {len(all_chunk_entities)} chunk entities"
         )
 
@@ -1194,7 +1194,7 @@ class EntityPipeline:
                     f"PROGRAMMING ERROR: Entity {entity.entity_id} has no dense vector"
                 )
 
-        sync_context.logger.info(
+        sync_context.logger.debug(
             f"Embedded {len(chunk_entities)} chunk entities "
             f"(dense: {len(dense_embeddings)}, "
             f"sparse: {len(sparse_embeddings) if sparse_embeddings else 0})"
@@ -1474,7 +1474,7 @@ class EntityPipeline:
 
         # Report cleanup results
         if cleaned_count > 0:
-            sync_context.logger.info(f"Progressive cleanup: deleted {cleaned_count} temp files")
+            sync_context.logger.debug(f"Progressive cleanup: deleted {cleaned_count} temp files")
 
         # Fail the sync if any deletions failed (prevent disk space issues)
         if failed_deletions:
