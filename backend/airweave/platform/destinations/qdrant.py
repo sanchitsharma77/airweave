@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Literal, Optional
 from uuid import UUID
@@ -401,8 +402,6 @@ class QdrantDestination(VectorDBDestination):
         Proactively splits large batches to avoid blocking and timeouts.
         Falls back to smaller batches on errors.
         """
-        import asyncio
-
         # Build exception tuples safely without C408 (use literals)
         rhex: tuple[type[BaseException], ...] = ()
         try:
