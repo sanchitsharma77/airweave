@@ -18,7 +18,8 @@ connector:
 
     # Timing: Allow Excel/OneDrive to index newly created workbooks
     # Excel needs time to propagate new files through OneDrive before they appear in listings
-    post_create_sleep_seconds: 15
+    # AND for the cell content to be available via the usedRange API
+    post_create_sleep_seconds: 30
 
 test_flow:
   steps:
@@ -58,4 +59,3 @@ verification:
   score_threshold: 0.1
   max_retries: 5  # Excel sync might take a bit longer
   retry_delay_seconds: 10  # Give Excel time to process
-

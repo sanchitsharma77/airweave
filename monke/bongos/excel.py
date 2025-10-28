@@ -109,7 +109,11 @@ class ExcelBongo(BaseBongo):
             )
 
             # Wait for Excel to process the file
-            await asyncio.sleep(3)
+            # Excel Online needs more time to fully index content for usedRange API
+            self.logger.info(
+                "⏳ Waiting for Excel Online to process the uploaded file..."
+            )
+            await asyncio.sleep(10)
 
             # Step 2: Get worksheet IDs from the workbook
             await self._pace()
