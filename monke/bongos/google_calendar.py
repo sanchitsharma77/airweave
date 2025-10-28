@@ -66,8 +66,13 @@ class GoogleCalendarBongo(BaseBongo):
 
     async def create_entities(self) -> List[Dict[str, Any]]:
         """Create test events in Google Calendar."""
-        self.logger.info(f"🥁 Creating {self.entity_count} test events in Google Calendar")
+        self.logger.info(
+            f"🥁 Creating {self.entity_count} test events in Google Calendar"
+        )
         entities: List[Dict[str, Any]] = []
+
+        # Ensure HTTP client is available
+        self._ensure_client()
 
         # Ensure or create a dedicated test calendar
         await self._ensure_test_calendar()
@@ -78,9 +83,11 @@ class GoogleCalendarBongo(BaseBongo):
         tokens = [str(uuid.uuid4())[:8] for _ in range(self.entity_count)]
 
         async def generate_event_content(token: str, index: int):
-            title, description, duration_hours = await generate_google_calendar_artifact(
-                self.openai_model, token
-            )
+            (
+                title,
+                description,
+                duration_hours,
+            ) = await generate_google_calendar_artifact(self.openai_model, token)
             start_time = datetime.now(timezone.utc) + timedelta(days=index + 1)
             end_time = start_time + timedelta(hours=duration_hours)
             return token, title, description, start_time, end_time
@@ -121,6 +128,9 @@ class GoogleCalendarBongo(BaseBongo):
 
         if not self.test_events:
             return updated
+
+        # Ensure HTTP client is available
+        self._ensure_client()
 
         from monke.generation.google_calendar import generate_google_calendar_artifact
 
@@ -167,10 +177,17 @@ class GoogleCalendarBongo(BaseBongo):
         self.logger.info("🥁 Deleting all test events from Google Calendar")
         return await self.delete_specific_entities(self.created_entities)
 
-    async def delete_specific_entities(self, entities: List[Dict[str, Any]]) -> List[str]:
+    async def delete_specific_entities(
+        self, entities: List[Dict[str, Any]]
+    ) -> List[str]:
         """Delete specific entities from Google Calendar."""
-        self.logger.info(f"🥁 Deleting {len(entities)} specific events from Google Calendar")
+        self.logger.info(
+            f"🥁 Deleting {len(entities)} specific events from Google Calendar"
+        )
         deleted_ids: List[str] = []
+
+        # Ensure HTTP client is available
+        self._ensure_client()
 
         for entity in entities:
             try:
@@ -182,7 +199,9 @@ class GoogleCalendarBongo(BaseBongo):
                 if len(entities) > 10:
                     await asyncio.sleep(0.5)
             except Exception as e:
-                self.logger.warning(f"⚠️ Could not delete entity {entity.get('id')}: {e}")
+                self.logger.warning(
+                    f"⚠️ Could not delete entity {entity.get('id')}: {e}"
+                )
 
         # Verify deletion
         self.logger.info(
@@ -191,17 +210,26 @@ class GoogleCalendarBongo(BaseBongo):
         for entity in entities:
             ev_id = entity["id"]
             if ev_id in deleted_ids:
-                is_deleted = await self._verify_event_deleted(self.test_calendar_id, ev_id)
+                is_deleted = await self._verify_event_deleted(
+                    self.test_calendar_id, ev_id
+                )
                 if is_deleted:
-                    self.logger.info(f"✅ Event {ev_id} confirmed deleted from Google Calendar")
+                    self.logger.info(
+                        f"✅ Event {ev_id} confirmed deleted from Google Calendar"
+                    )
                 else:
-                    self.logger.warning(f"⚠️ Event {ev_id} still exists in Google Calendar!")
+                    self.logger.warning(
+                        f"⚠️ Event {ev_id} still exists in Google Calendar!"
+                    )
 
         return deleted_ids
 
     async def cleanup(self):
-        """Clean up any remaining test data and close the HTTP client."""
+        """Clean up any remaining test data."""
         self.logger.info("🧹 Cleaning up remaining test events in Google Calendar")
+
+        # Ensure HTTP client is available
+        self._ensure_client()
 
         # Force delete any remaining test events (best-effort)
         for test_event in list(self.test_events):
@@ -209,7 +237,9 @@ class GoogleCalendarBongo(BaseBongo):
                 await self._force_delete_event(self.test_calendar_id, test_event["id"])
                 self.logger.info(f"🧹 Force deleted event: {test_event['id']}")
             except Exception as e:
-                self.logger.warning(f"⚠️ Could not force delete event {test_event['id']}: {e}")
+                self.logger.warning(
+                    f"⚠️ Could not force delete event {test_event['id']}: {e}"
+                )
 
         # Delete the test calendar if not primary
         if self.test_calendar_id and self.test_calendar_id != "primary":
@@ -219,13 +249,23 @@ class GoogleCalendarBongo(BaseBongo):
             except Exception as e:
                 self.logger.warning(f"⚠️ Could not delete test calendar: {e}")
 
-        # Close HTTP client
-        try:
-            await self._client.aclose()
-        except Exception:
-            pass
+        # Note: Don't close HTTP client here as it may be reused in subsequent test steps
 
     # ---------- Private helpers ----------
+
+    def _ensure_client(self):
+        """Ensure HTTP client is available, recreate if closed."""
+        if self._client.is_closed:
+            self.logger.info("🔄 Recreating closed HTTP client")
+            self._client = httpx.AsyncClient(
+                base_url="https://www.googleapis.com/calendar/v3",
+                timeout=self._timeout,
+                headers={
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
 
     async def _ensure_test_calendar(self):
         """Ensure a dedicated test calendar exists; create one if needed."""
@@ -259,7 +299,9 @@ class GoogleCalendarBongo(BaseBongo):
                 return
 
             # Last resort: use primary
-            self.logger.warning("Could not create/find test calendar; falling back to 'primary'")
+            self.logger.warning(
+                "Could not create/find test calendar; falling back to 'primary'"
+            )
             self.test_calendar_id = "primary"
 
     async def _find_calendar_by_summary(self, summary: str) -> Optional[str]:
@@ -267,7 +309,9 @@ class GoogleCalendarBongo(BaseBongo):
         page_token = None
         for _ in range(10):  # avoid infinite loops
             params = {"pageToken": page_token} if page_token else None
-            resp = await self._request_with_retry("GET", "/users/me/calendarList", params=params)
+            resp = await self._request_with_retry(
+                "GET", "/users/me/calendarList", params=params
+            )
             data = resp.json()
             for item in data.get("items", []):
                 if item.get("summary") == summary:
@@ -317,7 +361,9 @@ class GoogleCalendarBongo(BaseBongo):
             "GET", f"/calendars/{calendar_id}/events/{event_id}"
         )
         if not get_resp.is_success:
-            raise Exception(f"Failed to get event: {get_resp.status_code} - {get_resp.text}")
+            raise Exception(
+                f"Failed to get event: {get_resp.status_code} - {get_resp.text}"
+            )
         event = get_resp.json()
         etag = event.get("etag")
 
@@ -333,7 +379,9 @@ class GoogleCalendarBongo(BaseBongo):
             headers=headers,
         )
         if not put_resp.is_success:
-            raise Exception(f"Failed to update event: {put_resp.status_code} - {put_resp.text}")
+            raise Exception(
+                f"Failed to update event: {put_resp.status_code} - {put_resp.text}"
+            )
         return put_resp.json()
 
     async def _delete_test_event(self, calendar_id: str, event_id: str):
@@ -377,7 +425,9 @@ class GoogleCalendarBongo(BaseBongo):
         await self._rate_limit()
         resp = await self._request_with_retry("DELETE", f"/calendars/{calendar_id}")
         if resp.status_code not in (204, 404):
-            raise Exception(f"Failed to delete calendar: {resp.status_code} - {resp.text}")
+            raise Exception(
+                f"Failed to delete calendar: {resp.status_code} - {resp.text}"
+            )
 
     async def _rate_limit(self):
         """Simple spacing between calls."""
