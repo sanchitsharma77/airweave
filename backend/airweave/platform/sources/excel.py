@@ -43,6 +43,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="ExcelConfig",
     labels=["Productivity", "Spreadsheet", "Data Analysis"],
     supports_continuous=False,
+    supports_temporal_relevance=False,
 )
 class ExcelSource(BaseSource):
     """Microsoft Excel source connector integrates with the Microsoft Graph API.
