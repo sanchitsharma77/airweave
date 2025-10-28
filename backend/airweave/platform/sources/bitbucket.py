@@ -35,6 +35,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     config_class="BitbucketConfig",
     labels=["Code"],
     supports_continuous=False,
+    supports_temporal_relevance=False,
 )
 class BitbucketSource(BaseSource):
     """Bitbucket source connector integrates with the Bitbucket REST API to extract data.

@@ -41,6 +41,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="GitLabConfig",
     labels=["Code"],
     supports_continuous=False,
+    supports_temporal_relevance=False,
 )
 class GitLabSource(BaseSource):
     """GitLab source connector integrates with the GitLab REST API to extract data.

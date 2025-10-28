@@ -36,6 +36,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     config_class="GitHubConfig",
     labels=["Code"],
     supports_continuous=True,
+    supports_temporal_relevance=False,
 )
 class GitHubSource(BaseSource):
     """GitHub source connector integrates with the GitHub REST API to extract and synchronize data.

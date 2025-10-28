@@ -42,9 +42,18 @@ class TemporalRelevance(SearchOperation):
     DECAY_TYPE = "linear"
     MIDPOINT = 0.5
 
-    def __init__(self, weight: float) -> None:
-        """Initialize with temporal relevance weight."""
+    def __init__(self, weight: float, supporting_sources: Optional[List[str]] = None) -> None:
+        """Initialize with temporal relevance weight and list of supporting sources.
+
+        Args:
+            weight: Temporal relevance weight (0-1)
+            supporting_sources: Optional list of source short_names to filter to.
+                - Non-empty list: Only include documents from these sources
+                - None: No source filtering (all sources included)
+                - Empty list is never passed (factory skips operation entirely)
+        """
         self.weight = weight
+        self.supporting_sources = supporting_sources
 
     def depends_on(self) -> List[str]:
         """Depends on filter operations."""
@@ -62,9 +71,13 @@ class TemporalRelevance(SearchOperation):
         )
 
         # Emit recency start
+        emit_data = {"requested_weight": self.weight}
+        if self.supporting_sources is not None:
+            emit_data["supporting_sources"] = self.supporting_sources
+            emit_data["source_filtering_enabled"] = True
         await context.emitter.emit(
             "recency_start",
-            {"requested_weight": self.weight},
+            emit_data,
             op_name=self.__class__.__name__,
         )
 
@@ -86,18 +99,33 @@ class TemporalRelevance(SearchOperation):
             is_empty=rest.PayloadField(key=self.DATETIME_FIELD)
         )
 
+        # Build must conditions list
+        must_conditions = [tenant_condition]
+
+        # Add source filter if we're restricting to temporal-supporting sources
+        if self.supporting_sources is not None:
+            source_condition = rest.FieldCondition(
+                key="airweave_system_metadata.source_name",
+                match=rest.MatchAny(any=self.supporting_sources),
+            )
+            must_conditions.append(source_condition)
+            ctx.logger.info(
+                f"[TemporalRelevance] Filtering to {len(self.supporting_sources)} "
+                f"temporal-supporting source(s): {self.supporting_sources}"
+            )
+
         if qdrant_filter:
             # Merge with existing filter
             if not qdrant_filter.must:
                 qdrant_filter.must = []
-            qdrant_filter.must.append(tenant_condition)
+            qdrant_filter.must.extend(must_conditions)
             # Ensure documents have the timestamp field for decay calculation
             if not qdrant_filter.must_not:
                 qdrant_filter.must_not = []
             qdrant_filter.must_not.append(has_timestamp_condition)
         else:
-            # Create new filter with tenant and timestamp requirements
-            qdrant_filter = rest.Filter(must=[tenant_condition], must_not=[has_timestamp_condition])
+            # Create new filter with tenant, source, and timestamp requirements
+            qdrant_filter = rest.Filter(must=must_conditions, must_not=[has_timestamp_condition])
 
         ctx.logger.debug(
             f"[TemporalRelevance] Applied tenant filter: collection_id={context.collection_id}"
@@ -207,29 +235,37 @@ class TemporalRelevance(SearchOperation):
         documents without the timestamp field. By filtering them out, we ensure
         only timestamped documents are included in temporal relevance searches.
 
+        Also applies source filtering if supporting_sources is set.
+
         Args:
             filter_dict: Existing filter dict from state (may be None)
 
         Returns:
             Filter dict with must_not condition to exclude empty/missing timestamps
+            and must condition to restrict to supporting sources if applicable
         """
         # Build the IsEmpty condition to exclude documents without timestamps
         # IsEmpty matches: field doesn't exist OR field is null OR field is []
         # We use must_not to invert it: field exists AND has a value
         is_empty_condition = {"is_empty": {"key": self.DATETIME_FIELD}}
 
-        if not filter_dict:
-            # No existing filter - create new one with just the timestamp exclusion
-            return {"must_not": [is_empty_condition]}
-
-        # Merge with existing filter
-        updated_filter = filter_dict.copy()
-
-        if "must_not" not in updated_filter:
-            updated_filter["must_not"] = []
+        # Start with existing filter or empty dict
+        updated_filter = filter_dict.copy() if filter_dict else {}
 
         # Add timestamp exclusion to must_not conditions
+        if "must_not" not in updated_filter:
+            updated_filter["must_not"] = []
         updated_filter["must_not"].append(is_empty_condition)
+
+        # Add source filter if we're restricting to temporal-supporting sources
+        if self.supporting_sources is not None:
+            source_condition = {
+                "key": "airweave_system_metadata.source_name",
+                "match": {"any": self.supporting_sources},
+            }
+            if "must" not in updated_filter:
+                updated_filter["must"] = []
+            updated_filter["must"].append(source_condition)
 
         return updated_filter
 
