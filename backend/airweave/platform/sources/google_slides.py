@@ -260,7 +260,7 @@ class GoogleSlidesSource(BaseSource):
                 created_at=created_time,
                 updated_at=modified_time,
                 # File fields
-                url=file_data.get("webViewLink"),
+                url=download_url,
                 size=file_data.get("size", 0),
                 file_type="google_slides",
                 mime_type="application/pdf",  # Standard PDF export

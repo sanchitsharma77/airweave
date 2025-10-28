@@ -457,7 +457,7 @@ class GoogleDocsSource(BaseSource):
                 created_at=created_time,
                 updated_at=modified_time,
                 # File fields
-                url=file_data.get("webViewLink"),
+                url=export_url,  # Use export URL for downloading (file downloader uses entity.url)
                 size=file_data.get("size", 0),
                 file_type="google_doc",
                 mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
