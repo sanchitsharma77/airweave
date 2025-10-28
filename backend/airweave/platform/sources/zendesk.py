@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.zendesk import (
     ZendeskAttachmentEntity,
     ZendeskCommentEntity,
@@ -144,7 +144,7 @@ class ZendeskSource(BaseSource):
 
     async def _generate_organization_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate organization entities."""
         url = f"https://{self.subdomain}.zendesk.com/api/v2/organizations.json"
 
@@ -154,12 +154,14 @@ class ZendeskSource(BaseSource):
 
             for org in response.get("organizations", []):
                 yield ZendeskOrganizationEntity(
+                    # Base fields
                     entity_id=str(org["id"]),
                     breadcrumbs=[],
-                    organization_id=org["id"],
                     name=org["name"],
                     created_at=org.get("created_at"),
                     updated_at=org.get("updated_at"),
+                    # API fields
+                    organization_id=org["id"],
                     domain_names=org.get("domain_names", []),
                     details=org.get("details"),
                     notes=org.get("notes"),
@@ -173,7 +175,7 @@ class ZendeskSource(BaseSource):
 
     async def _generate_user_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate user entities."""
         url = f"https://{self.subdomain}.zendesk.com/api/v2/users.json"
 
@@ -206,17 +208,20 @@ class ZendeskSource(BaseSource):
                     updated_at = created_at
 
                 yield ZendeskUserEntity(
+                    # Base fields
                     entity_id=str(user["id"]),
                     breadcrumbs=[],
-                    user_id=user["id"],
                     name=user["name"],
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    # API fields
+                    user_id=user["id"],
                     email=user["email"],
                     role=user.get("role", "end-user"),
                     active=user.get("active", True),
-                    created_at=created_at,
-                    updated_at=updated_at,
                     last_login_at=user.get("last_login_at"),
                     organization_id=user.get("organization_id"),
+                    organization_name=None,  # Not provided in user API
                     phone=user.get("phone"),
                     time_zone=user.get("time_zone"),
                     locale=user.get("locale"),
@@ -230,7 +235,7 @@ class ZendeskSource(BaseSource):
 
     async def _generate_ticket_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate ticket entities."""
         url = f"https://{self.subdomain}.zendesk.com/api/v2/tickets.json"
 
@@ -244,8 +249,13 @@ class ZendeskSource(BaseSource):
                     continue
 
                 yield ZendeskTicketEntity(
+                    # Base fields
                     entity_id=str(ticket["id"]),
                     breadcrumbs=[],
+                    name=ticket["subject"],
+                    created_at=ticket.get("created_at"),
+                    updated_at=ticket.get("updated_at"),
+                    # API fields
                     ticket_id=ticket["id"],
                     subject=ticket["subject"],
                     description=ticket.get("description"),
@@ -257,8 +267,6 @@ class ZendeskSource(BaseSource):
                     assignee_email=None,  # Will be populated from user data if needed
                     status=ticket.get("status", "new"),
                     priority=ticket.get("priority"),
-                    created_at=ticket.get("created_at"),
-                    updated_at=ticket.get("updated_at"),
                     tags=ticket.get("tags", []),
                     custom_fields=ticket.get("custom_fields", []),
                     organization_id=ticket.get("organization_id"),
@@ -274,7 +282,7 @@ class ZendeskSource(BaseSource):
 
     async def _generate_comment_entities(
         self, client: httpx.AsyncClient, ticket: Dict
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate comment entities for a ticket."""
         ticket_id = ticket["id"]
         # Include users in the response to get author names
@@ -307,19 +315,29 @@ class ZendeskSource(BaseSource):
                         author_name = user.get("name", f"User {author_id}")
                         author_email = user.get("email")
 
+                # Create comment name from body preview
+                body = comment.get("body", "")
+                comment_name = body[:50] + "..." if len(body) > 50 else body
+                if not comment_name:
+                    comment_name = f"Comment {comment['id']}"
+
                 yield ZendeskCommentEntity(
+                    # Base fields
                     entity_id=f"{ticket_id}_{comment['id']}",
                     breadcrumbs=[],
+                    name=comment_name,
+                    created_at=comment.get("created_at"),
+                    updated_at=None,  # Comments don't have update timestamp
+                    # API fields
                     comment_id=comment["id"],
                     ticket_id=ticket_id,
                     ticket_subject=ticket["subject"],
                     author_id=author_id,
                     author_name=author_name,
                     author_email=author_email,
-                    body=comment.get("body", ""),
+                    body=body,
                     html_body=comment.get("html_body"),
                     public=comment.get("public", False),
-                    created_at=comment.get("created_at"),
                     attachments=comment.get("attachments", []),
                 )
         except httpx.HTTPStatusError as e:
@@ -329,9 +347,9 @@ class ZendeskSource(BaseSource):
             else:
                 raise
 
-    async def _generate_attachment_entities(
+    async def _generate_attachment_entities(  # noqa: C901
         self, client: httpx.AsyncClient, ticket: Dict
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate attachment entities for a ticket."""
         ticket_id = ticket["id"]
 
@@ -361,29 +379,67 @@ class ZendeskSource(BaseSource):
 
                         attachment_created_at = parse(attachment_created_at)
 
+                    # Determine file type from mime_type
+                    mime_type = attachment.get("content_type") or "application/octet-stream"
+                    size = attachment.get("size", 0)
+                    if mime_type and "/" in mime_type:
+                        file_type = mime_type.split("/")[0]
+                    else:
+                        import os
+
+                        file_name = attachment.get("file_name", "")
+                        ext = os.path.splitext(file_name)[1].lower().lstrip(".")
+                        file_type = ext if ext else "file"
+
                     attachment_entity = ZendeskAttachmentEntity(
+                        # Base fields
                         entity_id=str(attachment["id"]),
                         breadcrumbs=[],
-                        file_id=str(attachment["id"]),  # Convert to string for consistency
+                        name=attachment.get("file_name", ""),
+                        created_at=attachment_created_at,
+                        updated_at=None,  # Attachments don't have update timestamp
+                        # File fields
+                        url=attachment.get("content_url"),
+                        size=size,
+                        file_type=file_type,
+                        mime_type=mime_type,
+                        local_path=None,  # Will be set after download
+                        # API fields
                         attachment_id=attachment["id"],
                         ticket_id=ticket_id,
                         comment_id=comment["id"],
                         ticket_subject=ticket["subject"],
-                        name=attachment.get("file_name", ""),
-                        file_name=attachment.get("file_name", ""),
-                        mime_type=attachment.get("content_type"),
                         content_type=attachment.get("content_type"),
-                        size=attachment.get("size", 0),
-                        url=attachment.get("content_url"),
-                        download_url=attachment.get("content_url"),
+                        file_name=attachment.get("file_name", ""),
                         thumbnails=attachment.get("thumbnails", []),
-                        created_at=attachment_created_at,
                     )
 
-                    # Process the file entity
-                    processed_entity = await self.process_file_entity(attachment_entity)
-                    if processed_entity:
-                        yield processed_entity
+                    # Download the file using file downloader
+                    try:
+                        await self.file_downloader.download_from_url(
+                            entity=attachment_entity,
+                            http_client_factory=self.http_client,
+                            access_token_provider=self.get_access_token,
+                            logger=self.logger,
+                        )
+
+                        # Verify download succeeded
+                        if not attachment_entity.local_path:
+                            raise ValueError(
+                                f"Download failed - no local path set for {attachment_entity.name}"
+                            )
+
+                        self.logger.debug(
+                            f"Successfully downloaded attachment: {attachment_entity.name}"
+                        )
+                        yield attachment_entity
+
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to download attachment {attachment_entity.name}: {e}"
+                        )
+                        # Continue with other attachments
+                        continue
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -392,7 +448,7 @@ class ZendeskSource(BaseSource):
             else:
                 raise
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from Zendesk."""
         async with self.http_client() as client:
             # Generate organizations first

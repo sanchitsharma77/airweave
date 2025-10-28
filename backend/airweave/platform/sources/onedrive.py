@@ -21,7 +21,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.onedrive import OneDriveDriveEntity, OneDriveDriveItemEntity
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
@@ -181,14 +181,20 @@ class OneDriveSource(BaseSource):
 
         self.logger.info(f"Drive: {drive_obj}")
 
+        # Get drive name from API or use drive_type as fallback
+        drive_name = drive_obj.get("name") or drive_obj.get("driveType", "OneDrive")
+
         yield OneDriveDriveEntity(
+            # Base fields
             entity_id=drive_obj["id"],
-            breadcrumbs=[],  # top-level entity
+            breadcrumbs=[],
+            name=drive_name,
+            created_at=drive_obj.get("createdDateTime"),
+            updated_at=drive_obj.get("lastModifiedDateTime"),
+            # API fields
             drive_type=drive_obj.get("driveType"),
             owner=drive_obj.get("owner"),
             quota=drive_obj.get("quota"),
-            created_at=drive_obj.get("createdDateTime"),
-            updated_at=drive_obj.get("lastModifiedDateTime"),
         )
 
     async def _list_drive_items(
@@ -304,41 +310,51 @@ class OneDriveSource(BaseSource):
             return None
 
         # Create drive breadcrumb
-        drive_breadcrumb = Breadcrumb(entity_id=drive_id, name=drive_name, type="drive")
+        drive_breadcrumb = Breadcrumb(entity_id=drive_id)
 
         # Extract file information
         file_info = item.get("file", {})
         parent_ref = item.get("parentReference", {})
+        mime_type = file_info.get("mimeType") or "application/octet-stream"
+        size = item.get("size", 0)
+
+        # Determine file type from mime_type
+        if mime_type and "/" in mime_type:
+            file_type = mime_type.split("/")[0]
+        else:
+            import os
+
+            ext = os.path.splitext(item.get("name", ""))[1].lower().lstrip(".")
+            file_type = ext if ext else "file"
 
         entity = OneDriveDriveItemEntity(
+            # Base fields
             entity_id=item["id"],
             breadcrumbs=[drive_breadcrumb],
             name=item.get("name"),
+            created_at=item.get("createdDateTime"),
+            updated_at=item.get("lastModifiedDateTime"),
+            # File fields
+            url=download_url,
+            size=size,
+            file_type=file_type,
+            mime_type=mime_type,
+            local_path=None,  # Will be set after download
+            # API fields
             description=None,  # Not provided in basic listing
+            etag=item.get("eTag"),
+            ctag=item.get("cTag"),
+            web_url=item.get("webUrl"),
             file=file_info,
             folder=item.get("folder"),
             parent_reference=parent_ref,
-            etag=item.get("eTag"),
-            ctag=item.get("cTag"),
-            created_at=item.get("createdDateTime"),
-            updated_at=item.get("lastModifiedDateTime"),
-            size=item.get("size"),
-            web_url=item.get("webUrl"),
-            # Add required FileEntity fields
-            file_id=item["id"],  # Use the OneDrive item ID
-            download_url=download_url,  # The download URL we fetched
-            mime_type=file_info.get("mimeType"),  # Extract MIME type from file info
         )
-
-        # Add additional properties for file processing
-        if entity.airweave_system_metadata:
-            entity.airweave_system_metadata.total_size = item.get("size", 0)
 
         return entity
 
     async def _generate_drive_item_entities(
         self, client: httpx.AsyncClient, drive_id: str, drive_name: str
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate OneDriveDriveItemEntity objects for files in the drive."""
         file_count = 0
         async for item in self._list_all_drive_items_recursively(client, drive_id):
@@ -356,15 +372,29 @@ class OneDriveSource(BaseSource):
                 if not file_entity:
                     continue
 
-                # Process the file entity (download and process content)
-                if file_entity.download_url:
-                    processed_entity = await self.process_file_entity(file_entity=file_entity)
-                    if processed_entity:
-                        yield processed_entity
-                        file_count += 1
-                        self.logger.info(f"Processed file {file_count}: {file_entity.name}")
-                else:
-                    self.logger.warning(f"No download URL available for {file_entity.name}")
+                # Download the file using file downloader
+                try:
+                    await self.file_downloader.download_from_url(
+                        entity=file_entity,
+                        http_client_factory=self.http_client,
+                        access_token_provider=self.get_access_token,
+                        logger=self.logger,
+                    )
+
+                    # Verify download succeeded
+                    if not file_entity.local_path:
+                        raise ValueError(
+                            f"Download failed - no local path set for {file_entity.name}"
+                        )
+
+                    file_count += 1
+                    self.logger.info(f"Processed file {file_count}: {file_entity.name}")
+                    yield file_entity
+
+                except Exception as e:
+                    self.logger.error(f"Failed to download file {file_entity.name}: {e}")
+                    # Continue with other files
+                    continue
 
             except Exception as e:
                 self.logger.error(f"Failed to process item {item.get('name', 'unknown')}: {str(e)}")
@@ -373,7 +403,7 @@ class OneDriveSource(BaseSource):
 
         self.logger.info(f"Total files processed: {file_count}")
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all OneDrive entities.
 
         Yields entities in the following order:

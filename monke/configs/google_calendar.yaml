@@ -7,8 +7,8 @@ connector:
   type: "google_calendar"
   auth_mode: composio
   composio_config:
-    account_id: ca_PCXfPeqndtDu
-    auth_config_id: ac_acgCoeo5MFep
+    account_id: ca_RSoEZAc7jk04
+    auth_config_id: ac_NNJsU0TXTMQS
     # access_token: "${GOOGLE_CALENDAR_ACCESS_TOKEN}"
   config_fields:
     openai_model: "gpt-4.1-mini"

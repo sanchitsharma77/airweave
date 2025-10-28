@@ -14,15 +14,6 @@ from monke.bongos.base_bongo import BaseBongo
 from monke.generation.excel import generate_workbook_content
 from monke.utils.logging import get_logger
 
-# Try to import openpyxl for Excel file creation
-try:
-    from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter
-
-    HAS_OPENPYXL = True
-except ImportError:
-    HAS_OPENPYXL = False
-
 GRAPH = "https://graph.microsoft.com/v1.0"
 
 
@@ -53,9 +44,17 @@ class ExcelBongo(BaseBongo):
         self._worksheets: List[Dict[str, Any]] = []
         self._last_req = 0.0
 
-        if not HAS_OPENPYXL:
+        # Check for openpyxl at init time instead of module load time
+        try:
+            from openpyxl import Workbook
+            from openpyxl.utils import get_column_letter
+
+            # Store for later use
+            self._Workbook = Workbook
+            self._get_column_letter = get_column_letter
+        except ImportError as e:
             raise ImportError(
-                "openpyxl is required for Excel bongo. Install with: pip install openpyxl"
+                f"openpyxl is required for Excel bongo. Install with: pip install openpyxl. Error: {e}"
             )
 
     async def create_entities(self) -> List[Dict[str, Any]]:
@@ -109,7 +108,11 @@ class ExcelBongo(BaseBongo):
             )
 
             # Wait for Excel to process the file
-            await asyncio.sleep(3)
+            # Excel Online needs more time to fully index content for usedRange API
+            self.logger.info(
+                "⏳ Waiting for Excel Online to process the uploaded file..."
+            )
+            await asyncio.sleep(10)
 
             # Step 2: Get worksheet IDs from the workbook
             await self._pace()
@@ -159,7 +162,7 @@ class ExcelBongo(BaseBongo):
         Returns:
             Bytes of the Excel file
         """
-        wb = Workbook()
+        wb = self._Workbook()
         # Remove default sheet
         if "Sheet" in wb.sheetnames:
             wb.remove(wb["Sheet"])

@@ -11,7 +11,7 @@ import httpx
 
 from airweave.platform.configs.auth import MondayAuthConfig
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.monday import (
     MondayBoardEntity,
     MondayColumnEntity,
@@ -160,17 +160,20 @@ class MondaySource(BaseSource):
 
         for board in boards:
             yield MondayBoardEntity(
+                # Base fields
                 entity_id=str(board["id"]),
-                board_id=str(board["id"]),
+                breadcrumbs=[],
                 name=board.get("name"),
+                created_at=None,  # Boards don't have creation timestamp in API
+                updated_at=board.get("updated_at"),
+                # API fields
                 board_kind=board.get("type"),
+                columns=board.get("columns", []),
+                description=None,  # Not provided in this query
+                groups=board.get("groups", []),
+                owners=board.get("owners", []),
                 state=board.get("state"),
                 workspace_id=str(board.get("workspace_id")) if board.get("workspace_id") else None,
-                owners=board.get("owners", []),
-                created_at=None,  # Board API doesn't provide created_at field
-                updated_at=board.get("updated_at"),
-                groups=board.get("groups", []),
-                columns=board.get("columns", []),
             )
 
     async def _generate_group_entities(
@@ -201,14 +204,19 @@ class MondaySource(BaseSource):
         groups = boards_data[0].get("groups", [])
         for group in groups:
             yield MondayGroupEntity(
-                entity_id=f"{board_id}-{group['id']}",  # or just group["id"]
+                # Base fields
+                entity_id=f"{board_id}-{group['id']}",
                 breadcrumbs=[board_breadcrumb],
+                name=group.get("title", f"Group {group['id']}"),
+                created_at=None,  # Groups don't have creation timestamp
+                updated_at=None,  # Groups don't have update timestamp
+                # API fields
                 group_id=group["id"],
                 board_id=board_id,
                 title=group.get("title"),
                 color=group.get("color"),
                 archived=group.get("archived", False),
-                items=[],  # You could populate items in a separate step if desired
+                items=[],
             )
 
     async def _generate_column_entities(
@@ -241,12 +249,20 @@ class MondaySource(BaseSource):
         columns = boards_data[0].get("columns", [])
         for col in columns:
             yield MondayColumnEntity(
+                # Base fields
                 entity_id=f"{board_id}-{col['id']}",
                 breadcrumbs=[board_breadcrumb],
+                name=col.get("title", f"Column {col['id']}"),
+                created_at=None,  # Columns don't have creation timestamp
+                updated_at=None,  # Columns don't have update timestamp
+                # API fields
                 column_id=col["id"],
                 board_id=board_id,
                 title=col.get("title"),
                 column_type=col.get("type"),
+                description=None,  # Not provided in this query
+                settings_str=None,  # Not provided in this query
+                archived=False,  # Not provided in this query
             )
 
     async def _generate_item_entities(
@@ -298,17 +314,19 @@ class MondaySource(BaseSource):
 
         for item in items:
             yield MondayItemEntity(
+                # Base fields
                 entity_id=str(item["id"]),
                 breadcrumbs=[board_breadcrumb],
+                name=item.get("name"),
+                created_at=item.get("created_at"),
+                updated_at=item.get("updated_at"),
+                # API fields
                 item_id=str(item["id"]),
                 board_id=board_id,
                 group_id=item["group"]["id"] if item["group"] else None,
-                name=item.get("name"),
                 state=item.get("state"),
-                creator=item.get("creator"),
-                created_at=item.get("created_at"),
-                updated_at=item.get("updated_at"),
                 column_values=item.get("column_values", []),
+                creator=item.get("creator"),
             )
 
     async def _generate_subitem_entities(
@@ -358,18 +376,20 @@ class MondaySource(BaseSource):
         subitems = items_data[0].get("subitems", [])
         for subitem in subitems:
             yield MondaySubitemEntity(
+                # Base fields
                 entity_id=str(subitem["id"]),
                 breadcrumbs=item_breadcrumbs,
+                name=subitem.get("name"),
+                created_at=subitem.get("created_at"),
+                updated_at=subitem.get("updated_at"),
+                # API fields
                 subitem_id=str(subitem["id"]),
                 parent_item_id=parent_item_id,
                 board_id=str(subitem["board"]["id"]) if subitem.get("board") else "",
                 group_id=subitem["group"]["id"] if subitem.get("group") else None,
-                name=subitem.get("name"),
                 state=subitem.get("state"),
-                creator=subitem.get("creator"),
-                created_at=subitem.get("created_at"),
-                updated_at=subitem.get("updated_at"),
                 column_values=subitem.get("column_values", []),
+                creator=subitem.get("creator"),
             )
 
     async def _generate_update_entities(
@@ -438,19 +458,29 @@ class MondaySource(BaseSource):
             updates = boards_data[0].get("updates", [])
 
         for upd in updates:
+            # Create update name from body preview
+            body = upd.get("body", "")
+            update_name = body[:50] + "..." if len(body) > 50 else body
+            if not update_name:
+                update_name = f"Update {upd['id']}"
+
             yield MondayUpdateEntity(
+                # Base fields
                 entity_id=str(upd["id"]),
                 breadcrumbs=item_breadcrumbs or [],
+                name=update_name,
+                created_at=upd.get("created_at"),
+                updated_at=None,  # Updates don't have update timestamp
+                # API fields
                 update_id=str(upd["id"]),
                 item_id=item_id,
                 board_id=board_id if item_id is None else None,
                 creator_id=str(upd["creator"]["id"]) if upd.get("creator") else None,
-                body=upd.get("body"),
-                created_at=upd.get("created_at"),
+                body=body,
                 assets=upd.get("assets", []),
             )
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Monday.com entities in a style similar to other connectors.
 
         Yields Monday.com entities in the following order:
@@ -466,38 +496,28 @@ class MondaySource(BaseSource):
             async for board_entity in self._generate_board_entities(client):
                 yield board_entity
 
-                board_breadcrumb = Breadcrumb(
-                    entity_id=board_entity.board_id,
-                    name=board_entity.name or "",
-                    type="board",
-                )
+                board_breadcrumb = Breadcrumb(entity_id=board_entity.entity_id)
 
                 # 2) Groups
                 async for group_entity in self._generate_group_entities(
-                    client, board_entity.board_id, board_breadcrumb
+                    client, board_entity.entity_id, board_breadcrumb
                 ):
                     yield group_entity
 
                 # 3) Columns
                 async for column_entity in self._generate_column_entities(
-                    client, board_entity.board_id, board_breadcrumb
+                    client, board_entity.entity_id, board_breadcrumb
                 ):
                     yield column_entity
 
                 # 4) Items
                 async for item_entity in self._generate_item_entities(
-                    client, board_entity.board_id, board_breadcrumb
+                    client, board_entity.entity_id, board_breadcrumb
                 ):
                     yield item_entity
 
-                    item_breadcrumbs = [
-                        board_breadcrumb,
-                        Breadcrumb(
-                            entity_id=item_entity.item_id,
-                            name=item_entity.name or "",
-                            type="item",
-                        ),
-                    ]
+                    item_breadcrumb = Breadcrumb(entity_id=item_entity.entity_id)
+                    item_breadcrumbs = [board_breadcrumb, item_breadcrumb]
 
                     # 4a) Subitems for each item
                     async for subitem_entity in self._generate_subitem_entities(
@@ -508,7 +528,7 @@ class MondaySource(BaseSource):
                     # 4b) Updates for each item
                     async for update_entity in self._generate_update_entities(
                         client,
-                        board_entity.board_id,
+                        board_entity.entity_id,
                         item_id=item_entity.item_id,
                         item_breadcrumbs=item_breadcrumbs,
                     ):
@@ -517,7 +537,10 @@ class MondaySource(BaseSource):
                 # 5) Board-level updates (if desired)
                 # (Some users only store item-level updates; you can include or exclude this.)
                 async for update_entity in self._generate_update_entities(
-                    client, board_entity.board_id, item_id=None, item_breadcrumbs=[board_breadcrumb]
+                    client,
+                    board_entity.entity_id,
+                    item_id=None,
+                    item_breadcrumbs=[board_breadcrumb],
                 ):
                     yield update_entity
 

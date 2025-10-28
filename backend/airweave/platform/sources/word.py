@@ -23,7 +23,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.word import WordDocumentEntity
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
@@ -209,7 +209,7 @@ class WordSource(BaseSource):
             self.logger.warning(f"Error parsing datetime {dt_str}: {str(e)}")
             return None
 
-    async def _discover_word_files_recursive(
+    async def _discover_word_files_recursive(  # noqa: C901
         self, client: httpx.AsyncClient, folder_id: Optional[str] = None, depth: int = 0
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Recursively discover Word documents in drive folders.
@@ -244,6 +244,11 @@ class WordSource(BaseSource):
 
                 for item in items:
                     file_name = item.get("name", "")
+
+                    # Skip deleted items (trashed but still returned by API)
+                    if item.get("deleted"):
+                        self.logger.info(f"Skipping deleted item: {file_name}")
+                        continue
 
                     # Check if it's a Word document
                     if file_name.lower().endswith(self.WORD_EXTENSIONS):
@@ -317,21 +322,28 @@ class WordSource(BaseSource):
                         else folder_path
                     )
 
+                # Get MIME type or default for Word documents
+                mime_type = item_data.get("file", {}).get("mimeType") or (
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+
                 yield WordDocumentEntity(
+                    # Base fields
                     entity_id=document_id,
                     breadcrumbs=[],
-                    title=title,
                     name=file_name,
-                    file_id=document_id,
-                    mime_type=item_data.get("file", {}).get("mimeType"),
-                    size=item_data.get("size"),
-                    download_url=content_download_url,
-                    content_download_url=content_download_url,
+                    created_at=self._parse_datetime(item_data.get("createdDateTime")),
+                    updated_at=self._parse_datetime(item_data.get("lastModifiedDateTime")),
+                    # File fields
+                    url=content_download_url,
+                    size=item_data.get("size", 0),
+                    file_type="microsoft_word_doc",
+                    mime_type=mime_type,
+                    local_path=None,  # Will be set after download
+                    # API fields
+                    title=title,
                     web_url=item_data.get("webUrl"),
-                    created_datetime=self._parse_datetime(item_data.get("createdDateTime")),
-                    last_modified_datetime=self._parse_datetime(
-                        item_data.get("lastModifiedDateTime")
-                    ),
+                    content_download_url=content_download_url,
                     created_by=item_data.get("createdBy"),
                     last_modified_by=item_data.get("lastModifiedBy"),
                     parent_reference=parent_ref,
@@ -339,7 +351,6 @@ class WordSource(BaseSource):
                     folder_path=folder_path,
                     description=item_data.get("description"),
                     shared=item_data.get("shared"),
-                    file_type="microsoft_word_doc",
                 )
 
             if document_count == 0:
@@ -353,7 +364,7 @@ class WordSource(BaseSource):
             self.logger.error(f"Error generating Word document entities: {str(e)}", exc_info=True)
             raise
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Microsoft Word entities.
 
         Yields WordDocumentEntity objects as FileEntity instances, which are then
@@ -378,10 +389,32 @@ class WordSource(BaseSource):
                         f"Yielding entity #{entity_count}: Word Document - {document_entity.title}"
                     )
 
-                    # Process the file entity (downloads content and prepares for chunking)
-                    processed_entity = await self.process_file_entity(document_entity)
-                    if processed_entity:
-                        yield processed_entity
+                    # Download the file using file downloader
+                    try:
+                        await self.file_downloader.download_from_url(
+                            entity=document_entity,
+                            http_client_factory=self.http_client,
+                            access_token_provider=self.get_access_token,
+                            logger=self.logger,
+                        )
+
+                        # Verify download succeeded
+                        if not document_entity.local_path:
+                            raise ValueError(
+                                f"Download failed - no local path set for {document_entity.name}"
+                            )
+
+                        self.logger.debug(
+                            f"Successfully downloaded document: {document_entity.name}"
+                        )
+                        yield document_entity
+
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to download document {document_entity.title}: {e}"
+                        )
+                        # Continue with other documents
+                        continue
 
         except Exception as e:
             self.logger.error(f"Error in entity generation: {str(e)}", exc_info=True)

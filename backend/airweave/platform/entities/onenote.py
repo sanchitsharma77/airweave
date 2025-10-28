@@ -12,93 +12,84 @@ Reference:
   https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import ChunkEntity, FileEntity
+from airweave.platform.entities._base import BaseEntity, FileEntity
 
 
-class OneNoteNotebookEntity(ChunkEntity):
+class OneNoteNotebookEntity(BaseEntity):
     """Schema for a Microsoft OneNote notebook.
 
-    Based on the Microsoft Graph notebook resource.
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/notebook
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/notebook
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the notebook ID)
+    # - breadcrumbs (empty - notebooks are top-level)
+    # - name (from display_name)
+    # - created_at (from created_datetime)
+    # - updated_at (from last_modified_datetime)
+
+    # API fields
     display_name: str = AirweaveField(..., description="The name of the notebook.", embeddable=True)
-    name: str = AirweaveField(
-        ..., description="The name of the notebook (alias for display_name).", embeddable=True
-    )
     is_default: Optional[bool] = AirweaveField(
-        None, description="Indicates whether this is the user's default notebook."
+        None, description="Indicates whether this is the user's default notebook.", embeddable=False
     )
     is_shared: Optional[bool] = AirweaveField(
-        None, description="Indicates whether the notebook is shared with other users."
+        None,
+        description="Indicates whether the notebook is shared with other users.",
+        embeddable=False,
     )
     user_role: Optional[str] = AirweaveField(
         None,
         description="The current user's role in the notebook (Owner, Contributor, Reader).",
         embeddable=True,
     )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the notebook was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the notebook was last modified.",
-        is_updated_at=True,
-        embeddable=True,
-    )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the notebook.", embeddable=True
     )
     last_modified_by: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Identity of the user who last modified the notebook.", embeddable=True
+        None,
+        description="Identity of the user who last modified the notebook.",
+        embeddable=True,
     )
     links: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Links for opening the notebook.", embeddable=False
     )
     self_url: Optional[str] = AirweaveField(
-        None, description="The endpoint URL where you can get details about the notebook."
+        None,
+        description="The endpoint URL where you can get details about the notebook.",
+        embeddable=False,
     )
 
 
-class OneNoteSectionGroupEntity(ChunkEntity):
+class OneNoteSectionGroupEntity(BaseEntity):
     """Schema for a Microsoft OneNote section group.
 
     Section groups are containers that can hold sections and other section groups.
-    Based on the Microsoft Graph sectionGroup resource.
 
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
     """
 
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the section group ID)
+    # - breadcrumbs (notebook breadcrumb)
+    # - name (from display_name)
+    # - created_at (from created_datetime)
+    # - updated_at (from last_modified_datetime)
+
+    # API fields
     notebook_id: str = AirweaveField(
-        ..., description="ID of the notebook this section group belongs to."
+        ..., description="ID of the notebook this section group belongs to.", embeddable=False
     )
     parent_section_group_id: Optional[str] = AirweaveField(
-        None, description="ID of the parent section group, if nested."
+        None, description="ID of the parent section group, if nested.", embeddable=False
     )
     display_name: str = AirweaveField(
         ..., description="The name of the section group.", embeddable=True
-    )
-    name: str = AirweaveField(
-        ..., description="The name of the section group (alias for display_name).", embeddable=True
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the section group was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the section group was last modified.",
-        is_updated_at=True,
-        embeddable=True,
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the section group.", embeddable=True
@@ -110,55 +101,58 @@ class OneNoteSectionGroupEntity(ChunkEntity):
     )
     sections_url: Optional[str] = AirweaveField(
         None,
-        description="The endpoint URL where you can get all the sections in the section group.",
+        description=("The endpoint URL where you can get all the sections in the section group."),
+        embeddable=False,
     )
     section_groups_url: Optional[str] = AirweaveField(
         None,
-        description="The endpoint URL where you can get all the section groups "
-        "nested in this section group.",
+        description=(
+            "The endpoint URL where you can get all the section groups "
+            "nested in this section group."
+        ),
+        embeddable=False,
     )
 
 
-class OneNoteSectionEntity(ChunkEntity):
+class OneNoteSectionEntity(BaseEntity):
     """Schema for a Microsoft OneNote section.
 
     Sections contain pages and can belong to a notebook or section group.
-    Based on the Microsoft Graph onenoteSection resource.
 
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/section
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/section
     """
 
-    notebook_id: str = AirweaveField(..., description="ID of the notebook this section belongs to.")
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the section ID)
+    # - breadcrumbs (notebook breadcrumb)
+    # - name (from display_name)
+    # - created_at (from created_datetime)
+    # - updated_at (from last_modified_datetime)
+
+    # API fields
+    notebook_id: str = AirweaveField(
+        ..., description="ID of the notebook this section belongs to.", embeddable=False
+    )
     parent_section_group_id: Optional[str] = AirweaveField(
-        None, description="ID of the parent section group, if any."
+        None, description="ID of the parent section group, if any.", embeddable=False
     )
     display_name: str = AirweaveField(..., description="The name of the section.", embeddable=True)
-    name: str = AirweaveField(
-        ..., description="The name of the section (alias for display_name).", embeddable=True
-    )
     is_default: Optional[bool] = AirweaveField(
-        None, description="Indicates whether this is the user's default section."
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the section was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the section was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+        None, description="Indicates whether this is the user's default section.", embeddable=False
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the section.", embeddable=True
     )
     last_modified_by: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Identity of the user who last modified the section.", embeddable=True
+        None,
+        description="Identity of the user who last modified the section.",
+        embeddable=True,
     )
     pages_url: Optional[str] = AirweaveField(
-        None, description="The endpoint URL where you can get all the pages in the section."
+        None,
+        description="The endpoint URL where you can get all the pages in the section.",
+        embeddable=False,
     )
 
 
@@ -166,35 +160,44 @@ class OneNotePageFileEntity(FileEntity):
     """Schema for a Microsoft OneNote page as a file entity.
 
     Pages are the actual content containers in OneNote.
-    Based on the Microsoft Graph onenotePage resource.
     Extends FileEntity to leverage Airweave's HTML processing pipeline.
 
-    Reference: https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
+    Reference:
+        https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
     """
 
-    notebook_id: str = AirweaveField(..., description="ID of the notebook this page belongs to.")
-    section_id: str = AirweaveField(..., description="ID of the section this page belongs to.")
+    # Base fields are inherited from BaseEntity:
+    # - entity_id (the page ID)
+    # - breadcrumbs (notebook and section breadcrumbs)
+    # - name (from title with .html extension)
+    # - created_at (from created_datetime)
+    # - updated_at (from last_modified_datetime)
+
+    # File fields are inherited from FileEntity:
+    # - url (content URL)
+    # - size (0 - content downloaded)
+    # - file_type (set to "html")
+    # - mime_type (set to "text/html")
+    # - local_path (set after download)
+
+    # API fields (OneNote-specific)
+    notebook_id: str = AirweaveField(
+        ..., description="ID of the notebook this page belongs to.", embeddable=False
+    )
+    section_id: str = AirweaveField(
+        ..., description="ID of the section this page belongs to.", embeddable=False
+    )
     title: str = AirweaveField(..., description="The title of the page.", embeddable=True)
     content_url: Optional[str] = AirweaveField(
-        None, description="The URL for the page's HTML content."
+        None, description="The URL for the page's HTML content.", embeddable=False
     )
     level: Optional[int] = AirweaveField(
-        None, description="The indentation level of the page (for hierarchical pages)."
+        None,
+        description="The indentation level of the page (for hierarchical pages).",
+        embeddable=False,
     )
     order: Optional[int] = AirweaveField(
-        None, description="The order of the page within its parent section."
-    )
-    created_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the page was created.",
-        is_created_at=True,
-        embeddable=True,
-    )
-    last_modified_datetime: Optional[datetime] = AirweaveField(
-        None,
-        description="Timestamp at which the page was last modified.",
-        is_updated_at=True,
-        embeddable=True,
+        None, description="The order of the page within its parent section.", embeddable=False
     )
     created_by: Optional[Dict[str, Any]] = AirweaveField(
         None, description="Identity of the user who created the page.", embeddable=True
@@ -203,26 +206,10 @@ class OneNotePageFileEntity(FileEntity):
         None, description="Identity of the user who last modified the page.", embeddable=True
     )
     links: Optional[Dict[str, Any]] = AirweaveField(
-        None, description="Links for opening the page in OneNote client or web."
+        None, description="Links for opening the page in OneNote client or web.", embeddable=False
     )
     user_tags: Optional[List[str]] = AirweaveField(
         default_factory=list,
         description="User-defined tags associated with the page.",
         embeddable=True,
     )
-
-    def __init__(self, **data):
-        """Initialize the entity and set file_type and mime_type for HTML processing."""
-        # Set HTML-specific values for OneNote pages
-        data.setdefault("mime_type", "text/html")
-        data.setdefault("file_type", "html")
-        data.setdefault("download_url", data.get("content_url", ""))
-        data.setdefault("file_id", data.get("entity_id", ""))
-
-        # Ensure name has .html extension for proper file processing
-        title = data.get("title", "Untitled Page")
-        if not title.endswith(".html"):
-            title = f"{title}.html"
-        data.setdefault("name", title)
-
-        super().__init__(**data)

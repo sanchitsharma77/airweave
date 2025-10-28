@@ -91,11 +91,27 @@ class SearchFactory:
         emitter = EventEmitter(request_id=request_id, stream=stream)
         await self._emit_skip_notices_if_needed(emitter, has_vector_sources, params, search_request)
 
+        # Get sources that support temporal relevance (for filtering when enabled)
+        temporal_supporting_sources = None
+        if params["temporal_weight"] > 0 and has_vector_sources:
+            try:
+                temporal_supporting_sources = await self._get_temporal_supporting_sources(
+                    db, collection, ctx, emitter
+                )
+            except Exception as e:
+                # If we can't determine source support, raise the error
+                raise ValueError(f"Failed to check temporal relevance support: {e}") from e
+
         # Build operations
         vector_size = get_default_vector_size()
 
         operations = self._build_operations(
-            params, providers, federated_sources, has_vector_sources, search_request
+            params,
+            providers,
+            federated_sources,
+            has_vector_sources,
+            search_request,
+            temporal_supporting_sources,
         )
 
         search_context = SearchContext(
@@ -236,6 +252,7 @@ class SearchFactory:
         federated_sources: List[BaseSource],
         has_vector_sources: bool,
         search_request: SearchRequest,
+        temporal_supporting_sources: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Build operation instances for the search context.
 
@@ -247,6 +264,10 @@ class SearchFactory:
             federated_sources: List of instantiated federated source objects
             has_vector_sources: Whether collection has any vector-backed sources
             search_request: Original search request from user
+            temporal_supporting_sources: List of source short_names to filter temporal search:
+                - Non-empty list: Filter to these sources (some don't support temporal)
+                - Empty list: Skip operation (no sources support temporal)
+                - None: No filtering needed (temporal disabled or not checked)
         """
         return {
             "query_expansion": (
@@ -266,8 +287,15 @@ class SearchFactory:
                 else None
             ),
             "temporal_relevance": (
-                TemporalRelevance(weight=params["temporal_weight"])
-                if (params["temporal_weight"] > 0 and has_vector_sources)
+                TemporalRelevance(
+                    weight=params["temporal_weight"], supporting_sources=temporal_supporting_sources
+                )
+                if (
+                    params["temporal_weight"] > 0
+                    and has_vector_sources
+                    # Skip only if explicitly empty list (no sources support it)
+                    and temporal_supporting_sources != []
+                )
                 else None
             ),
             "user_filter": (
@@ -490,6 +518,78 @@ class SearchFactory:
             raise ValueError(
                 f"Error getting vector sources for collection {collection.readable_id}"
             )
+
+    async def _get_temporal_supporting_sources(
+        self, db: AsyncSession, collection, ctx: ApiContext, emitter: EventEmitter
+    ) -> List[str]:
+        """Get list of source short_names that support temporal relevance.
+
+        Args:
+            db: Database session
+            collection: Collection object
+            ctx: API context
+            emitter: Event emitter for skip notices
+
+        Returns:
+            - Non-empty list: Some/all sources support temporal relevance (apply filtering)
+            - Empty list []: No sources support it (caller should skip operation)
+
+        Raises:
+            ValueError: If source connections or models cannot be retrieved
+        """
+        source_connections = await crud.source_connection.get_for_collection(
+            db, readable_collection_id=collection.readable_id, ctx=ctx
+        )
+        if not source_connections:
+            raise ValueError(f"No source connections found for collection {collection.readable_id}")
+
+        supporting_sources = []
+        non_supporting_sources = []
+
+        for source_connection in source_connections:
+            source_model = await crud.source.get_by_short_name(db, source_connection.short_name)
+            if not source_model:
+                raise ValueError(
+                    f"Source model not found for short_name={source_connection.short_name}"
+                )
+
+            # Check if source supports temporal relevance
+            supports_temporal = getattr(source_model, "supports_temporal_relevance", True)
+
+            if supports_temporal:
+                supporting_sources.append(source_connection.short_name)
+            else:
+                non_supporting_sources.append(source_connection.short_name)
+
+        # Log the results
+        if supporting_sources:
+            ctx.logger.info(
+                f"[SearchFactory] Temporal relevance: {len(supporting_sources)} "
+                f"supporting source(s): {supporting_sources}"
+            )
+        if non_supporting_sources:
+            ctx.logger.info(
+                f"[SearchFactory] Temporal relevance: {len(non_supporting_sources)} "
+                f"non-supporting source(s) will be filtered out: {non_supporting_sources}"
+            )
+
+        # If no sources support temporal relevance, emit skip event and return empty list
+        if not supporting_sources:
+            await emitter.emit(
+                "operation_skipped",
+                {
+                    "operation": "TemporalRelevance",
+                    "reason": "no_sources_support_temporal_relevance",
+                    "non_supporting_sources": non_supporting_sources,
+                },
+            )
+            ctx.logger.warning(
+                f"[SearchFactory] No sources in collection support temporal relevance. "
+                f"Skipping temporal decay. Non-supporting sources: {non_supporting_sources}"
+            )
+            return []  # Empty list signals "skip operation"
+
+        return supporting_sources
 
     def _init_all_providers_for_operation(
         self, operation_name: str, api_keys: Dict[str, Optional[str]], ctx: ApiContext

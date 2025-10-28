@@ -8,7 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.slack import SlackMessageEntity
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
@@ -111,7 +111,7 @@ class SlackSource(BaseSource):
             self.logger.error(f"Unexpected error accessing Slack API: {url}, {str(e)}")
             raise
 
-    async def search(self, query: str, limit: int) -> List[ChunkEntity]:
+    async def search(self, query: str, limit: int) -> List[BaseEntity]:
         """Search Slack for messages matching the query with pagination support.
 
         Uses Slack's search.messages API endpoint with pagination to retrieve
@@ -143,7 +143,7 @@ class SlackSource(BaseSource):
 
     async def _paginate_search_results(
         self, client: httpx.AsyncClient, query: str, limit: int
-    ) -> List[ChunkEntity]:
+    ) -> List[BaseEntity]:
         """Paginate through Slack search results."""
         page = 1
         results_fetched = 0
@@ -206,7 +206,7 @@ class SlackSource(BaseSource):
 
     async def _process_message_matches(
         self, message_matches: List[Dict], limit: int, results_fetched: int
-    ) -> List[ChunkEntity]:
+    ) -> List[BaseEntity]:
         """Process message matches and return entities."""
         entities = []
         for message in message_matches:
@@ -245,19 +245,24 @@ class SlackSource(BaseSource):
             except (ValueError, TypeError):
                 created_at = None
 
+            # Create message name from text preview
+            text = message.get("text", "")
+            message_name = text[:50] + "..." if len(text) > 50 else text
+            if not message_name:
+                message_name = f"Slack message {ts}"
+
             # Build breadcrumbs
-            breadcrumbs = [
-                Breadcrumb(
-                    entity_id=channel_id,
-                    name=channel_name,
-                    type="channel",
-                )
-            ]
+            breadcrumbs = [Breadcrumb(entity_id=channel_id)]
 
             return SlackMessageEntity(
+                # Base fields
                 entity_id=message.get("iid", message.get("ts", "")),
                 breadcrumbs=breadcrumbs,
-                text=message.get("text", ""),
+                name=message_name,
+                created_at=created_at,
+                updated_at=None,  # Messages don't have update timestamp
+                # API fields
+                text=text,
                 user=message.get("user"),
                 username=message.get("username"),
                 ts=message.get("ts", ""),
@@ -271,14 +276,13 @@ class SlackSource(BaseSource):
                 next_message=message.get("next"),
                 score=float(message.get("score", 0)),
                 iid=message.get("iid"),
-                created_at=created_at,
                 url=message.get("permalink"),
             )
         except Exception as e:
             self.logger.error(f"Error creating message entity: {e}")
             return None
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate entities for the source.
 
         This method should not be called for federated search sources.

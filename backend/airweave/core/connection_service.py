@@ -415,10 +415,8 @@ class ConnectionService:
             integration = await crud.destination.get_by_short_name(db, short_name=short_name)
             if integration:
                 auth_config_class = integration.auth_config_class
-        elif integration_type == IntegrationType.EMBEDDING_MODEL:
-            integration = await crud.embedding_model.get_by_short_name(db, short_name=short_name)
-            if integration:
-                auth_config_class = integration.auth_config_class
+        # Note: EMBEDDING_MODEL integration type removed - embeddings now handled by
+        # DenseEmbedder and SparseEmbedder singletons, not via connections
 
         if not integration:
             raise HTTPException(

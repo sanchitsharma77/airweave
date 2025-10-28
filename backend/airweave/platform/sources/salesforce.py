@@ -16,7 +16,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.salesforce import (
     SalesforceAccountEntity,
     SalesforceContactEntity,
@@ -132,7 +132,7 @@ class SalesforceSource(BaseSource):
 
     async def _generate_account_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Retrieve accounts from Salesforce using SOQL query.
 
         Uses Salesforce Object Query Language (SOQL) to fetch Account records.
@@ -157,8 +157,13 @@ class SalesforceSource(BaseSource):
 
             for account in data.get("records", []):
                 yield SalesforceAccountEntity(
+                    # Base fields
                     entity_id=account["Id"],
+                    breadcrumbs=[],
                     name=account.get("Name"),
+                    created_at=account.get("CreatedDate"),
+                    updated_at=account.get("LastModifiedDate"),
+                    # API fields
                     account_number=account.get("AccountNumber"),
                     website=account.get("Website"),
                     phone=account.get("Phone"),
@@ -182,8 +187,6 @@ class SalesforceSource(BaseSource):
                     shipping_state=account.get("ShippingState"),
                     shipping_postal_code=account.get("ShippingPostalCode"),
                     shipping_country=account.get("ShippingCountry"),
-                    created_date=account.get("CreatedDate"),
-                    last_modified_date=account.get("LastModifiedDate"),
                     last_activity_date=account.get("LastActivityDate"),
                     last_viewed_date=account.get("LastViewedDate"),
                     last_referenced_date=account.get("LastReferencedDate"),
@@ -199,7 +202,7 @@ class SalesforceSource(BaseSource):
                     naics_code=account.get("NaicsCode"),
                     naics_desc=account.get("NaicsDesc"),
                     year_started=account.get("YearStarted"),
-                    metadata=account,  # Store the full record for additional/custom fields
+                    metadata=account,
                 )
 
             # Check for next page
@@ -212,7 +215,7 @@ class SalesforceSource(BaseSource):
 
     async def _generate_contact_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Retrieve contacts from Salesforce using SOQL query.
 
         Uses Salesforce Object Query Language (SOQL) to fetch Contact records.
@@ -236,10 +239,15 @@ class SalesforceSource(BaseSource):
 
             for contact in data.get("records", []):
                 yield SalesforceContactEntity(
+                    # Base fields
                     entity_id=contact["Id"],
+                    breadcrumbs=[],
+                    name=contact.get("Name"),
+                    created_at=contact.get("CreatedDate"),
+                    updated_at=contact.get("LastModifiedDate"),
+                    # API fields
                     first_name=contact.get("FirstName"),
                     last_name=contact.get("LastName"),
-                    name=contact.get("Name"),
                     email=contact.get("Email"),
                     phone=contact.get("Phone"),
                     mobile_phone=contact.get("MobilePhone"),
@@ -251,8 +259,6 @@ class SalesforceSource(BaseSource):
                     birthdate=contact.get("Birthdate"),
                     description=contact.get("Description"),
                     owner_id=contact.get("OwnerId"),
-                    created_date=contact.get("CreatedDate"),
-                    last_modified_date=contact.get("LastModifiedDate"),
                     last_activity_date=contact.get("LastActivityDate"),
                     last_viewed_date=contact.get("LastViewedDate"),
                     last_referenced_date=contact.get("LastReferencedDate"),
@@ -283,7 +289,7 @@ class SalesforceSource(BaseSource):
                     email_bounced_date=contact.get("EmailBouncedDate"),
                     email_bounced_reason=contact.get("EmailBouncedReason"),
                     individual_id=contact.get("IndividualId"),
-                    metadata=contact,  # Store the full record for additional fields
+                    metadata=contact,
                 )
 
             # Check for next page
@@ -296,7 +302,7 @@ class SalesforceSource(BaseSource):
 
     async def _generate_opportunity_entities(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Retrieve opportunities from Salesforce using SOQL query.
 
         Uses Salesforce Object Query Language (SOQL) to fetch Opportunity records.
@@ -319,8 +325,13 @@ class SalesforceSource(BaseSource):
 
             for opportunity in data.get("records", []):
                 yield SalesforceOpportunityEntity(
+                    # Base fields
                     entity_id=opportunity["Id"],
+                    breadcrumbs=[],
                     name=opportunity.get("Name"),
+                    created_at=opportunity.get("CreatedDate"),
+                    updated_at=opportunity.get("LastModifiedDate"),
+                    # API fields
                     account_id=opportunity.get("AccountId"),
                     amount=opportunity.get("Amount"),
                     close_date=opportunity.get("CloseDate"),
@@ -332,8 +343,6 @@ class SalesforceSource(BaseSource):
                     has_opportunity_line_item=opportunity.get("HasOpportunityLineItem", False),
                     pricebook2_id=opportunity.get("Pricebook2Id"),
                     owner_id=opportunity.get("OwnerId"),
-                    created_date=opportunity.get("CreatedDate"),
-                    last_modified_date=opportunity.get("LastModifiedDate"),
                     last_activity_date=opportunity.get("LastActivityDate"),
                     last_viewed_date=opportunity.get("LastViewedDate"),
                     last_referenced_date=opportunity.get("LastReferencedDate"),
@@ -346,7 +355,7 @@ class SalesforceSource(BaseSource):
                     type=opportunity.get("Type"),
                     lead_source=opportunity.get("LeadSource"),
                     next_step=opportunity.get("NextStep"),
-                    metadata=opportunity,  # Store the full record for additional/custom fields
+                    metadata=opportunity,
                 )
 
             # Check for next page
@@ -357,7 +366,7 @@ class SalesforceSource(BaseSource):
             else:
                 url = None
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Salesforce entities.
 
         - Accounts

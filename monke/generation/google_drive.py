@@ -56,10 +56,17 @@ def render_body(artifact: GoogleDriveArtifact, file_type: str) -> str:
         return f"{artifact.title}\n\n{artifact.description}\n\nToken: {artifact.token}"
     else:
         # For documents and text files
-        parts = [f"# {artifact.title}", artifact.description, f"Token: {artifact.token}"]
+        parts = [
+            f"# {artifact.title}",
+            artifact.description,
+            f"Token: {artifact.token}",
+        ]
         if hasattr(artifact, "sections") and artifact.sections:
             parts.extend(
-                [f"\n## {s.get('heading', '')}\n{s.get('body', '')}" for s in artifact.sections]
+                [
+                    f"\n## {s.get('heading', '')}\n{s.get('body', '')}"
+                    for s in artifact.sections
+                ]
             )
         return "\n\n".join(parts)
 

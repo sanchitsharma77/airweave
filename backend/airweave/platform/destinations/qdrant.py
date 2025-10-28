@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Literal, Optional
 from uuid import UUID
@@ -41,7 +42,7 @@ from airweave.platform.destinations.collection_strategy import (
     get_default_vector_size,
     get_physical_collection_name,
 )
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 
 if TYPE_CHECKING:
     from airweave.search.operations.temporal_relevance import DecayConfig
@@ -290,10 +291,10 @@ class QdrantDestination(VectorDBDestination):
                 field_schema=rest.PayloadSchemaType.KEYWORD,
             )
 
-            self.logger.info("Creating parent_entity_id index for parent-based deletes")
+            self.logger.info("Creating original_entity_id index for parent-based deletes")
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
-                field_name="parent_entity_id",
+                field_name="airweave_system_metadata.original_entity_id",
                 field_schema=rest.PayloadSchemaType.KEYWORD,
             )
 
@@ -303,12 +304,12 @@ class QdrantDestination(VectorDBDestination):
             )
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
-                field_name="airweave_system_metadata.airweave_updated_at",
+                field_name="updated_at",
                 field_schema=rest.PayloadSchemaType.DATETIME,
             )
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
-                field_name="airweave_system_metadata.airweave_created_at",
+                field_name="created_at",
                 field_schema=rest.PayloadSchemaType.DATETIME,
             )
 
@@ -322,39 +323,53 @@ class QdrantDestination(VectorDBDestination):
     # ID helper (deterministic per-chunk IDs; avoids overwrites)
     # ----------------------------------------------------------------------------------
     @staticmethod
-    def _make_point_uuid(db_entity_id: UUID | str, child_entity_id: str) -> str:
-        """Create a deterministic UUIDv5 for a chunk based on its parent DB id and entity id."""
-        ns = UUID(str(db_entity_id)) if not isinstance(db_entity_id, UUID) else db_entity_id
-        return str(uuid.uuid5(ns, child_entity_id))
+    def _make_point_uuid(sync_id: UUID | str, chunk_entity_id: str) -> str:
+        """Create a deterministic UUIDv5 for a chunk based on sync_id and entity_id."""
+        ns = UUID(str(sync_id)) if not isinstance(sync_id, UUID) else sync_id
+        return str(uuid.uuid5(ns, chunk_entity_id))
 
     # ----------------------------------------------------------------------------------
     # Insert / Upsert
     # ----------------------------------------------------------------------------------
-    async def insert(self, entity: ChunkEntity) -> None:
-        """Upsert a single chunk entity into Qdrant."""
+    async def insert(self, entity: BaseEntity) -> None:
+        """Upsert a single entity into Qdrant."""
         await self.ensure_client_readiness()
-
-        data_object = entity.to_storage_dict()
 
         # Sanity checks
         if not entity.airweave_system_metadata or not entity.airweave_system_metadata.vectors:
             raise ValueError(f"Entity {entity.entity_id} has no vector in system metadata")
-        if not entity.airweave_system_metadata.db_entity_id:
-            raise ValueError(f"Entity {entity.entity_id} has no db_entity_id in system metadata")
+        if not entity.airweave_system_metadata.sync_id:
+            raise ValueError(f"Entity {entity.entity_id} has no sync_id in system metadata")
 
-        # Remove vectors from payload (store them only in vector fields)
-        if "airweave_system_metadata" in data_object and isinstance(
-            data_object["airweave_system_metadata"], dict
-        ):
-            data_object["airweave_system_metadata"].pop("vectors", None)
+        # Get entity data as dict, excluding vectors to avoid numpy serialization issues
+        data_object = entity.model_dump(
+            mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
+        )
+
+        # CRITICAL: Remove explicit None values from timestamps (Pydantic may include them)
+        # This prevents Qdrant decay formula errors on documents without valid timestamps
+        if data_object.get("updated_at") is None:
+            data_object.pop("updated_at", None)
+        if data_object.get("created_at") is None:
+            data_object.pop("created_at", None)
+
+        # CRITICAL: Normalize timestamps for temporal relevance
+        # If updated_at is missing/null but created_at has a value, use created_at as fallback
+        # This ensures temporal decay can work on documents that only have created_at
+        if (
+            "updated_at" not in data_object or data_object.get("updated_at") is None
+        ) and data_object.get("created_at") is not None:
+            data_object["updated_at"] = data_object["created_at"]
+            self.logger.debug(
+                f"[Qdrant] Normalized timestamp: copied created_at → updated_at "
+                f"for entity {entity.entity_id}"
+            )
 
         # Add tenant metadata for filtering
         data_object["airweave_collection_id"] = str(self.collection_id)
 
         # Deterministic per-chunk ID
-        point_id = self._make_point_uuid(
-            entity.airweave_system_metadata.db_entity_id, entity.entity_id
-        )
+        point_id = self._make_point_uuid(entity.airweave_system_metadata.sync_id, entity.entity_id)
 
         # Optional sparse (accepts fastembed object or dict)
         sv = entity.airweave_system_metadata.vectors[1]
@@ -378,27 +393,44 @@ class QdrantDestination(VectorDBDestination):
         )
 
     # --------- NEW: helpers to keep bulk_insert simple (fixes C901) -------------------
-    def _build_point_struct(self, entity: ChunkEntity) -> rest.PointStruct:
-        """Convert a ChunkEntity to a Qdrant PointStruct with tenant metadata."""
-        entity_data = entity.to_storage_dict()
-
+    def _build_point_struct(self, entity: BaseEntity) -> rest.PointStruct:
+        """Convert a BaseEntity to a Qdrant PointStruct with tenant metadata."""
+        # Validate required fields first
         if not entity.airweave_system_metadata:
             raise ValueError(f"Entity {entity.entity_id} has no system metadata")
         if not entity.airweave_system_metadata.vectors:
             raise ValueError(f"Entity {entity.entity_id} has no vector in system metadata")
+        if not entity.airweave_system_metadata.sync_id:
+            raise ValueError(f"Entity {entity.entity_id} has no sync_id in system metadata")
 
-        # Remove vectors from payload
-        if "airweave_system_metadata" in entity_data and isinstance(
-            entity_data["airweave_system_metadata"], dict
-        ):
-            entity_data["airweave_system_metadata"].pop("vectors", None)
+        # Get entity data as dict, excluding vectors to avoid numpy serialization issues
+        entity_data = entity.model_dump(
+            mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
+        )
+
+        # CRITICAL: Remove explicit None values from timestamps (Pydantic may include them)
+        # This prevents Qdrant decay formula errors on documents without valid timestamps
+        if entity_data.get("updated_at") is None:
+            entity_data.pop("updated_at", None)
+        if entity_data.get("created_at") is None:
+            entity_data.pop("created_at", None)
+
+        # CRITICAL: Normalize timestamps for temporal relevance
+        # If updated_at is missing/null but created_at has a value, use created_at as fallback
+        # This ensures temporal decay can work on documents that only have created_at
+        if (
+            "updated_at" not in entity_data or entity_data.get("updated_at") is None
+        ) and entity_data.get("created_at") is not None:
+            entity_data["updated_at"] = entity_data["created_at"]
+            self.logger.debug(
+                f"[Qdrant] Normalized timestamp: copied created_at → updated_at "
+                f"for entity {entity.entity_id}"
+            )
 
         # Add tenant metadata for filtering
         entity_data["airweave_collection_id"] = str(self.collection_id)
 
-        point_id = self._make_point_uuid(
-            entity.airweave_system_metadata.db_entity_id, entity.entity_id
-        )
+        point_id = self._make_point_uuid(entity.airweave_system_metadata.sync_id, entity.entity_id)
 
         sv = entity.airweave_system_metadata.vectors[1]
         sparse_part: dict = {}
@@ -416,7 +448,11 @@ class QdrantDestination(VectorDBDestination):
     async def _upsert_points_with_fallback(
         self, points: list[rest.PointStruct], *, min_batch: int = 50
     ) -> None:
-        """Try full batch; on write-timeout/transport error, split in half and retry."""
+        """Upsert points in batches to prevent timeouts and allow heartbeats.
+
+        Proactively splits large batches to avoid blocking and timeouts.
+        Falls back to smaller batches on errors.
+        """
         # Build exception tuples safely without C408 (use literals)
         rhex: tuple[type[BaseException], ...] = ()
         try:
@@ -440,6 +476,21 @@ class QdrantDestination(VectorDBDestination):
             )
         except Exception:  # pragma: no cover
             timeout_errors = ()
+
+        # Proactively batch large upserts to prevent timeouts and allow heartbeats
+        MAX_BATCH_SIZE = 500
+
+        if len(points) > MAX_BATCH_SIZE:
+            self.logger.debug(
+                f"[Qdrant] Batching {len(points)} points into chunks of {MAX_BATCH_SIZE} "
+                f"to prevent timeout and allow heartbeats"
+            )
+            for i in range(0, len(points), MAX_BATCH_SIZE):
+                batch = points[i : i + MAX_BATCH_SIZE]
+                await self._upsert_points_with_fallback(batch, min_batch=min_batch)
+                # Yield control to event loop between batches (for heartbeats)
+                await asyncio.sleep(0)
+            return
 
         try:
             self.logger.debug(
@@ -485,7 +536,7 @@ class QdrantDestination(VectorDBDestination):
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
 
     # ----------------------------------------------------------------------------------
-    async def bulk_insert(self, entities: list[ChunkEntity]) -> None:
+    async def bulk_insert(self, entities: list[BaseEntity]) -> None:
         """Upsert multiple chunk entities with fallback halving on write timeouts."""
         if not entities:
             return
@@ -606,7 +657,8 @@ class QdrantDestination(VectorDBDestination):
                             match=rest.MatchValue(value=str(self.collection_id)),
                         ),
                         rest.FieldCondition(
-                            key="parent_entity_id", match=rest.MatchValue(value=str(parent_id))
+                            key="airweave_system_metadata.original_entity_id",
+                            match=rest.MatchValue(value=str(parent_id)),
                         ),
                         rest.FieldCondition(
                             key="airweave_system_metadata.sync_id",
@@ -638,7 +690,7 @@ class QdrantDestination(VectorDBDestination):
                             match=rest.MatchValue(value=str(sync_id)),
                         ),
                         rest.FieldCondition(
-                            key="parent_entity_id",
+                            key="airweave_system_metadata.original_entity_id",
                             match=rest.MatchAny(any=[str(pid) for pid in parent_ids]),
                         ),
                     ]
@@ -954,7 +1006,7 @@ class QdrantDestination(VectorDBDestination):
         if decay_config:
             decay_weight = getattr(decay_config, "weight", 0)
             decay_field = decay_config.datetime_field
-            decay_scale = getattr(decay_config, "scale_value", None)
+            decay_scale = getattr(decay_config, "scale_seconds", None)
             self.logger.debug(
                 "[Qdrant] Decay strategy: weight=%.1f, field=%s, scale=%ss",
                 decay_weight,

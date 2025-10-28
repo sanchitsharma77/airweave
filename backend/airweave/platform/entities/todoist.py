@@ -4,111 +4,176 @@ Based on the Todoist REST API reference, we define entity schemas for
 Todoist objects, Projects, Sections, Tasks, and Comments.
 """
 
-from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 
 
-class TodoistProjectEntity(ChunkEntity):
-    """Schema for Todoist project entities."""
+class TodoistProjectEntity(BaseEntity):
+    """Schema for Todoist project entities.
 
-    name: str = AirweaveField(..., description="The name of the project", embeddable=True)
+    Reference:
+        https://developer.todoist.com/rest/v2/#projects
+    """
+
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the project ID)
+    # - breadcrumbs (empty - projects are top-level)
+    # - name (from project name)
+    # - created_at (None - projects don't have creation timestamp)
+    # - updated_at (None - projects don't have update timestamp)
+
+    # API fields
     color: Optional[str] = AirweaveField(
-        None, description="Color of the project (e.g., 'grey', 'blue')"
+        None, description="Color of the project (e.g., 'grey', 'blue')", embeddable=False
     )
-    comment_count: int = AirweaveField(0, description="Number of comments in the project")
-    order: int = AirweaveField(0, description="Project order in the project list")
-    is_shared: bool = AirweaveField(False, description="Whether the project is shared with others")
+    comment_count: int = AirweaveField(
+        0, description="Number of comments in the project", embeddable=False
+    )
+    order: int = AirweaveField(0, description="Project order in the project list", embeddable=False)
+    is_shared: bool = AirweaveField(
+        False, description="Whether the project is shared with others", embeddable=False
+    )
     is_favorite: bool = AirweaveField(
-        False, description="Whether the project is marked as a favorite"
+        False, description="Whether the project is marked as a favorite", embeddable=False
     )
-    is_inbox_project: bool = AirweaveField(False, description="Whether this is the Inbox project")
-    is_team_inbox: bool = AirweaveField(False, description="Whether this is the team Inbox project")
+    is_inbox_project: bool = AirweaveField(
+        False, description="Whether this is the Inbox project", embeddable=False
+    )
+    is_team_inbox: bool = AirweaveField(
+        False, description="Whether this is the team Inbox project", embeddable=False
+    )
     view_style: Optional[str] = AirweaveField(
-        None, description="Project view style ('list' or 'board')"
+        None, description="Project view style ('list' or 'board')", embeddable=False
     )
-    url: Optional[str] = AirweaveField(None, description="URL to access the project")
-    parent_id: Optional[str] = AirweaveField(None, description="ID of the parent project if nested")
+    url: Optional[str] = AirweaveField(
+        None, description="URL to access the project", embeddable=False
+    )
+    parent_id: Optional[str] = AirweaveField(
+        None, description="ID of the parent project if nested", embeddable=False
+    )
 
 
-class TodoistSectionEntity(ChunkEntity):
-    """Schema for Todoist section entities."""
+class TodoistSectionEntity(BaseEntity):
+    """Schema for Todoist section entities.
 
-    name: str = AirweaveField(..., description="The name of the section", embeddable=True)
-    project_id: str = AirweaveField(..., description="ID of the project this section belongs to")
-    order: int = AirweaveField(0, description="Section order in the project")
+    Reference:
+        https://developer.todoist.com/rest/v2/#sections
+    """
+
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the section ID)
+    # - breadcrumbs (project breadcrumb)
+    # - name (from section name)
+    # - created_at (None - sections don't have creation timestamp)
+    # - updated_at (None - sections don't have update timestamp)
+
+    # API fields
+    project_id: str = AirweaveField(
+        ..., description="ID of the project this section belongs to", embeddable=False
+    )
+    order: int = AirweaveField(0, description="Section order in the project", embeddable=False)
 
 
-class TodoistTaskEntity(ChunkEntity):
-    """Schema for Todoist task entities."""
+class TodoistTaskEntity(BaseEntity):
+    """Schema for Todoist task entities.
 
+    Reference:
+        https://developer.todoist.com/rest/v2/#tasks
+    """
+
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the task ID)
+    # - breadcrumbs (project and optionally section breadcrumbs)
+    # - name (from task content)
+    # - created_at (from created_at timestamp)
+    # - updated_at (None - tasks don't have update timestamp)
+
+    # API fields
     content: str = AirweaveField(..., description="The task content/title", embeddable=True)
     description: Optional[str] = AirweaveField(
         None, description="Optional detailed description of the task", embeddable=True
     )
-    comment_count: int = AirweaveField(0, description="Number of comments on the task")
-    is_completed: bool = AirweaveField(False, description="Whether the task is completed")
+    comment_count: int = AirweaveField(
+        0, description="Number of comments on the task", embeddable=False
+    )
+    is_completed: bool = AirweaveField(
+        False, description="Whether the task is completed", embeddable=True
+    )
     labels: List[str] = AirweaveField(
         default_factory=list,
         description="List of label names attached to the task",
         embeddable=True,
     )
-    order: int = AirweaveField(0, description="Task order in the project or section")
-    priority: int = AirweaveField(1, description="Task priority (1-4, 4 is highest)", ge=1, le=4)
+    order: int = AirweaveField(
+        0, description="Task order in the project or section", embeddable=False
+    )
+    priority: int = AirweaveField(
+        1, description="Task priority (1-4, 4 is highest)", ge=1, le=4, embeddable=True
+    )
     project_id: Optional[str] = AirweaveField(
-        None, description="ID of the project this task belongs to"
+        None, description="ID of the project this task belongs to", embeddable=False
     )
     section_id: Optional[str] = AirweaveField(
-        None, description="ID of the section this task belongs to"
+        None, description="ID of the section this task belongs to", embeddable=False
     )
-    parent_id: Optional[str] = AirweaveField(None, description="ID of the parent task if subtask")
+    parent_id: Optional[str] = AirweaveField(
+        None, description="ID of the parent task if subtask", embeddable=False
+    )
     creator_id: Optional[str] = AirweaveField(
-        None, description="ID of the user who created the task"
-    )
-    created_at: Optional[datetime] = AirweaveField(
-        None, description="When the task was created", is_created_at=True
+        None, description="ID of the user who created the task", embeddable=False
     )
     assignee_id: Optional[str] = AirweaveField(
-        None, description="ID of the user assigned to the task"
+        None, description="ID of the user assigned to the task", embeddable=False
     )
     assigner_id: Optional[str] = AirweaveField(
-        None, description="ID of the user who assigned the task"
+        None, description="ID of the user who assigned the task", embeddable=False
     )
-
-    # Flatten out the 'due' object from the Todoist API
     due_date: Optional[str] = AirweaveField(
         None, description="Due date in YYYY-MM-DD format", embeddable=True
     )
-    due_datetime: Optional[datetime] = AirweaveField(
+    due_datetime: Optional[Any] = AirweaveField(
         None, description="Due date and time", embeddable=True
     )
     due_string: Optional[str] = AirweaveField(
         None, description="Original due date string (e.g., 'tomorrow')", embeddable=True
     )
-    due_is_recurring: bool = AirweaveField(False, description="Whether the task is recurring")
-    due_timezone: Optional[str] = AirweaveField(None, description="Timezone for the due date")
-
-    # Deadline information
+    due_is_recurring: bool = AirweaveField(
+        False, description="Whether the task is recurring", embeddable=False
+    )
+    due_timezone: Optional[str] = AirweaveField(
+        None, description="Timezone for the due date", embeddable=False
+    )
     deadline_date: Optional[str] = AirweaveField(
-        None, description="Deadline date in YYYY-MM-DD format"
+        None, description="Deadline date in YYYY-MM-DD format", embeddable=False
     )
-
-    # Duration information
-    duration_amount: Optional[int] = AirweaveField(None, description="Duration amount")
+    duration_amount: Optional[int] = AirweaveField(
+        None, description="Duration amount", embeddable=False
+    )
     duration_unit: Optional[str] = AirweaveField(
-        None, description="Duration unit ('minute' or 'day')"
+        None, description="Duration unit ('minute' or 'day')", embeddable=False
     )
+    url: Optional[str] = AirweaveField(None, description="URL to access the task", embeddable=False)
 
-    url: Optional[str] = AirweaveField(None, description="URL to access the task")
 
+class TodoistCommentEntity(BaseEntity):
+    """Schema for Todoist comment entities.
 
-class TodoistCommentEntity(ChunkEntity):
-    """Schema for Todoist comment entities."""
+    Reference:
+        https://developer.todoist.com/rest/v2/#comments
+    """
 
-    task_id: str = AirweaveField(..., description="ID of the task this comment belongs to")
+    # Base fields are inherited and set during entity creation:
+    # - entity_id (the comment ID)
+    # - breadcrumbs (project, section, and task breadcrumbs)
+    # - name (from content preview)
+    # - created_at (from posted_at timestamp)
+    # - updated_at (None - comments don't have update timestamp)
+
+    # API fields
+    task_id: str = AirweaveField(
+        ..., description="ID of the task this comment belongs to", embeddable=False
+    )
     content: Optional[str] = AirweaveField(None, description="The comment content", embeddable=True)
-    posted_at: datetime = AirweaveField(
-        ..., description="When the comment was posted", is_created_at=True
-    )
+    posted_at: Any = AirweaveField(..., description="When the comment was posted", embeddable=False)

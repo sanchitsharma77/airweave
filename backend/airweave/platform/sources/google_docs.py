@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
 
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import ChunkEntity
+from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_docs import GoogleDocsDocumentEntity
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
@@ -159,7 +159,7 @@ class GoogleDocsSource(BaseSource):
     # --- Main sync method ---
     async def generate_entities(
         self, existing_cursor_value: Optional[Dict[str, Any]] = None
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate entities from Google Docs documents.
 
         Args:
@@ -184,7 +184,7 @@ class GoogleDocsSource(BaseSource):
                     yield entity
 
     # --- Incremental sync via Changes API ---
-    async def _process_changes(
+    async def _process_changes(  # noqa: C901
         self, client: httpx.AsyncClient, start_token: str
     ) -> AsyncGenerator[GoogleDocsDocumentEntity, None]:
         """Process changes from the Drive Changes API.
@@ -237,13 +237,33 @@ class GoogleDocsSource(BaseSource):
                     if not removed and not self._should_filter_document(file_data):
                         entity = await self._create_document_entity(client, file_data)
                         if entity:
-                            # Download and process the file content
-                            processed_entity = await self.process_file_entity(
-                                file_entity=entity,
-                                access_token=await self.get_access_token(),
-                            )
-                            if processed_entity:
-                                yield processed_entity
+                            # Download the file using file downloader
+                            try:
+                                await self.file_downloader.download_from_url(
+                                    entity=entity,
+                                    http_client_factory=self.http_client,
+                                    access_token_provider=self.get_access_token,
+                                    logger=self.logger,
+                                )
+
+                                # Verify download succeeded
+                                if not entity.local_path:
+                                    self.logger.error(
+                                        f"Download failed - no local path set for {entity.name}"
+                                    )
+                                    continue
+
+                                self.logger.debug(
+                                    f"Successfully downloaded document: {entity.name}"
+                                )
+                                yield entity
+
+                            except Exception as e:
+                                self.logger.error(
+                                    f"Failed to download document {entity.title}: {e}"
+                                )
+                                # Continue with other documents
+                                continue
 
             # Update pagination
             page_token = data.get("nextPageToken")
@@ -325,13 +345,29 @@ class GoogleDocsSource(BaseSource):
                 if not self._should_filter_document(file_data):
                     entity = await self._create_document_entity(client, file_data)
                     if entity:
-                        # Download and process the file content
-                        processed_entity = await self.process_file_entity(
-                            file_entity=entity,
-                            access_token=await self.get_access_token(),
-                        )
-                        if processed_entity:
-                            yield processed_entity
+                        # Download the file using file downloader
+                        try:
+                            await self.file_downloader.download_from_url(
+                                entity=entity,
+                                http_client_factory=self.http_client,
+                                access_token_provider=self.get_access_token,
+                                logger=self.logger,
+                            )
+
+                            # Verify download succeeded
+                            if not entity.local_path:
+                                self.logger.error(
+                                    f"Download failed - no local path set for {entity.name}"
+                                )
+                                continue
+
+                            self.logger.debug(f"Successfully downloaded document: {entity.name}")
+                            yield entity
+
+                        except Exception as e:
+                            self.logger.error(f"Failed to download document {entity.title}: {e}")
+                            # Continue with other documents
+                            continue
 
             # Check for next page
             next_page_token = data.get("nextPageToken")
@@ -405,16 +441,30 @@ class GoogleDocsSource(BaseSource):
             if file_data.get("sharedWithMeTime"):
                 shared_with_me_time = file_data["sharedWithMeTime"]
 
+            # Prepare name with .docx extension for file processing
+            doc_name = file_data.get("name", "Untitled Document")
+            if not doc_name.endswith(".docx"):
+                doc_name_with_ext = f"{doc_name}.docx"
+            else:
+                doc_name_with_ext = doc_name
+
             # Create entity
             entity = GoogleDocsDocumentEntity(
+                # Base fields
                 entity_id=file_id,
-                file_id=file_id,
-                name=file_data.get("name", "Untitled Document"),
-                description=file_data.get("description"),
+                breadcrumbs=[],
+                name=doc_name_with_ext,
+                created_at=created_time,
+                updated_at=modified_time,
+                # File fields
+                url=export_url,  # Use export URL for downloading (file downloader uses entity.url)
+                size=file_data.get("size", 0),
+                file_type="google_doc",
                 mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                size=file_data.get("size"),
-                download_url=export_url,
-                url=file_data.get("webViewLink"),
+                local_path=None,  # Will be set after download
+                # API fields
+                title=file_data.get("name", "Untitled Document"),
+                description=file_data.get("description"),
                 starred=file_data.get("starred", False),
                 trashed=file_data.get("trashed", False),
                 explicitly_trashed=file_data.get("explicitlyTrashed", False),
@@ -431,8 +481,9 @@ class GoogleDocsSource(BaseSource):
                 modified_by_me_time=modified_by_me_time,
                 viewed_by_me_time=viewed_by_me_time,
                 version=file_data.get("version"),
-                file_type="google_doc",
                 export_mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                # Set download_url for the export URL
+                download_url=export_url,
             )
 
             return entity

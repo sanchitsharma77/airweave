@@ -17,7 +17,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from airweave.core.logging import logger
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import Breadcrumb, ChunkEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_mail import (
     OutlookAttachmentEntity,
     OutlookMailFolderDeletionEntity,
@@ -323,7 +323,7 @@ class OutlookMailSource(BaseSource):
         client: httpx.AsyncClient,
         folder_entity: OutlookMailFolderEntity,
         folder_breadcrumb: Breadcrumb,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process messages in a folder and handle errors gracefully."""
         self.logger.info(f"Processing messages in folder: {folder_entity.display_name}")
         try:
@@ -411,7 +411,7 @@ class OutlookMailSource(BaseSource):
         client: httpx.AsyncClient,
         folder: Dict[str, Any],
         parent_breadcrumbs: List[Breadcrumb],
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Yield the folder entity, its messages, initialize delta, then recurse children."""
         # Check if folder should be processed based on filters
         if not self._should_process_folder(folder):
@@ -504,7 +504,7 @@ class OutlookMailSource(BaseSource):
         client: httpx.AsyncClient,
         folder_entity: OutlookMailFolderEntity,
         folder_breadcrumb: Breadcrumb,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate OutlookMessageEntity objects and their attachments for a given folder."""
         # Skip folders with no messages
         if folder_entity.total_item_count == 0:
@@ -599,7 +599,7 @@ class OutlookMailSource(BaseSource):
         message_data: Dict,
         folder_name: str,
         folder_breadcrumb: Breadcrumb,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process a message and its attachments."""
         message_id = message_data["id"]
         self.logger.debug(f"Processing message ID: {message_id} in folder: {folder_name}")
@@ -637,18 +637,36 @@ class OutlookMailSource(BaseSource):
         except (ValueError, TypeError) as e:
             self.logger.warning(f"Error parsing dates for message {message_id}: {str(e)}")
 
-        # Extract body content
+        # Extract body content and determine format
         body_content = ""
+        body_content_type = "html"  # Default to HTML
         body_preview = message_data.get("bodyPreview", "")
         if message_data.get("body"):
-            body_content = message_data["body"].get("content", "")
+            body_obj = message_data["body"]
+            body_content = body_obj.get("content", "")
+            body_content_type = body_obj.get("contentType", "html").lower()
 
         self.logger.debug(f"Creating message entity for message {message_id}")
+
+        # Determine file metadata based on body type
+        is_plain_text = body_content_type == "text"
+        file_type = "text" if is_plain_text else "html"
+        mime_type = "text/plain" if is_plain_text else "text/html"
 
         # Create message entity
         message_entity = OutlookMessageEntity(
             entity_id=message_id,
             breadcrumbs=[folder_breadcrumb],
+            name=(subject or f"Message {message_id}"),
+            created_at=sent_date,
+            updated_at=received_date,
+            # File fields (required for FileEntity)
+            url=f"https://outlook.office.com/mail/inbox/id/{message_id}",
+            size=len(body_content.encode("utf-8")) if body_content else 0,
+            file_type=file_type,
+            mime_type=mime_type,
+            local_path=None,  # Will be set after downloading body
+            # Outlook API fields
             folder_name=folder_name,
             subject=subject,
             sender=sender,
@@ -657,13 +675,23 @@ class OutlookMailSource(BaseSource):
             sent_date=sent_date,
             received_date=received_date,
             body_preview=body_preview,
-            body_content=body_content,
             is_read=message_data.get("isRead", False),
             is_draft=message_data.get("isDraft", False),
             importance=message_data.get("importance"),
             has_attachments=message_data.get("hasAttachments", False),
             internet_message_id=message_data.get("internetMessageId"),
         )
+
+        # Download email body to file (NOT stored in entity fields)
+        # Email content is only in the local file for conversion
+        if body_content:
+            file_extension = ".txt" if is_plain_text else ".html"
+            await self.file_downloader.save_bytes(
+                entity=message_entity,
+                content=body_content.encode("utf-8"),
+                filename_with_extension=message_entity.name + file_extension,
+                logger=self.logger,
+            )
 
         yield message_entity
         self.logger.debug(f"Message entity yielded for {message_id}")
@@ -696,10 +724,6 @@ class OutlookMailSource(BaseSource):
                     f"Error processing attachments for message {message_id}: {str(e)}"
                 )
                 # Continue with message processing even if attachments fail
-
-    async def _create_content_stream(self, binary_data: bytes):
-        """Create an async generator for binary content."""
-        yield binary_data
 
     async def _fetch_attachment_content(
         self, client: httpx.AsyncClient, message_id: str, attachment_id: str
@@ -786,22 +810,21 @@ class OutlookMailSource(BaseSource):
                 self.logger.error(f"Error decoding attachment content: {str(e)}")
                 return None
 
-            # Process using the BaseSource method
-            self.logger.debug(
-                f"Processing file entity for {attachment_name} with direct content stream"
-            )
-            processed_entity = await self.process_file_entity_with_content(
-                file_entity=file_entity,
-                content_stream=self._create_content_stream(binary_data),
-                metadata={"source": "outlook_mail", "message_id": message_id},
+            # Save bytes using file downloader
+            self.logger.debug(f"Saving attachment {attachment_name} to disk")
+            await self.file_downloader.save_bytes(
+                entity=file_entity,
+                content=binary_data,
+                filename_with_extension=attachment_name,  # Attachment name from API
+                logger=self.logger,
             )
 
-            if processed_entity:
-                self.logger.debug(f"Successfully processed attachment: {attachment_name}")
-                return processed_entity
-            else:
-                self.logger.warning(f"Processing failed for attachment: {attachment_name}")
-                return None
+            # Verify save succeeded
+            if not file_entity.local_path:
+                raise ValueError(f"Save failed - no local path set for {attachment_name}")
+
+            self.logger.debug(f"Successfully processed attachment: {attachment_name}")
+            return file_entity
 
         except Exception as e:
             self.logger.error(f"Error processing attachment {attachment_id}: {str(e)}")
@@ -849,7 +872,7 @@ class OutlookMailSource(BaseSource):
         delta_token: str,
         folder_id: str,
         folder_name: str,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process delta changes for a specific folder using Microsoft Graph delta API.
 
         Args:
@@ -859,7 +882,7 @@ class OutlookMailSource(BaseSource):
             folder_name: Name of the folder being synced
 
         Yields:
-            ChunkEntity objects for changed messages and attachments
+            BaseEntity objects for changed messages and attachments
         """
         self.logger.info(f"Processing delta changes for folder: {folder_name}")
 
@@ -916,7 +939,7 @@ class OutlookMailSource(BaseSource):
         change: Dict[str, Any],
         folder_id: str,
         folder_name: str,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Yield entities for a single message change item from Graph delta."""
         change_type = change.get("@odata.type", "")
 
@@ -972,7 +995,7 @@ class OutlookMailSource(BaseSource):
 
     async def _process_folders_delta_changes(
         self, client: httpx.AsyncClient
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process changes in mail folders using the stored folders_delta_link.
 
         Yields folder entities for additions/updates and deletion entities for removals.
@@ -1014,7 +1037,7 @@ class OutlookMailSource(BaseSource):
 
     async def _yield_folder_changes(
         self, client: httpx.AsyncClient, changes: List[Dict[str, Any]]
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Yield entities for a batch of folder changes from Graph delta."""
         for folder in changes:
             folder_id = folder.get("id")
@@ -1029,7 +1052,7 @@ class OutlookMailSource(BaseSource):
             async for e in self._emit_folder_add_or_update(client, folder):
                 yield e
 
-    async def _emit_folder_removal(self, folder_id: str) -> AsyncGenerator[ChunkEntity, None]:
+    async def _emit_folder_removal(self, folder_id: str) -> AsyncGenerator[BaseEntity, None]:
         """Emit a folder deletion entity and clean up stored links/names."""
         self.logger.info(f"Folder removed: {folder_id}")
         deletion_entity = OutlookMailFolderDeletionEntity(
@@ -1046,7 +1069,7 @@ class OutlookMailSource(BaseSource):
 
     async def _emit_folder_add_or_update(  # noqa: C901
         self, client: httpx.AsyncClient, folder: Dict[str, Any]
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Emit folder entity and ensure per-folder message delta is initialized."""
         # Check if folder should be processed
         if not self._should_process_folder(folder):
@@ -1139,7 +1162,7 @@ class OutlookMailSource(BaseSource):
         delta_url: str,
         folder_id: str,
         folder_name: str,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Process delta changes starting from a delta or nextLink URL (opaque state).
 
         Reuses the URL returned by Microsoft Graph and follows @odata.nextLink until
@@ -1215,7 +1238,7 @@ class OutlookMailSource(BaseSource):
         self,
         client: httpx.AsyncClient,
         delta_token: str,
-    ) -> AsyncGenerator[ChunkEntity, None]:
+    ) -> AsyncGenerator[BaseEntity, None]:
         """Generate entities for incremental sync using delta token.
 
         Args:
@@ -1223,7 +1246,7 @@ class OutlookMailSource(BaseSource):
             delta_token: Delta token for fetching changes
 
         Yields:
-            ChunkEntity objects for changed messages and attachments
+            BaseEntity objects for changed messages and attachments
         """
         self.logger.info("Starting incremental sync")
 
@@ -1252,7 +1275,7 @@ class OutlookMailSource(BaseSource):
         ):
             yield entity
 
-    async def generate_entities(self) -> AsyncGenerator[ChunkEntity, None]:
+    async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all Outlook mail entities: Folders, Messages and Attachments.
 
         Supports both full sync (first run) and incremental sync (subsequent runs)
