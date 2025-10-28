@@ -245,6 +245,11 @@ class WordSource(BaseSource):
                 for item in items:
                     file_name = item.get("name", "")
 
+                    # Skip deleted items (trashed but still returned by API)
+                    if item.get("deleted"):
+                        self.logger.info(f"Skipping deleted item: {file_name}")
+                        continue
+
                     # Check if it's a Word document
                     if file_name.lower().endswith(self.WORD_EXTENSIONS):
                         yield item

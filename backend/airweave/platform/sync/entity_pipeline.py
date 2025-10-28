@@ -65,8 +65,9 @@ class EntityPipeline:
         entity_ids = [e.entity_id for e in orphaned_entities]
         db_ids = [e.id for e in orphaned_entities]
 
+        # Delete all chunks for these parent entities (using bulk_delete_by_parent_ids)
         for destination in sync_context.destinations:
-            await destination.bulk_delete(entity_ids, sync_context.sync.id)
+            await destination.bulk_delete_by_parent_ids(entity_ids, sync_context.sync.id)
 
         async with get_db_context() as db:
             await crud.entity.bulk_remove(db=db, ids=db_ids, ctx=sync_context.ctx)

@@ -417,6 +417,11 @@ class OneNoteSource(BaseSource):
                     title = page_data.get("title", "Untitled Page")
                     content_url = page_data.get("contentUrl")
 
+                    # Skip deleted pages (OneNote API may return deleted items in some cases)
+                    if page_data.get("isDeleted") or page_data.get("deleted"):
+                        self.logger.info(f"Skipping deleted page: {title}")
+                        continue
+
                     self.logger.debug(f"Processing page #{page_count}: {title}")
 
                     # Skip pages without content URL (can't be processed as files)

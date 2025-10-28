@@ -336,7 +336,7 @@ class LinearSource(BaseSource):
 
             yield comment_entity
 
-    async def _generate_issue_entities(
+    async def _generate_issue_entities(  # noqa: C901
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[
         Union[LinearIssueEntity, LinearCommentEntity, LinearAttachmentEntity], None
@@ -350,9 +350,10 @@ class LinearSource(BaseSource):
             Issue entities, comment entities, and attachment entities
         """
         # Define query template with pagination placeholder
+        # Filter to exclude archived issues using GraphQL filter
         query_template = """
         {{
-          issues({pagination}) {{
+          issues(filter: {{ archivedAt: {{ null: true }} }}, {pagination}) {{
             nodes {{
               id
               identifier
@@ -363,6 +364,7 @@ class LinearSource(BaseSource):
               createdAt
               updatedAt
               dueDate
+              archivedAt
               state {{
                 name
               }}
@@ -405,6 +407,13 @@ class LinearSource(BaseSource):
             # Skip issues matching exclude_path
             if self.exclude_path and issue_identifier and self.exclude_path in issue_identifier:
                 self.logger.info(f"Skipping excluded issue: {issue_identifier}")
+                return
+
+            # Defensive check: skip archived issues (should already be filtered by GraphQL query)
+            if issue.get("archivedAt"):
+                self.logger.warning(
+                    f"Archived issue {issue_identifier} passed GraphQL filter - skipping"
+                )
                 return
 
             issue_title = issue.get("title")

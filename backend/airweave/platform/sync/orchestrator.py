@@ -359,7 +359,21 @@ class SyncOrchestrator:
             and self.sync_context.cursor
             and self.sync_context.cursor.cursor_data
         )
-        should_cleanup = self.sync_context.force_full_sync or not has_cursor_data
+
+        # Check if source supports continuous/incremental sync
+        source_supports_continuous = getattr(
+            self.sync_context.source, "_supports_continuous", False
+        )
+
+        # Cleanup should run if:
+        # 1. Forced full sync (daily cleanup schedule), OR
+        # 2. First sync (no cursor data), OR
+        # 3. Source doesn't support incremental sync (every sync is a full sync)
+        should_cleanup = (
+            self.sync_context.force_full_sync
+            or not has_cursor_data
+            or not source_supports_continuous
+        )
 
         if should_cleanup:
             if self.sync_context.force_full_sync:
@@ -367,12 +381,19 @@ class SyncOrchestrator:
                     "🧹 Starting orphaned entity cleanup phase (FORCED FULL SYNC - "
                     "daily cleanup schedule)."
                 )
+            elif not source_supports_continuous:
+                self.sync_context.logger.info(
+                    "🧹 Starting orphaned entity cleanup phase (full sync - "
+                    "source doesn't support incremental sync)"
+                )
             else:
                 self.sync_context.logger.info(
                     "🧹 Starting orphaned entity cleanup phase (first sync - no cursor data)"
                 )
             await self.entity_pipeline.cleanup_orphaned_entities(self.sync_context)
-        elif has_cursor_data and not self.sync_context.force_full_sync:
+        elif (
+            has_cursor_data and not self.sync_context.force_full_sync and source_supports_continuous
+        ):
             self.sync_context.logger.info(
                 "⏩ Skipping orphaned entity cleanup for INCREMENTAL sync "
                 "(cursor data exists, only changed entities are processed)"

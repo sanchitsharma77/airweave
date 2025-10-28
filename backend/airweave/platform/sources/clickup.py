@@ -36,6 +36,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="ClickUpConfig",
     labels=["Project Management"],
     supports_continuous=False,
+    supports_temporal_relevance=False,
 )
 class ClickUpSource(BaseSource):
     """ClickUp source connector integrates with the ClickUp API to extract and synchronize data.

@@ -199,6 +199,11 @@ class OutlookCalendarSource(BaseSource):
                     event_id = event_data.get("id", "unknown")
                     event_subject = event_data.get("subject", f"Event {event_count}")
 
+                    # Skip cancelled events (deleted but still returned by API)
+                    if event_data.get("isCancelled"):
+                        self.logger.info(f"Skipping cancelled event: {event_subject}")
+                        continue
+
                     self.logger.debug(f"Processing event #{event_count}: {event_subject}")
 
                     try:

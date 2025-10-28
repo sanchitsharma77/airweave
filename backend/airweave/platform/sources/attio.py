@@ -402,6 +402,11 @@ class AttioSource(BaseSource):
             if not record_id:
                 continue
 
+            # Skip deleted records (deleted but still returned by API in some cases)
+            if record.get("deleted_at"):
+                self.logger.info(f"Skipping deleted record: {record_id}")
+                continue
+
             # Extract attributes from the values field
             values = record.get("values", {})
 
@@ -522,6 +527,11 @@ class AttioSource(BaseSource):
         for record in records:
             record_id = record.get("id", {}).get("record_id")
             if not record_id:
+                continue
+
+            # Skip deleted records (deleted but still returned by API in some cases)
+            if record.get("deleted_at"):
+                self.logger.info(f"Skipping deleted list record: {record_id}")
                 continue
 
             # Extract attributes from the values field

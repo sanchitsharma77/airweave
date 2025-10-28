@@ -322,6 +322,11 @@ class BoxSource(BaseSource):
             for item in items_data.get("entries", []):
                 item_type = item.get("type")
 
+                # Skip trashed items (deleted but still returned by API)
+                if item.get("item_status") == "trashed":
+                    self.logger.info(f"Skipping trashed {item_type}: {item.get('name')}")
+                    continue
+
                 if item_type == "folder":
                     # Recursively process subfolder
                     async for entity in self._generate_folder_entities(
