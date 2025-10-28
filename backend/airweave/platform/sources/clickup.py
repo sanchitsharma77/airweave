@@ -548,16 +548,11 @@ class ClickUpSource(BaseSource):
                 )
 
                 # Download the file using file downloader
-                # ClickUp attachment URLs are pre-signed and don't require OAuth headers
                 try:
-                    # Async lambda for pre-signed URLs (no auth needed)
-                    async def no_auth():
-                        return None
-
                     await self.file_downloader.download_from_url(
                         entity=file_entity,
                         http_client_factory=self.http_client,
-                        access_token_provider=no_auth,
+                        access_token_provider=self.get_access_token,
                         logger=self.logger,
                     )
 
@@ -566,6 +561,17 @@ class ClickUpSource(BaseSource):
                         raise ValueError(
                             f"Download failed - no local path set for {file_entity.name}"
                         )
+
+                    # DEBUG: Log file content preview to verify tokens are preserved
+                    try:
+                        with open(file_entity.local_path, "r", encoding="utf-8") as f:
+                            content_preview = f.read(500)  # First 500 chars
+                            self.logger.debug(
+                                f"Downloaded file {file_entity.name} - "
+                                f"Content preview (first 500 chars): {content_preview}"
+                            )
+                    except Exception as e:
+                        self.logger.warning(f"Could not read file preview: {e}")
 
                     self.logger.debug(f"Successfully downloaded attachment: {file_entity.name}")
                     yield file_entity
