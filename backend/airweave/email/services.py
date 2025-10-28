@@ -1,13 +1,89 @@
-"""Simple email service for sending welcome emails via Resend."""
+"""Email service for sending emails via Resend."""
 
 import asyncio
 import random
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import resend
 
 from airweave.core.config import settings
 from airweave.core.logging import logger
+
+
+def _send_email_via_resend_sync(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    from_email: Optional[str] = None,
+    scheduled_at: Optional[str] = None,
+) -> None:
+    """Synchronous email sending function via Resend to be run in a thread pool.
+
+    Args:
+    ----
+        to_email (str): Recipient email address
+        subject (str): Email subject line
+        html_body (str): HTML email body
+        from_email (Optional[str]): Sender email (defaults to settings.RESEND_FROM_EMAIL)
+        scheduled_at (Optional[str]): ISO 8601 timestamp for scheduled delivery
+
+    """
+    resend.api_key = settings.RESEND_API_KEY
+
+    email_data = {
+        "from": from_email or settings.RESEND_FROM_EMAIL,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+    }
+
+    if scheduled_at:
+        email_data["scheduled_at"] = scheduled_at
+
+    resend.Emails.send(email_data)
+
+
+async def send_email_via_resend(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    from_email: Optional[str] = None,
+    scheduled_at: Optional[str] = None,
+) -> bool:
+    """Send an email via Resend asynchronously.
+
+    Args:
+    ----
+        to_email (str): Recipient email address
+        subject (str): Email subject line
+        html_body (str): HTML email body
+        from_email (Optional[str]): Sender email (defaults to settings.RESEND_FROM_EMAIL)
+        scheduled_at (Optional[str]): ISO 8601 timestamp for scheduled delivery
+
+    Returns:
+    -------
+        bool: True if email was sent successfully, False otherwise
+
+    """
+    if not settings.RESEND_API_KEY or not settings.RESEND_FROM_EMAIL:
+        logger.debug("RESEND_API_KEY or RESEND_FROM_EMAIL not configured - skipping email")
+        return False
+
+    try:
+        await asyncio.to_thread(
+            _send_email_via_resend_sync,
+            to_email,
+            subject,
+            html_body,
+            from_email,
+            scheduled_at,
+        )
+        logger.info(f"Email sent to {to_email}: {subject}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
 
 
 def _send_welcome_email_sync(to_email: str, user_name: str) -> None:
