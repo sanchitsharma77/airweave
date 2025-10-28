@@ -251,6 +251,9 @@ jobs:
           MONKE_BITBUCKET_WORKSPACE: ${{ secrets.MONKE_BITBUCKET_WORKSPACE }}
           MONKE_BITBUCKET_REPO_SLUG: ${{ secrets.MONKE_BITBUCKET_REPO_SLUG }}
 
+          # Stripe direct auth credentials
+          MONKE_STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+
           # All SaaS app credentials (Composio configs, API tokens, etc.)
           # will be fetched from Azure Key Vault at runtime
         run: |
