@@ -31,6 +31,7 @@ class TemporalWorker:
         """Initialize the Temporal worker."""
         self.worker: Worker | None = None
         self.running = False
+        self.draining = False
         self.metrics_server = None
 
     async def start(self) -> None:
@@ -118,6 +119,9 @@ class TemporalWorker:
         3. Worker process exits when all activities are done
         """
         logger.warning("🚨 DRAIN: Initiating graceful worker shutdown")
+
+        # Mark as draining
+        self.draining = True
 
         # Tell Temporal SDK to stop polling for new activities
         if self.worker:
