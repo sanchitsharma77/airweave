@@ -471,10 +471,14 @@ class AirtableSource(BaseSource):
                 try:
                     # Airtable URLs expire after 2 hours, so download immediately
                     # Airtable attachment URLs are pre-signed, no auth token needed
+                    # Async function for pre-signed URLs (no auth needed)
+                    async def no_auth():
+                        return None
+
                     await self.file_downloader.download_from_url(
                         entity=file_entity,
                         http_client_factory=self.http_client,
-                        access_token_provider=lambda: None,  # No auth for pre-signed URLs
+                        access_token_provider=no_auth,
                         logger=self.logger,
                     )
 
