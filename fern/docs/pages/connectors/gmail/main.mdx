@@ -111,7 +111,6 @@ Reference: https://developers.google.com/gmail/api/reference/rest/v1/users.threa
 | history_id | Optional[str] | The thread's history ID |
 | message_count | Optional[int] | Number of messages in the thread |
 | label_ids | List[str] | Labels applied to this thread |
-| last_message_date | Optional[datetime] | Date of the last message |
 
 </Accordion>
 <Accordion title="GmailMessageEntity">
@@ -130,11 +129,8 @@ Reference: https://developers.google.com/gmail/api/reference/rest/v1/users.messa
 | bcc | List[str] | BCC recipients |
 | date | Optional[datetime] | Date the message was sent |
 | snippet | Optional[str] | Brief snippet of the message content |
-| body_plain | Optional[str] | Plain text message body |
-| body_html | Optional[str] | HTML message body |
 | label_ids | List[str] | Labels applied to this message |
 | internal_date | Optional[datetime] | Internal Gmail timestamp |
-| size_estimate | Optional[int] | Estimated size in bytes |
 
 </Accordion>
 <Accordion title="GmailAttachmentEntity">
@@ -148,7 +144,6 @@ Reference: https://developers.google.com/gmail/api/reference/rest/v1/users.messa
 | message_id | str | ID of the message this attachment belongs to |
 | attachment_id | str | Gmail's attachment ID |
 | thread_id | str | ID of the thread containing the message |
-| metadata | Optional[Dict[str, Any]] | Additional metadata about the attachment |
 
 </Accordion>
 <Accordion title="GmailMessageDeletionEntity">
@@ -156,13 +151,13 @@ Reference: https://developers.google.com/gmail/api/reference/rest/v1/users.messa
 Deletion signal for a Gmail message.
 
 Emitted when the Gmail History API reports a messageDeleted. The entity_id matches the
-message entity's ID format so downstream deletion removes the correct parent/children.
+message entity's ID format (msg_{message_id}) so downstream deletion removes the
+correct parent/children.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | message_id | str | The Gmail message ID that was deleted |
-| thread_id | str | None | Thread ID (optional if not provided by change record) |
-| deletion_status | str | Status indicating the message was removed (e.g., 'removed') |
+| thread_id | Optional[str] | Thread ID (optional if not provided by change record) |
 
 </Accordion>
 

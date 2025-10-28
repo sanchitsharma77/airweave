@@ -49,6 +49,9 @@ The following data models are available for this connector:
 
 Schema for Slack message entities from federated search.
 
+Reference:
+    https://api.slack.com/methods/search.messages
+
 | Field | Type | Description |
 |-------|------|-------------|
 | text | str | The text content of the message |
@@ -65,7 +68,7 @@ Schema for Slack message entities from federated search.
 | next_message | Optional[Dict[str, Any]] | Next message for context |
 | score | Optional[float] | Search relevance score from Slack |
 | iid | Optional[str] | Internal search ID |
-| created_at | Optional[datetime] | When the message was created |
+| url | Optional[str] | URL to view the message in Slack |
 
 </Accordion>
 

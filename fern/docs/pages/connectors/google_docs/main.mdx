@@ -97,27 +97,23 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| file_id | str | Unique ID of the Google Doc. |
-| name | str | Filename with extension for file processing (includes .docx). |
 | title | Optional[str] | Display title of the document (without .docx extension). |
-| mime_type | Optional[str] | MIME type for DOCX export format. |
 | description | Optional[str] | Optional description of the document. |
 | starred | bool | Whether the user has starred this document. |
 | trashed | bool | Whether the document is in the trash. |
 | explicitly_trashed | bool | Whether the document was explicitly trashed by the user. |
 | shared | bool | Whether the document is shared with others. |
-| shared_with_me_time | Optional[datetime] | Time when this document was shared with the user. |
+| shared_with_me_time | Optional[Any] | Time when this document was shared with the user. |
 | sharing_user | Optional[Dict[str, Any]] | User who shared this document. |
 | owners | List[Dict[str, Any]] | Owners of the document. |
 | permissions | Optional[List[Dict[str, Any]]] | Permissions for this document. |
 | parents | List[str] | IDs of parent folders containing this document. |
 | web_view_link | Optional[str] | Link to open the document in Google Docs editor. |
 | icon_link | Optional[str] | Link to the document's icon. |
-| created_time | Optional[datetime] | When the document was created. |
-| modified_time | Optional[datetime] | When the document was last modified. |
-| modified_by_me_time | Optional[datetime] | Last time the user modified the document. |
-| viewed_by_me_time | Optional[datetime] | Last time the user viewed the document. |
-| size | Optional[int] | Size of the document in bytes. |
+| created_time | Optional[Any] | When the document was created. |
+| modified_time | Optional[Any] | When the document was last modified. |
+| modified_by_me_time | Optional[Any] | Last time the user modified the document. |
+| viewed_by_me_time | Optional[Any] | Last time the user viewed the document. |
 | version | Optional[int] | Version number of the document. |
 | export_mime_type | Optional[str] | MIME type used for exporting the document content (DOCX). |
 

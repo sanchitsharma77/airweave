@@ -88,12 +88,9 @@ Schema for GitHub repository entity.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | Repository name |
 | full_name | str | Full repository name including owner |
 | description | Optional[str] | Repository description |
 | default_branch | str | Default branch of the repository |
-| created_at | datetime | Creation timestamp |
-| updated_at | datetime | Last update timestamp |
 | language | Optional[str] | Primary language of the repository |
 | fork | bool | Whether the repository is a fork |
 | size | int | Size of the repository in KB |
@@ -121,27 +118,26 @@ Schema for GitHub code file entity.
 | Field | Type | Description |
 |-------|------|-------------|
 | sha | str | SHA hash of the file content |
-| path | str | Path of the file within the repository |
+| line_count | Optional[int] | Number of lines in the file |
 | is_binary | bool | Flag indicating if file is binary |
 
 </Accordion>
 <Accordion title="GithubRepoEntity">
 
-Schema for a GitHub repository.
+Schema for a GitHub repository (alternative schema).
 
 References:
   https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28
 
+Note: This is an alternative repository entity schema. Consider using GitHubRepositoryEntity.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | Name of the repository. |
 | full_name | Optional[str] | Full name (including owner) of the repo. |
 | owner_login | Optional[str] | Login/username of the repository owner. |
 | private | bool | Whether the repository is private. |
 | description | Optional[str] | Short description of the repository. |
 | fork | bool | Whether this repository is a fork. |
-| created_at | Optional[datetime] | When the repository was created. |
-| updated_at | Optional[datetime] | When the repository was last updated. |
 | pushed_at | Optional[datetime] | When the repository was last pushed. |
 | homepage | Optional[str] | Homepage URL for the repository. |
 | size | Optional[int] | Size of the repository (in kilobytes). |
@@ -162,6 +158,9 @@ Schema for a GitHub repository's content (file, directory, submodule, etc.).
 
 References:
   https://docs.github.com/en/rest/repos/contents?apiVersion=2022-11-28
+
+Note: This is a generic content entity. Consider using specific entities like
+GitHubCodeFileEntity or GitHubDirectoryEntity.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -188,7 +187,6 @@ and should be deleted from the destination.
 | file_path | str | Path of the deleted file within the repository |
 | repo_name | str | Name of the repository containing the deleted file |
 | repo_owner | str | Owner of the repository |
-| deletion_status | str | Status indicating the file was removed |
 
 </Accordion>
 

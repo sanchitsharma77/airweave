@@ -61,15 +61,14 @@ Extends FileEntity to leverage Airweave's file processing pipeline which will:
 - Convert it to markdown using document converters
 - Chunk the content for indexing
 
-Based on the Microsoft Graph driveItem resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/driveitem
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/driveitem
 
 | Field | Type | Description |
 |-------|------|-------------|
 | title | str | The title/name of the document. |
 | web_url | Optional[str] | URL to open the document in Word Online. |
-| created_datetime | Optional[datetime] | Timestamp at which the document was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp at which the document was last modified. |
+| content_download_url | Optional[str] | Direct download URL for the document content. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the document. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the document. |
 | parent_reference | Optional[Dict[str, Any]] | Information about the parent folder/drive location. |

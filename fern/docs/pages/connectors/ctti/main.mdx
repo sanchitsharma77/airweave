@@ -86,6 +86,29 @@ CTTI AACT configuration schema.
 </ParamField>
 </Card>
 
+## Data Models
+
+The following data models are available for this connector:
+
+<Accordion title="CTTIWebEntity">
+
+Web entity for CTTI clinical trials.
+
+Represents a clinical trial study from ClinicalTrials.gov with an NCT ID.
+    "WebFileEntity",
+    "WebFileEntity",
+This entity will be processed by the web_fetcher transformer to download
+the actual clinical trial content from ClinicalTrials.gov.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| nct_id | str | The NCT ID of the clinical trial study |
+| study_url | str | The full URL to the clinical trial study on ClinicalTrials.gov |
+| data_source | str | The source of the clinical trial data |
+| metadata | Dict[str, Any] | Additional metadata about the clinical trial |
+| breadcrumbs | List[Breadcrumb] | List of breadcrumbs for this clinical trial entity |
+
+</Accordion>
 
 
 

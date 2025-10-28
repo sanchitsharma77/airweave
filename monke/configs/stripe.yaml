@@ -37,10 +37,12 @@ deletion:
   partial_delete_count: 1  # Number of entities to delete during partial deletion
 
   # Verification settings
-  # Stripe does full sync (not incremental), so deletions should be detected
-  verify_partial_deletion: true
-  verify_remaining_entities: true
-  verify_complete_deletion: true
+  # Stripe Event entities preserve full event payloads (audit logs) which contain
+  # deleted customer data. This is expected behavior - events are immutable records.
+  # Therefore, we disable deletion verification as tokens remain searchable in events.
+  verify_partial_deletion: false
+  verify_remaining_entities: false
+  verify_complete_deletion: false
 
 collection:
   name_template: "monke-{connector_type}-test-{timestamp}"

@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from airweave.core.constants.reserved_ids import (
     NATIVE_NEO4J_UUID,
     NATIVE_QDRANT_UUID,
-    NATIVE_TEXT2VEC_UUID,
     RESERVED_TABLE_ENTITY_ID,
 )
 from airweave.core.shared_models import ConnectionStatus, IntegrationType
@@ -16,10 +15,12 @@ from airweave.models.connection import Connection
 async def init_db_with_native_connections(db: AsyncSession) -> None:
     """Initialize the database with native connections.
 
-    Creates the three built-in connections for:
+    Creates the two built-in connections for:
     - qdrant_native (vector database destination)
     - neo4j_native (graph database destination)
-    - local_text2vec (embedding model)
+
+    Note: Embedding models are no longer managed as connections.
+    They are handled internally by DenseEmbedder and SparseEmbedder.
 
     These connections are system-level and don't belong to any organization.
     """
@@ -39,14 +40,6 @@ async def init_db_with_native_connections(db: AsyncSession) -> None:
             "readable_id": "native-neo4j",
             "integration_type": IntegrationType.DESTINATION,
             "short_name": "neo4j_native",
-            "status": ConnectionStatus.ACTIVE,
-        },
-        "local_text2vec": {
-            "id": NATIVE_TEXT2VEC_UUID,
-            "name": "Local Text2Vec",
-            "readable_id": "local-text2vec",
-            "integration_type": IntegrationType.EMBEDDING_MODEL,
-            "short_name": "local_text2vec",
             "status": ConnectionStatus.ACTIVE,
         },
     }

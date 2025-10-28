@@ -432,7 +432,9 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
             field: null as string | null,
             oldest: null as string | null,
             newest: null as string | null,
-            spanSeconds: null as number | null
+            spanSeconds: null as number | null,
+            supportingSources: null as string[] | null,
+            sourceFilteringEnabled: false
         };
 
         let inReranking = false;
@@ -464,9 +466,18 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
             if (event.type === 'operation_skipped') {
                 const op = (event as any).operation || 'operation';
                 const reason = (event as any).reason || 'skipped';
+
+                // User-friendly messages for skip reasons
+                const skipMessages: Record<string, string> = {
+                    'no_sources_support_temporal_relevance': 'Sources in this collection do not support recency bias',
+                    'All sources in the collection use federated search': 'All sources use federated search',
+                };
+
+                const displayMessage = skipMessages[reason] || `${reason}`;
+
                 rows.push(
                     <div key={`skipped-${i}`} className="py-0.5 px-2 text-[11px] opacity-80">
-                        Skipped {op} ({reason})
+                        • Skipped {op}: {displayMessage}
                     </div>
                 );
                 rows.push(
@@ -945,15 +956,22 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                     field: null,
                     oldest: null,
                     newest: null,
-                    spanSeconds: null
+                    spanSeconds: null,
+                    supportingSources: null,
+                    sourceFilteringEnabled: false
                 };
                 continue;
             }
             if (inRecency) {
                 if (event.type === 'recency_start') {
-                    const weight = (event as any).requested_weight;
+                    const e = event as any;
+                    const weight = e.requested_weight;
                     if (typeof weight === 'number') {
                         recencyData.weight = weight;
+                    }
+                    if (e.source_filtering_enabled) {
+                        recencyData.sourceFilteringEnabled = true;
+                        recencyData.supportingSources = e.supporting_sources || [];
                     }
                     continue;
                 }
@@ -974,6 +992,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                         'weight_zero': 'Recency weight set to zero',
                         'invalid_range': 'Invalid time range detected',
                         'zero_span': 'Time span is zero',
+                        'zero_or_negative_span': 'All documents have the same timestamp',
                     };
                     const displayMessage = reasonMessages[reason] || reason;
                     rows.push(
@@ -981,7 +1000,7 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                             "py-0.5 px-2 text-[11px]",
                             reason === 'no_documents_in_filtered_space' ? "" : ""
                         )}>
-                            • Recency bias skipped
+                            • Recency bias skipped: {displayMessage}
                         </div>
                     );
                     rows.push(
@@ -1035,6 +1054,14 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                             )}
                         </div>
                     );
+                    if (recencyData.sourceFilteringEnabled && recencyData.supportingSources) {
+                        const sources = recencyData.supportingSources as string[];
+                        rows.push(
+                            <div key={`${key}-source-filter`} className="py-0.5 px-2 text-[11px] opacity-80">
+                                Searching only sources with timestamps: {sources.join(', ')}
+                            </div>
+                        );
+                    }
                     if (recencyData.oldest) {
                         rows.push(
                             <div key={`${key}-oldest`} className="py-0.5 px-2 text-[11px] opacity-80">

@@ -51,8 +51,8 @@ The following data models are available for this connector:
 
 Schema for a SharePoint user.
 
-Based on the Microsoft Graph user resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/user
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/user
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -71,8 +71,8 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/user
 
 Schema for a SharePoint group.
 
-Based on the Microsoft Graph group resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/group
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/group
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -83,24 +83,21 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/group
 | security_enabled | Optional[bool] | Whether the group is a security group. |
 | group_types | List[str] | Specifies the group type (e.g., 'Unified' for Microsoft 365 groups). |
 | visibility | Optional[str] | Visibility of the group (Public, Private, HiddenMembership). |
-| created_datetime | Optional[datetime] | Timestamp when the group was created. |
 
 </Accordion>
 <Accordion title="SharePointSiteEntity">
 
 Schema for a SharePoint site.
 
-Based on the Microsoft Graph site resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/site
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/site
 
 | Field | Type | Description |
 |-------|------|-------------|
 | display_name | Optional[str] | The full title for the site. |
-| name | Optional[str] | The name/title of the site. |
+| site_name | Optional[str] | The name/title of the site. |
 | description | Optional[str] | The descriptive text for the site. |
 | web_url | Optional[str] | URL that displays the site in the browser. |
-| created_datetime | Optional[datetime] | Date and time the site was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the site was last modified. |
 | is_personal_site | Optional[bool] | Whether the site is a personal site. |
 | site_collection | Optional[Dict[str, Any]] | Details about the site's site collection. |
 
@@ -109,17 +106,14 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/site
 
 Schema for a SharePoint drive (document library).
 
-Based on the Microsoft Graph drive resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/drive
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/drive
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | The name of the drive. |
 | description | Optional[str] | User-visible description of the drive. |
 | drive_type | Optional[str] | Type of drive (documentLibrary, business, etc.). |
 | web_url | Optional[str] | URL to view the drive in a browser. |
-| created_datetime | Optional[datetime] | Date and time the drive was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the drive was last modified. |
 | owner | Optional[Dict[str, Any]] | Information about the drive's owner. |
 | quota | Optional[Dict[str, Any]] | Information about the drive's storage quota. |
 | site_id | Optional[str] | ID of the site that contains this drive. |
@@ -129,17 +123,13 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/drive
 
 Schema for a SharePoint drive item (file or folder).
 
-Based on the Microsoft Graph driveItem resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/driveitem
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/driveitem
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the item (file or folder). |
 | description | Optional[str] | User-visible description of the item. |
 | web_url | Optional[str] | URL to display the item in a browser. |
-| created_datetime | Optional[datetime] | Date and time the item was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the item was last modified. |
-| size | Optional[int] | Size of the item in bytes. |
 | file | Optional[Dict[str, Any]] | File metadata if the item is a file (e.g., mimeType, hashes). |
 | folder | Optional[Dict[str, Any]] | Folder metadata if the item is a folder (e.g., childCount). |
 | parent_reference | Optional[Dict[str, Any]] | Information about the parent of this item (driveId, path, etc). |
@@ -153,17 +143,15 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/driveitem
 
 Schema for a SharePoint list.
 
-Based on the Microsoft Graph list resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/list
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/list
 
 | Field | Type | Description |
 |-------|------|-------------|
 | display_name | Optional[str] | The displayable title of the list. |
-| name | Optional[str] | The name of the list. |
+| list_name | Optional[str] | The name of the list. |
 | description | Optional[str] | The description of the list. |
 | web_url | Optional[str] | URL to view the list in browser. |
-| created_datetime | Optional[datetime] | Date and time the list was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the list was last modified. |
 | list_info | Optional[Dict[str, Any]] | Additional list metadata (template, hidden, etc). |
 | site_id | Optional[str] | ID of the site that contains this list. |
 
@@ -172,15 +160,13 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/list
 
 Schema for a SharePoint list item.
 
-Based on the Microsoft Graph listItem resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/listitem
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/listitem
 
 | Field | Type | Description |
 |-------|------|-------------|
 | fields | Optional[Dict[str, Any]] | The values of the columns set on this list item (dynamic schema). |
 | content_type | Optional[Dict[str, Any]] | The content type of this list item. |
-| created_datetime | Optional[datetime] | Date and time the item was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the item was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the item. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the item. |
 | web_url | Optional[str] | URL to view the item in browser. |
@@ -192,19 +178,17 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/listitem
 
 Schema for a SharePoint site page.
 
-Based on the Microsoft Graph sitePage resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/sitepage
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/sitepage
 
 | Field | Type | Description |
 |-------|------|-------------|
 | title | Optional[str] | The title of the page. |
-| name | Optional[str] | The name of the page. |
+| page_name | Optional[str] | The name of the page. |
 | content | Optional[str] | The actual page content (extracted from webParts). |
 | description | Optional[str] | Description or summary of the page content. |
 | page_layout | Optional[str] | The layout type of the page (article, home, etc). |
 | web_url | Optional[str] | URL to view the page in browser. |
-| created_datetime | Optional[datetime] | Date and time the page was created. |
-| last_modified_datetime | Optional[datetime] | Date and time the page was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the page. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the page. |
 | publishing_state | Optional[Dict[str, Any]] | Publishing status of the page. |

@@ -2479,277 +2479,6 @@
         "title": "CustomerPortalResponse",
         "description": "Response with customer portal URL."
       },
-      "DagEdge": {
-        "properties": {
-          "from_node_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "From Node Id"
-          },
-          "to_node_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "To Node Id"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "dag_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Dag Id"
-          },
-          "organization_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Organization Id"
-          },
-          "created_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By Email"
-          },
-          "modified_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modified By Email"
-          }
-        },
-        "type": "object",
-        "required": [
-          "from_node_id",
-          "to_node_id",
-          "id",
-          "dag_id",
-          "organization_id"
-        ],
-        "title": "DagEdge",
-        "description": "Schema for a DAG edge."
-      },
-      "DagEdgeCreate": {
-        "properties": {
-          "from_node_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "From Node Id"
-          },
-          "to_node_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "To Node Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "from_node_id",
-          "to_node_id"
-        ],
-        "title": "DagEdgeCreate",
-        "description": "Schema for creating a DAG edge."
-      },
-      "DagNode": {
-        "properties": {
-          "type": {
-            "$ref": "#/components/schemas/NodeType"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "connection_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Connection Id"
-          },
-          "entity_definition_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Entity Definition Id"
-          },
-          "transformer_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Transformer Id"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "dag_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Dag Id"
-          },
-          "organization_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Organization Id"
-          },
-          "created_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By Email"
-          },
-          "modified_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modified By Email"
-          }
-        },
-        "type": "object",
-        "required": [
-          "type",
-          "name",
-          "id",
-          "dag_id",
-          "organization_id"
-        ],
-        "title": "DagNode",
-        "description": "Schema for a DAG node."
-      },
-      "DagNodeCreate": {
-        "properties": {
-          "type": {
-            "$ref": "#/components/schemas/NodeType"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "config": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Config"
-          },
-          "connection_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Connection Id"
-          },
-          "entity_definition_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Entity Definition Id"
-          },
-          "transformer_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Transformer Id"
-          },
-          "id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Id",
-            "description": "Optional pre-set ID for the node"
-          }
-        },
-        "type": "object",
-        "required": [
-          "type",
-          "name"
-        ],
-        "title": "DagNodeCreate",
-        "description": "Schema for creating a DAG node."
-      },
       "DatetimeRange": {
         "properties": {
           "lt": {
@@ -4189,7 +3918,6 @@
         "enum": [
           "source",
           "destination",
-          "embedding_model",
           "auth_provider"
         ],
         "title": "IntegrationType",
@@ -4742,17 +4470,6 @@
           "nested"
         ],
         "title": "NestedCondition"
-      },
-      "NodeType": {
-        "type": "string",
-        "enum": [
-          "source",
-          "destination",
-          "transformer",
-          "entity"
-        ],
-        "title": "NodeType",
-        "description": "Type of node."
       },
       "OAuthBrowserAuthentication": {
         "properties": {
@@ -6188,6 +5905,12 @@
             "description": "Whether this source uses federated search instead of traditional syncing. Federated search sources query data in real-time during searches rather than syncing and indexing all data beforehand.",
             "default": false
           },
+          "supports_temporal_relevance": {
+            "type": "boolean",
+            "title": "Supports Temporal Relevance",
+            "description": "Whether this source's entities have timestamps that enable recency-based ranking. Sources without file-level timestamps (e.g., code repositories) cannot use temporal relevance for search result weighting.",
+            "default": true
+          },
           "id": {
             "type": "string",
             "format": "uuid",
@@ -7067,12 +6790,6 @@
             "format": "uuid",
             "title": "Source Connection Id"
           },
-          "embedding_model_connection_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Embedding Model Connection Id",
-            "default": "33333333-3333-3333-3333-333333333333"
-          },
           "destination_connection_ids": {
             "items": {
               "type": "string",
@@ -7216,12 +6933,6 @@
             "format": "uuid",
             "title": "Source Connection Id"
           },
-          "embedding_model_connection_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Embedding Model Connection Id",
-            "default": "33333333-3333-3333-3333-333333333333"
-          },
           "destination_connection_ids": {
             "items": {
               "type": "string",
@@ -7317,242 +7028,6 @@
         ],
         "title": "SyncCreate",
         "description": "Schema for creating a Sync object."
-      },
-      "SyncDag": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "sync_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Sync Id"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "organization_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Organization Id"
-          },
-          "created_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created By Email"
-          },
-          "modified_by_email": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "email"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modified By Email"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/DagNode"
-            },
-            "type": "array",
-            "title": "Nodes"
-          },
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/DagEdge"
-            },
-            "type": "array",
-            "title": "Edges"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "sync_id",
-          "id",
-          "organization_id",
-          "nodes",
-          "edges"
-        ],
-        "title": "SyncDag",
-        "description": "Schema for a sync DAG definition.\n\nThe DAG structure as the UI displays it.\n\nThis means that for each entity, there is a node that is the producer and a node that is the\nconsumer. These are connected by an edge: producer -edge-> entity -edge-> consumer\n\nSources, transformers, and destinations are also nodes, but they do not have an\nentity_definition_id.\n\nSources are producers by default, and destinations are consumers by default.\nTransformers are both producers and consumers."
-      },
-      "SyncDagCreate-Input": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "sync_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Sync Id"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/DagNodeCreate"
-            },
-            "type": "array",
-            "title": "Nodes"
-          },
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/DagEdgeCreate"
-            },
-            "type": "array",
-            "title": "Edges"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "sync_id",
-          "nodes",
-          "edges"
-        ],
-        "title": "SyncDagCreate",
-        "description": "Schema for creating a sync DAG definition."
-      },
-      "SyncDagCreate-Output": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "sync_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Sync Id"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/DagNodeCreate"
-            },
-            "type": "array",
-            "title": "Nodes"
-          },
-          "edges": {
-            "items": {
-              "$ref": "#/components/schemas/DagEdgeCreate"
-            },
-            "type": "array",
-            "title": "Edges"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "sync_id",
-          "nodes",
-          "edges"
-        ],
-        "title": "SyncDagCreate",
-        "description": "Schema for creating a sync DAG definition."
-      },
-      "SyncDagUpdate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "sync_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Sync Id"
-          },
-          "nodes": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/DagNodeCreate"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nodes"
-          },
-          "edges": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/DagEdgeCreate"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Edges"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "sync_id"
-        ],
-        "title": "SyncDagUpdate",
-        "description": "Schema for updating a sync DAG definition."
       },
       "SyncDetails": {
         "properties": {
@@ -8019,12 +7494,6 @@
             "type": "string",
             "format": "uuid",
             "title": "Source Connection Id"
-          },
-          "embedding_model_connection_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Embedding Model Connection Id",
-            "default": "33333333-3333-3333-3333-333333333333"
           },
           "destination_connection_ids": {
             "items": {

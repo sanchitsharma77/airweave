@@ -111,7 +111,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/message?view=gr
 | sent_date | Optional[datetime] | Date the message was sent |
 | received_date | Optional[datetime] | Date the message was received |
 | body_preview | Optional[str] | Brief snippet of the message content |
-| body_content | Optional[str] | Full message body content |
 | is_read | bool | Whether the message has been read |
 | is_draft | bool | Whether the message is a draft |
 | importance | Optional[str] | Importance level (Low, Normal, High) |
@@ -146,7 +145,6 @@ can target the correct parent/children.
 | Field | Type | Description |
 |-------|------|-------------|
 | message_id | str | ID of the deleted message |
-| deletion_status | str | Status indicating the entity was removed (e.g., 'removed') |
 
 </Accordion>
 <Accordion title="OutlookMailFolderDeletionEntity">
@@ -159,7 +157,6 @@ The `entity_id` matches the original folder's id.
 | Field | Type | Description |
 |-------|------|-------------|
 | folder_id | str | ID of the deleted folder |
-| deletion_status | str | Status indicating the entity was removed (e.g., 'removed') |
 
 </Accordion>
 

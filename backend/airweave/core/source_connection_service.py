@@ -1432,20 +1432,10 @@ class SourceConnectionService:
 
         Note: All parameters except db and ctx should be Pydantic schemas, not SQLAlchemy models.
         """
-        # Get sync DAG
-        sync_dag = await crud.sync_dag.get_by_sync_id(db, sync_id=sync.id, ctx=ctx)
-        if not sync_dag:
-            ctx.logger.error(f"Sync DAG not found for sync {sync.id}")
-            return
-
-        # Convert sync_dag to schema (it's the only model we fetch here)
-        sync_dag_schema = schemas.SyncDag.model_validate(sync_dag, from_attributes=True)
-
         # Trigger workflow - all inputs are already schemas
         await temporal_service.run_source_connection_workflow(
             sync=sync,
             sync_job=sync_job,
-            sync_dag=sync_dag_schema,
             collection=collection,
             connection=connection,
             ctx=ctx,
@@ -1517,13 +1507,6 @@ class SourceConnectionService:
                 "Will ignore cursor data and perform full sync with orphaned entity cleanup."
             )
 
-        # Get sync_dag for the workflow
-        sync_dag = await crud.sync_dag.get_by_sync_id(db, sync_id=source_conn.sync_id, ctx=ctx)
-        if not sync_dag:
-            raise HTTPException(
-                status_code=400, detail="Source connection has no sync DAG configured"
-            )
-
         # Run through Temporal
         collection = await crud.collection.get_by_readable_id(
             db, readable_id=source_conn.readable_collection_id, ctx=ctx
@@ -1533,7 +1516,6 @@ class SourceConnectionService:
         source_connection_schema = await self._build_source_connection_response(
             db, source_conn, ctx
         )
-        sync_dag_schema = schemas.SyncDag.model_validate(sync_dag, from_attributes=True)
 
         # Get the actual Connection object (not SourceConnection!)
         connection_schema = await source_connection_helpers.get_connection_for_source_connection(
@@ -1548,7 +1530,6 @@ class SourceConnectionService:
         await temporal_service.run_source_connection_workflow(
             sync=sync,
             sync_job=sync_job,
-            sync_dag=sync_dag_schema,
             collection=collection_schema,
             connection=connection_schema,  # Pass Connection, not SourceConnection
             ctx=ctx,
@@ -1834,31 +1815,19 @@ class SourceConnectionService:
                             )
                             sync_schema = schemas.Sync.model_validate(sync, from_attributes=True)
 
-                            # Get sync_dag
-                            sync_dag = await crud.sync_dag.get_by_sync_id(
-                                db, sync_id=sync.id, ctx=ctx
+                            # Get the Connection object (not SourceConnection)
+                            connection_schema = await self._get_connection_for_source_connection(
+                                db=db, source_connection=source_conn, ctx=ctx
                             )
-                            if sync_dag:
-                                sync_dag_schema = schemas.SyncDag.model_validate(
-                                    sync_dag, from_attributes=True
-                                )
 
-                                # Get the Connection object (not SourceConnection)
-                                connection_schema = (
-                                    await self._get_connection_for_source_connection(
-                                        db=db, source_connection=source_conn, ctx=ctx
-                                    )
-                                )
-
-                                # Trigger the workflow
-                                await temporal_service.run_source_connection_workflow(
-                                    sync=sync_schema,
-                                    sync_job=sync_job_schema,
-                                    sync_dag=sync_dag_schema,
-                                    collection=collection_schema,
-                                    connection=connection_schema,
-                                    ctx=ctx,
-                                )
+                            # Trigger the workflow
+                            await temporal_service.run_source_connection_workflow(
+                                sync=sync_schema,
+                                sync_job=sync_job_schema,
+                                collection=collection_schema,
+                                connection=connection_schema,
+                                ctx=ctx,
+                            )
 
         return source_conn_response
 

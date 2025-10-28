@@ -99,6 +99,14 @@ class SourceBase(BaseModel):
             "syncing and indexing all data beforehand."
         ),
     )
+    supports_temporal_relevance: bool = Field(
+        True,
+        description=(
+            "Whether this source's entities have timestamps that enable recency-based ranking. "
+            "Sources without file-level timestamps (e.g., code repositories) cannot use temporal "
+            "relevance for search result weighting."
+        ),
+    )
 
     @field_serializer("output_entity_definition_ids")
     def serialize_output_entity_definition_ids(

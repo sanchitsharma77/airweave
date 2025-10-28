@@ -52,7 +52,6 @@ Schema for a Notion database.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| database_id | str | The ID of the database |
 | title | str | The title of the database |
 | description | str | The description of the database |
 | properties | Dict[str, Any] | Database properties schema |
@@ -64,8 +63,6 @@ Schema for a Notion database.
 | archived | bool | Whether the database is archived |
 | is_inline | bool | Whether the database is inline |
 | url | str | The URL of the database |
-| created_time | Optional[datetime] | When the database was created |
-| last_edited_time | Optional[datetime] | When the database was last edited |
 
 </Accordion>
 <Accordion title="NotionPageEntity">
@@ -74,7 +71,6 @@ Schema for a Notion page with aggregated content.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| page_id | str | The ID of the page |
 | parent_id | str | The ID of the parent |
 | parent_type | str | The type of the parent (workspace, page_id, database_id, etc.) |
 | title | str | The title of the page |
@@ -90,8 +86,6 @@ Schema for a Notion page with aggregated content.
 | url | str | The URL of the page |
 | content_blocks_count | int | Number of blocks processed |
 | max_depth | int | Maximum nesting depth of blocks |
-| created_time | Optional[datetime] | When the page was created |
-| last_edited_time | Optional[datetime] | When the page was last edited |
 
 </Accordion>
 <Accordion title="NotionPropertyEntity">
@@ -113,13 +107,14 @@ Schema for a Notion database page property.
 
 Schema for a Notion file.
 
+Reference:
+    https://developers.notion.com/reference/file-object
+
 | Field | Type | Description |
 |-------|------|-------------|
-| file_type | str | The type of file (file, external, file_upload) |
-| url | str | The URL to access the file |
+| file_id | str | ID of the file in Notion |
 | expiry_time | Optional[datetime] | When the file URL expires (for Notion-hosted files) |
 | caption | str | The caption of the file |
-| metadata | Optional[Dict[str, Any]] | Additional metadata about the file |
 
 </Accordion>
 

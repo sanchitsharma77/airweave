@@ -53,6 +53,9 @@ Schema for Linear issue entities.
 This entity represents an issue from Linear, containing all relevant
 metadata and content from the Linear API.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
 | identifier | str | The unique identifier of the issue (e.g., 'ENG-123') |
@@ -60,15 +63,14 @@ metadata and content from the Linear API.
 | description | Optional[str] | The description/content of the issue |
 | priority | Optional[int] | The priority level of the issue |
 | state | Optional[str] | The current state/status name of the issue |
-| created_at | Optional[datetime] | When the issue was created |
-| updated_at | Optional[datetime] | When the issue was last updated |
-| completed_at | Optional[datetime] | When the issue was completed, if applicable |
+| completed_at | Optional[Any] | When the issue was completed, if applicable |
 | due_date | Optional[str] | The due date for the issue, if set |
 | team_id | Optional[str] | ID of the team this issue belongs to |
 | team_name | Optional[str] | Name of the team this issue belongs to |
 | project_id | Optional[str] | ID of the project this issue belongs to, if any |
 | project_name | Optional[str] | Name of the project this issue belongs to, if any |
 | assignee | Optional[str] | Name of the user assigned to this issue, if any |
+| url | Optional[str] | URL to view the issue in Linear |
 
 </Accordion>
 <Accordion title="LinearAttachmentEntity">
@@ -77,6 +79,9 @@ Schema for Linear attachment entities.
 
 Attachments in Linear allow linking external resources to issues.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
 | issue_id | str | ID of the issue this attachment belongs to |
@@ -84,9 +89,6 @@ Attachments in Linear allow linking external resources to issues.
 | title | Optional[str] | Title of the attachment |
 | subtitle | Optional[str] | Subtitle of the attachment |
 | source | Optional[Dict[str, Any]] | Source information about the attachment |
-| created_at | Optional[datetime] | When the attachment was created |
-| updated_at | Optional[datetime] | When the attachment was last updated |
-| metadata | Optional[Dict[str, Any]] | Key-value metadata for the attachment |
 
 </Accordion>
 <Accordion title="LinearProjectEntity">
@@ -96,23 +98,24 @@ Schema for Linear project entities.
 This entity represents a project from Linear, containing all relevant
 metadata and content from the Linear API.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the project |
 | slug_id | str | The project's unique URL slug |
 | description | Optional[str] | The project's description |
 | priority | Optional[int] | The priority level of the project |
 | state | Optional[str] | The current state/status name of the project |
-| created_at | Optional[datetime] | When the project was created |
-| updated_at | Optional[datetime] | When the project was last updated |
-| completed_at | Optional[datetime] | When the project was completed, if applicable |
-| started_at | Optional[datetime] | When the project was started, if applicable |
+| completed_at | Optional[Any] | When the project was completed, if applicable |
+| started_at | Optional[Any] | When the project was started, if applicable |
 | target_date | Optional[str] | The estimated completion date of the project |
 | start_date | Optional[str] | The estimated start date of the project |
 | team_ids | Optional[List[str]] | IDs of the teams this project belongs to |
 | team_names | Optional[List[str]] | Names of the teams this project belongs to |
 | progress | Optional[float] | The overall progress of the project |
 | lead | Optional[str] | Name of the project lead, if any |
+| url | Optional[str] | URL to view the project in Linear |
 
 </Accordion>
 <Accordion title="LinearTeamEntity">
@@ -122,9 +125,11 @@ Schema for Linear team entities.
 This entity represents a team from Linear, containing all relevant
 metadata and content from the Linear API.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The team's name |
 | key | str | The team's unique key used in URLs |
 | description | Optional[str] | The team's description |
 | color | Optional[str] | The team's color |
@@ -133,9 +138,8 @@ metadata and content from the Linear API.
 | timezone | Optional[str] | The timezone of the team |
 | parent_id | Optional[str] | ID of the parent team, if this is a sub-team |
 | parent_name | Optional[str] | Name of the parent team, if this is a sub-team |
-| created_at | Optional[datetime] | When the team was created |
-| updated_at | Optional[datetime] | When the team was last updated |
-| member_count | Optional[int] | Number of members in the team |
+| issue_count | Optional[int] | Number of issues in the team |
+| url | Optional[str] | URL to view the team in Linear |
 
 </Accordion>
 <Accordion title="LinearCommentEntity">
@@ -145,6 +149,9 @@ Schema for Linear comment entities.
 This entity represents a comment on a Linear issue, containing all relevant
 metadata and content from the Linear API.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
 | issue_id | str | ID of the issue this comment belongs to |
@@ -152,12 +159,11 @@ metadata and content from the Linear API.
 | body | str | The content/body of the comment |
 | user_id | Optional[str] | ID of the user who created the comment |
 | user_name | Optional[str] | Name of the user who created the comment |
-| created_at | Optional[datetime] | When the comment was created |
-| updated_at | Optional[datetime] | When the comment was last updated |
 | team_id | Optional[str] | ID of the team this comment belongs to |
 | team_name | Optional[str] | Name of the team this comment belongs to |
 | project_id | Optional[str] | ID of the project this comment belongs to, if any |
 | project_name | Optional[str] | Name of the project this comment belongs to, if any |
+| url | Optional[str] | URL to view the comment in Linear |
 
 </Accordion>
 <Accordion title="LinearUserEntity">
@@ -167,9 +173,11 @@ Schema for Linear user entities.
 This entity represents a user from Linear, containing all relevant
 metadata and content from the Linear API.
 
+Reference:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The user's full name |
 | display_name | str | The user's display name, unique within the organization |
 | email | str | The user's email address |
 | avatar_url | Optional[str] | URL to the user's avatar image |
@@ -178,15 +186,14 @@ metadata and content from the Linear API.
 | active | Optional[bool] | Whether the user account is active or disabled |
 | admin | Optional[bool] | Whether the user is an organization administrator |
 | guest | Optional[bool] | Whether the user is a guest with limited access |
-| last_seen | Optional[datetime] | The last time the user was seen online |
+| last_seen | Optional[Any] | The last time the user was seen online |
 | status_emoji | Optional[str] | The emoji to represent the user's current status |
 | status_label | Optional[str] | The label of the user's current status |
-| status_until_at | Optional[datetime] | Date at which the user's status should be cleared |
+| status_until_at | Optional[Any] | Date at which the user's status should be cleared |
 | created_issue_count | Optional[int] | Number of issues created by the user |
 | team_ids | Optional[List[str]] | IDs of the teams this user belongs to |
 | team_names | Optional[List[str]] | Names of the teams this user belongs to |
-| created_at | Optional[datetime] | When the user was created |
-| updated_at | Optional[datetime] | When the user was last updated |
+| url | Optional[str] | URL to view the user in Linear |
 
 </Accordion>
 

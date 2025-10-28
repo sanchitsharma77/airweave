@@ -75,11 +75,11 @@ The following data models are available for this connector:
 
 Schema for Salesforce Account entities.
 
-https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_account.htm
+Reference:
+    https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_account.htm
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | Account name |
 | account_number | Optional[str] | Account number |
 | website | Optional[str] | Account website URL |
 | phone | Optional[str] | Account phone number |
@@ -103,11 +103,9 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 | shipping_state | Optional[str] | Shipping state/province |
 | shipping_postal_code | Optional[str] | Shipping postal code |
 | shipping_country | Optional[str] | Shipping country |
-| created_date | Optional[datetime] | Date and time when the account was created |
-| last_modified_date | Optional[datetime] | Date and time when the account was last modified |
-| last_activity_date | Optional[datetime] | Date of the last activity on the account |
-| last_viewed_date | Optional[datetime] | Date when the account was last viewed |
-| last_referenced_date | Optional[datetime] | Date when the account was last referenced |
+| last_activity_date | Optional[Any] | Date of the last activity on the account |
+| last_viewed_date | Optional[Any] | Date when the account was last viewed |
+| last_referenced_date | Optional[Any] | Date when the account was last referenced |
 | is_deleted | bool | Indicates whether the account has been deleted |
 | is_customer_portal | bool | Indicates whether this account has customer portal access |
 | is_person_account | bool | Indicates whether this is a person account |
@@ -127,13 +125,13 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 
 Schema for Salesforce Contact entities.
 
-https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_contact.htm
+Reference:
+    https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_contact.htm
 
 | Field | Type | Description |
 |-------|------|-------------|
 | first_name | Optional[str] | Contact's first name |
 | last_name | Optional[str] | Contact's last name |
-| name | Optional[str] | Full name (computed field) |
 | email | Optional[str] | Contact's email address |
 | phone | Optional[str] | Contact's phone number |
 | mobile_phone | Optional[str] | Contact's mobile phone number |
@@ -142,14 +140,12 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 | department | Optional[str] | Contact's department |
 | account_id | Optional[str] | ID of the associated account |
 | lead_source | Optional[str] | Source of the lead |
-| birthdate | Optional[datetime] | Contact's birthdate |
+| birthdate | Optional[Any] | Contact's birthdate |
 | description | Optional[str] | Contact description |
 | owner_id | Optional[str] | ID of the user who owns the contact |
-| created_date | Optional[datetime] | Date and time when the contact was created |
-| last_modified_date | Optional[datetime] | Date and time when the contact was last modified |
-| last_activity_date | Optional[datetime] | Date of the last activity on the contact |
-| last_viewed_date | Optional[datetime] | Date when the contact was last viewed |
-| last_referenced_date | Optional[datetime] | Date when the contact was last referenced |
+| last_activity_date | Optional[Any] | Date of the last activity on the contact |
+| last_viewed_date | Optional[Any] | Date when the contact was last viewed |
+| last_referenced_date | Optional[Any] | Date when the contact was last referenced |
 | is_deleted | bool | Indicates whether the contact has been deleted |
 | is_email_bounced | bool | Indicates whether emails to this contact bounce |
 | is_unread_by_owner | bool | Indicates whether the contact is unread by the owner |
@@ -174,7 +170,7 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 | assistant_name | Optional[str] | Assistant's name |
 | assistant_phone | Optional[str] | Assistant's phone number |
 | reports_to_id | Optional[str] | ID of the contact this contact reports to |
-| email_bounced_date | Optional[datetime] | Date when email bounced |
+| email_bounced_date | Optional[Any] | Date when email bounced |
 | email_bounced_reason | Optional[str] | Reason why email bounced |
 | individual_id | Optional[str] | ID of the associated individual |
 | metadata | Dict[str, Any] | Additional metadata about the contact |
@@ -184,14 +180,14 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 
 Schema for Salesforce Opportunity entities.
 
-https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_opportunity.htm
+Reference:
+    https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_opportunity.htm
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | Opportunity name |
 | account_id | Optional[str] | ID of the associated account |
 | amount | Optional[float] | Opportunity amount |
-| close_date | Optional[datetime] | Expected close date |
+| close_date | Optional[Any] | Expected close date |
 | stage_name | Optional[str] | Sales stage |
 | probability | Optional[float] | Probability percentage |
 | forecast_category | Optional[str] | Forecast category |
@@ -200,11 +196,9 @@ https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_r
 | has_opportunity_line_item | bool | Indicates whether the opportunity has line items |
 | pricebook2_id | Optional[str] | ID of the associated pricebook |
 | owner_id | Optional[str] | ID of the user who owns the opportunity |
-| created_date | Optional[datetime] | Date and time when the opportunity was created |
-| last_modified_date | Optional[datetime] | Date and time when the opportunity was last modified |
-| last_activity_date | Optional[datetime] | Date of the last activity on the opportunity |
-| last_viewed_date | Optional[datetime] | Date when the opportunity was last viewed |
-| last_referenced_date | Optional[datetime] | Date when the opportunity was last referenced |
+| last_activity_date | Optional[Any] | Date of the last activity on the opportunity |
+| last_viewed_date | Optional[Any] | Date when the opportunity was last viewed |
+| last_referenced_date | Optional[Any] | Date when the opportunity was last referenced |
 | is_deleted | bool | Indicates whether the opportunity has been deleted |
 | is_won | bool | Indicates whether the opportunity is won |
 | is_closed | bool | Indicates whether the opportunity is closed |

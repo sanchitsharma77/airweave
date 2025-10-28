@@ -117,33 +117,36 @@ The following data models are available for this connector:
 
 Schema for Bitbucket workspace entity.
 
+Reference:
+    https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | slug | str | Workspace slug identifier |
-| name | str | Workspace display name |
 | uuid | str | Workspace UUID |
 | is_private | bool | Whether the workspace is private |
-| created_on | Optional[datetime] | Creation timestamp |
+| url | Optional[str] | URL to view the workspace |
 
 </Accordion>
 <Accordion title="BitbucketRepositoryEntity">
 
 Schema for Bitbucket repository entity.
 
+Reference:
+    https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | Repository name |
 | slug | str | Repository slug |
 | full_name | str | Full repository name including workspace |
 | description | Optional[str] | Repository description |
 | is_private | bool | Whether the repository is private |
 | fork_policy | Optional[str] | Fork policy of the repository |
 | language | Optional[str] | Primary language of the repository |
-| created_on | datetime | Creation timestamp |
-| updated_on | datetime | Last update timestamp |
 | size | Optional[int] | Size of the repository in bytes |
 | mainbranch | Optional[str] | Main branch name |
 | workspace_slug | str | Slug of the parent workspace |
+| url | Optional[str] | URL to view the repository |
 
 </Accordion>
 <Accordion title="BitbucketDirectoryEntity">
@@ -156,19 +159,23 @@ Schema for Bitbucket directory entity.
 | repo_slug | str | Slug of the repository containing this directory |
 | repo_full_name | str | Full name of the repository |
 | workspace_slug | str | Slug of the workspace |
+| url | Optional[str] | URL to view the directory |
 
 </Accordion>
 <Accordion title="BitbucketCodeFileEntity">
 
 Schema for Bitbucket code file entity.
 
+Reference:
+    https://developer.atlassian.com/cloud/bitbucket/rest/api-group-source/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | commit_hash | Optional[str] | Commit hash of the file version |
-| path | str | Path of the file within the repository |
 | repo_slug | str | Slug of the repository |
 | repo_full_name | str | Full name of the repository |
 | workspace_slug | str | Slug of the workspace |
+| line_count | Optional[int] | Number of lines in the file |
 
 </Accordion>
 

@@ -146,7 +146,7 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
                 sync_connections[sync_id] = {
                     "source": None,
                     "destinations": [],
-                    "embedding_model": None,
+                    "embedding_model": None,  # Deprecated but kept for schema compatibility
                 }
 
             # Categorize the connection based on its type
@@ -156,10 +156,8 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
                 sync_connections[sync_id]["destinations"].append(
                     schemas.Connection.model_validate(connection)
                 )
-            elif connection.integration_type == IntegrationType.EMBEDDING_MODEL:
-                sync_connections[sync_id]["embedding_model"] = schemas.Connection.model_validate(
-                    connection
-                )
+            # Note: EMBEDDING_MODEL integration type removed - embeddings now handled by
+            # DenseEmbedder and SparseEmbedder singletons, not via connections
 
         # Create enriched sync objects
         enriched_syncs = []
@@ -180,11 +178,6 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
 
             destinations = connections["destinations"]
             sync_dict["destination_connection_ids"] = [dest.id for dest in destinations]
-
-            embedding_model = connections["embedding_model"]
-            sync_dict["embedding_model_connection_id"] = (
-                embedding_model.id if embedding_model else None
-            )
 
             # Create the enriched sync
             enriched_syncs.append(schemas.Sync.model_validate(sync_dict))
@@ -364,14 +357,12 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
         # Pop off the connection ids
         source_connection_id = obj_in_dict.pop("source_connection_id")
         destination_connection_ids = obj_in_dict.pop("destination_connection_ids")  # this is a list
-        embedding_model_connection_id = obj_in_dict.pop("embedding_model_connection_id")
 
         # Validate the connections
         await self._validate_connections(
             db,
             source_connection_id,
             destination_connection_ids,
-            embedding_model_connection_id,
             ctx,
         )
 
@@ -384,10 +375,8 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
         else:
             await db.flush()
 
-        # Write the sync_connection objects to db
-        connection_ids = (
-            [source_connection_id] + destination_connection_ids + [embedding_model_connection_id]
-        )
+        # Write the sync_connection objects to db (source + destinations only)
+        connection_ids = [source_connection_id] + destination_connection_ids
         for connection_id in connection_ids:
             sync_connection = SyncConnection(
                 sync_id=sync.id,
@@ -407,7 +396,6 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
 
         sync_dict["source_connection_id"] = source_connection_id
         sync_dict["destination_connection_ids"] = destination_connection_ids
-        sync_dict["embedding_model_connection_id"] = embedding_model_connection_id
 
         # Return a properly model-validated instance
         return schemas.Sync.model_validate(sync_dict)
@@ -447,7 +435,6 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
         db: AsyncSession,
         source_connection_id: UUID,
         destination_connection_ids: list[UUID],
-        embedding_model_connection_id: UUID,
         ctx: ApiContext,
     ) -> None:
         """Validate the connections.
@@ -456,7 +443,6 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
             db (AsyncSession): The database session
             source_connection_id (UUID): The ID of the source connection
             destination_connection_ids (list[UUID]): The IDs of the destination connections
-            embedding_model_connection_id (UUID): The ID of the embedding model connection
             ctx (ApiContext): The API context
         """
         # Validate the source connection and that it is a source
@@ -477,14 +463,9 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
             if destination_connection.integration_type != IntegrationType.DESTINATION:
                 raise ValueError("Destination connection is not a destination")
 
-        # Validate the embedding model connection and that it is an embedding model
-        embedding_model_connection = await crud.connection.get(
-            db, id=embedding_model_connection_id, ctx=ctx
-        )
-        if not embedding_model_connection:
-            raise NotFoundException("Embedding model connection not found")
-        if embedding_model_connection.integration_type != IntegrationType.EMBEDDING_MODEL:
-            raise ValueError("Embedding model connection is not an embedding model")
+        # Note: embedding_model_connection_id validation removed
+        # Embeddings are now handled by DenseEmbedder and SparseEmbedder singletons
+        # The field is kept in the schema for backwards compatibility but is not validated
 
     async def remove(
         self,
@@ -529,7 +510,6 @@ class CRUDSync(CRUDBaseOrganization[Sync, SyncCreate, SyncUpdate]):
         # Add the connection IDs from the pre-fetched enriched sync
         sync_dict["source_connection_id"] = enriched_sync.source_connection_id
         sync_dict["destination_connection_ids"] = enriched_sync.destination_connection_ids
-        sync_dict["embedding_model_connection_id"] = enriched_sync.embedding_model_connection_id
 
         # Return a properly model-validated instance
         return schemas.Sync.model_validate(sync_dict)

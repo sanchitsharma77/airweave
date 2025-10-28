@@ -50,20 +50,17 @@ The following data models are available for this connector:
 
 Schema for Monday Board objects.
 
-https://developer.monday.com/api-reference/reference/boards
+Reference:
+    https://developer.monday.com/api-reference/reference/boards
 
 | Field | Type | Description |
 |-------|------|-------------|
-| board_id | str | The unique identifier (ID) of the board. |
 | board_kind | Optional[str] | The board's kind/type: 'public', 'private', or 'share'. |
 | columns | List[Dict] | A list of columns on the board (each column is typically a dict of fields). |
-| created_at | Optional[datetime] | When the board was first created. |
 | description | Optional[str] | The description of the board. |
 | groups | List[Dict] | A list of groups on the board (each group is typically a dict of fields). |
-| name | Optional[str] | The display name/title of the board. |
 | owners | List[Dict] | A list of users or teams who own the board. |
 | state | Optional[str] | The board's current state: 'active', 'archived', or 'deleted'. |
-| updated_at | Optional[datetime] | When the board was last updated. |
 | workspace_id | Optional[str] | The unique identifier of the workspace containing this board (if any). |
 
 </Accordion>
@@ -73,7 +70,8 @@ Schema for Monday Group objects.
 
 Groups are collections of items (rows) within a board.
 
-https://developer.monday.com/api-reference/reference/boards
+Reference:
+    https://developer.monday.com/api-reference/reference/boards
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -91,7 +89,8 @@ Schema for Monday Column objects.
 
 Columns define the structure of data on a Monday board.
 
-https://developer.monday.com/api-reference/reference/column-types-reference
+Reference:
+    https://developer.monday.com/api-reference/reference/column-types-reference
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -108,19 +107,17 @@ https://developer.monday.com/api-reference/reference/column-types-reference
 
 Schema for Monday Item objects (rows on a board).
 
-https://developer.monday.com/api-reference/reference/boards
+Reference:
+    https://developer.monday.com/api-reference/reference/boards
 
 | Field | Type | Description |
 |-------|------|-------------|
 | item_id | str | The unique identifier (ID) of the item. |
 | board_id | str | ID of the board this item belongs to. |
 | group_id | Optional[str] | ID of the group this item is placed in. |
-| name | Optional[str] | The display name/title of the item. |
 | state | Optional[str] | The current state of the item: active, archived, or deleted. |
 | column_values | List[Dict] | A list of column-value dicts that contain the data for each column. |
 | creator | Optional[Dict] | Information about the user/team who created this item. |
-| created_at | Optional[datetime] | When the item was first created. |
-| updated_at | Optional[datetime] | When the item was last updated. |
 
 </Accordion>
 <Accordion title="MondaySubitemEntity">
@@ -129,7 +126,8 @@ Schema for Monday Subitem objects.
 
 Subitems are items nested under a parent item, often in a dedicated 'Subitems' column.
 
-https://developer.monday.com/api-reference/reference/boards
+Reference:
+    https://developer.monday.com/api-reference/reference/boards
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -137,12 +135,9 @@ https://developer.monday.com/api-reference/reference/boards
 | parent_item_id | str | ID of the parent item this subitem belongs to. |
 | board_id | str | ID of the board that this subitem resides in. |
 | group_id | Optional[str] | ID of the group this subitem is placed in. |
-| name | Optional[str] | The display name/title of the subitem. |
 | state | Optional[str] | The current state of the subitem: active, archived, or deleted. |
 | column_values | List[Dict] | A list of column-value dicts for each column on the subitem. |
 | creator | Optional[Dict] | Information about the user/team who created this subitem. |
-| created_at | Optional[datetime] | When the subitem was first created. |
-| updated_at | Optional[datetime] | When the subitem was last updated. |
 
 </Accordion>
 <Accordion title="MondayUpdateEntity">
@@ -151,7 +146,8 @@ Schema for Monday Update objects.
 
 monday.com updates add notes and discussions to items outside of their column data.
 
-https://developer.monday.com/api-reference/reference/updates
+Reference:
+    https://developer.monday.com/api-reference/reference/updates
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -160,7 +156,6 @@ https://developer.monday.com/api-reference/reference/updates
 | board_id | Optional[str] | ID of the board, if applicable. |
 | creator_id | Optional[str] | ID of the user who created this update. |
 | body | Optional[str] | The text (body) of the update, which may include markdown or HTML formatting. |
-| created_at | Optional[datetime] | When the update was first created. |
 | assets | List[Dict] | Assets (e.g. images, attachments) associated with this update. |
 
 </Accordion>

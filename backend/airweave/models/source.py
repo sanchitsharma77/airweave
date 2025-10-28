@@ -39,6 +39,9 @@ class Source(Base):
     federated_search: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    supports_temporal_relevance: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
 
     __table_args__ = (UniqueConstraint("name", "organization_id", name="uq_source_name_org"),)
 

@@ -50,9 +50,11 @@ The following data models are available for this connector:
 
 Schema for Todoist project entities.
 
+Reference:
+    https://developer.todoist.com/rest/v2/#projects
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the project |
 | color | Optional[str] | Color of the project (e.g., 'grey', 'blue') |
 | comment_count | int | Number of comments in the project |
 | order | int | Project order in the project list |
@@ -69,9 +71,11 @@ Schema for Todoist project entities.
 
 Schema for Todoist section entities.
 
+Reference:
+    https://developer.todoist.com/rest/v2/#sections
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the section |
 | project_id | str | ID of the project this section belongs to |
 | order | int | Section order in the project |
 
@@ -79,6 +83,9 @@ Schema for Todoist section entities.
 <Accordion title="TodoistTaskEntity">
 
 Schema for Todoist task entities.
+
+Reference:
+    https://developer.todoist.com/rest/v2/#tasks
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -93,11 +100,10 @@ Schema for Todoist task entities.
 | section_id | Optional[str] | ID of the section this task belongs to |
 | parent_id | Optional[str] | ID of the parent task if subtask |
 | creator_id | Optional[str] | ID of the user who created the task |
-| created_at | Optional[datetime] | When the task was created |
 | assignee_id | Optional[str] | ID of the user assigned to the task |
 | assigner_id | Optional[str] | ID of the user who assigned the task |
 | due_date | Optional[str] | Due date in YYYY-MM-DD format |
-| due_datetime | Optional[datetime] | Due date and time |
+| due_datetime | Optional[Any] | Due date and time |
 | due_string | Optional[str] | Original due date string (e.g., 'tomorrow') |
 | due_is_recurring | bool | Whether the task is recurring |
 | due_timezone | Optional[str] | Timezone for the due date |
@@ -111,11 +117,14 @@ Schema for Todoist task entities.
 
 Schema for Todoist comment entities.
 
+Reference:
+    https://developer.todoist.com/rest/v2/#comments
+
 | Field | Type | Description |
 |-------|------|-------------|
 | task_id | str | ID of the task this comment belongs to |
 | content | Optional[str] | The comment content |
-| posted_at | datetime | When the comment was posted |
+| posted_at | Any | When the comment was posted |
 
 </Accordion>
 

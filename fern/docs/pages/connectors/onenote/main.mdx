@@ -50,18 +50,15 @@ The following data models are available for this connector:
 
 Schema for a Microsoft OneNote notebook.
 
-Based on the Microsoft Graph notebook resource.
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/notebook
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/notebook
 
 | Field | Type | Description |
 |-------|------|-------------|
 | display_name | str | The name of the notebook. |
-| name | str | The name of the notebook (alias for display_name). |
 | is_default | Optional[bool] | Indicates whether this is the user's default notebook. |
 | is_shared | Optional[bool] | Indicates whether the notebook is shared with other users. |
 | user_role | Optional[str] | The current user's role in the notebook (Owner, Contributor, Reader). |
-| created_datetime | Optional[datetime] | Timestamp at which the notebook was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp at which the notebook was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the notebook. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the notebook. |
 | links | Optional[Dict[str, Any]] | Links for opening the notebook. |
@@ -73,18 +70,15 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/notebook
 Schema for a Microsoft OneNote section group.
 
 Section groups are containers that can hold sections and other section groups.
-Based on the Microsoft Graph sectionGroup resource.
 
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
 
 | Field | Type | Description |
 |-------|------|-------------|
 | notebook_id | str | ID of the notebook this section group belongs to. |
 | parent_section_group_id | Optional[str] | ID of the parent section group, if nested. |
 | display_name | str | The name of the section group. |
-| name | str | The name of the section group (alias for display_name). |
-| created_datetime | Optional[datetime] | Timestamp at which the section group was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp at which the section group was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the section group. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the section group. |
 | sections_url | Optional[str] | The endpoint URL where you can get all the sections in the section group. |
@@ -96,19 +90,16 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/sectiongroup
 Schema for a Microsoft OneNote section.
 
 Sections contain pages and can belong to a notebook or section group.
-Based on the Microsoft Graph onenoteSection resource.
 
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/section
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/section
 
 | Field | Type | Description |
 |-------|------|-------------|
 | notebook_id | str | ID of the notebook this section belongs to. |
 | parent_section_group_id | Optional[str] | ID of the parent section group, if any. |
 | display_name | str | The name of the section. |
-| name | str | The name of the section (alias for display_name). |
 | is_default | Optional[bool] | Indicates whether this is the user's default section. |
-| created_datetime | Optional[datetime] | Timestamp at which the section was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp at which the section was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the section. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the section. |
 | pages_url | Optional[str] | The endpoint URL where you can get all the pages in the section. |
@@ -119,10 +110,10 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/section
 Schema for a Microsoft OneNote page as a file entity.
 
 Pages are the actual content containers in OneNote.
-Based on the Microsoft Graph onenotePage resource.
 Extends FileEntity to leverage Airweave's HTML processing pipeline.
 
-Reference: https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -132,8 +123,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/onenotepage
 | content_url | Optional[str] | The URL for the page's HTML content. |
 | level | Optional[int] | The indentation level of the page (for hierarchical pages). |
 | order | Optional[int] | The order of the page within its parent section. |
-| created_datetime | Optional[datetime] | Timestamp at which the page was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp at which the page was last modified. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the page. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the page. |
 | links | Optional[Dict[str, Any]] | Links for opening the page in OneNote client or web. |

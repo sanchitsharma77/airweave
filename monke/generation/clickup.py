@@ -195,8 +195,15 @@ async def generate_clickup_file(model: str, token: str) -> Tuple[str, str]:
     # Generate structured file data
     file_data = await llm.generate_structured(ClickUpFileContent, instruction)
 
-    # Ensure token is in the content
+    # Ensure token is in the content - embed it in the title/header for better chunking
     if token not in file_data.content:
-        file_data.content = f"**Verification Token**: {token}\n\n{file_data.content}"
+        # Put token in the main content, not on a separate line to avoid chunking issues
+        file_data.content = (
+            f"# API Specification - Token: {token}\n\n{file_data.content}"
+        )
+
+    # Also ensure the token appears in the body for redundancy
+    if file_data.content.count(token) < 2:
+        file_data.content += f"\n\n---\nVerification Token: {token}"
 
     return file_data.filename, file_data.content
