@@ -646,7 +646,7 @@ class GmailSource(BaseSource):
         )
         self.logger.debug(f"Message entity created with ID: {message_entity.entity_id}")
 
-        # Download HTML body to file (NOT stored in entity fields)
+        # Download email body to file (NOT stored in entity fields)
         # Email content is only in the local file for conversion
         if body_html:
             await self.file_downloader.save_bytes(
@@ -655,6 +655,17 @@ class GmailSource(BaseSource):
                 filename_with_extension=message_entity.name + ".html",  # Has .html extension
                 logger=self.logger,
             )
+        elif body_plain:
+            # Save plain-text emails as .txt files for conversion
+            await self.file_downloader.save_bytes(
+                entity=message_entity,
+                content=body_plain.encode("utf-8"),
+                filename_with_extension=message_entity.name + ".txt",  # Plain text
+                logger=self.logger,
+            )
+            # Update file metadata to match plain text
+            message_entity.file_type = "text"
+            message_entity.mime_type = "text/plain"
 
         yield message_entity
         self.logger.info(f"Message entity yielded for {message_id}")

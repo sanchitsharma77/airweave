@@ -637,13 +637,21 @@ class OutlookMailSource(BaseSource):
         except (ValueError, TypeError) as e:
             self.logger.warning(f"Error parsing dates for message {message_id}: {str(e)}")
 
-        # Extract body content
+        # Extract body content and determine format
         body_content = ""
+        body_content_type = "html"  # Default to HTML
         body_preview = message_data.get("bodyPreview", "")
         if message_data.get("body"):
-            body_content = message_data["body"].get("content", "")
+            body_obj = message_data["body"]
+            body_content = body_obj.get("content", "")
+            body_content_type = body_obj.get("contentType", "html").lower()
 
         self.logger.debug(f"Creating message entity for message {message_id}")
+
+        # Determine file metadata based on body type
+        is_plain_text = body_content_type == "text"
+        file_type = "text" if is_plain_text else "html"
+        mime_type = "text/plain" if is_plain_text else "text/html"
 
         # Create message entity
         message_entity = OutlookMessageEntity(
@@ -655,9 +663,9 @@ class OutlookMailSource(BaseSource):
             # File fields (required for FileEntity)
             url=f"https://outlook.office.com/mail/inbox/id/{message_id}",
             size=len(body_content.encode("utf-8")) if body_content else 0,
-            file_type="html",
-            mime_type="text/html",
-            local_path=None,  # Will be set after downloading HTML body
+            file_type=file_type,
+            mime_type=mime_type,
+            local_path=None,  # Will be set after downloading body
             # Outlook API fields
             folder_name=folder_name,
             subject=subject,
@@ -674,13 +682,14 @@ class OutlookMailSource(BaseSource):
             internet_message_id=message_data.get("internetMessageId"),
         )
 
-        # Download HTML body to file (NOT stored in entity fields)
+        # Download email body to file (NOT stored in entity fields)
         # Email content is only in the local file for conversion
         if body_content:
+            file_extension = ".txt" if is_plain_text else ".html"
             await self.file_downloader.save_bytes(
                 entity=message_entity,
                 content=body_content.encode("utf-8"),
-                filename_with_extension=message_entity.name + ".html",  # Has .html extension
+                filename_with_extension=message_entity.name + file_extension,
                 logger=self.logger,
             )
 
