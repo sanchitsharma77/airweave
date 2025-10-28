@@ -78,6 +78,9 @@ The following data models are available for this connector:
 
 Schema for Zendesk ticket entities.
 
+Reference:
+    https://developer.zendesk.com/api-reference/ticketing/tickets/tickets/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | ticket_id | int | Unique identifier of the ticket |
@@ -91,8 +94,6 @@ Schema for Zendesk ticket entities.
 | assignee_email | Optional[str] | Email of the user assigned to the ticket |
 | status | str | Current status of the ticket |
 | priority | Optional[str] | Priority level of the ticket |
-| created_at | datetime | When the ticket was created |
-| updated_at | datetime | When the ticket was last updated |
 | tags | List[str] | Tags associated with the ticket |
 | custom_fields | List[Dict[str, Any]] | Custom field values for the ticket |
 | organization_id | Optional[int] | ID of the organization associated with the ticket |
@@ -107,6 +108,9 @@ Schema for Zendesk ticket entities.
 
 Schema for Zendesk comment entities.
 
+Reference:
+    https://developer.zendesk.com/api-reference/ticketing/tickets/ticket-comments/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | comment_id | int | Unique identifier of the comment |
@@ -118,7 +122,6 @@ Schema for Zendesk comment entities.
 | body | str | The content of the comment |
 | html_body | Optional[str] | HTML formatted content of the comment |
 | public | bool | Whether the comment is public or internal |
-| created_at | datetime | When the comment was created |
 | attachments | List[Dict[str, Any]] | Attachments associated with this comment |
 
 </Accordion>
@@ -126,16 +129,16 @@ Schema for Zendesk comment entities.
 
 Schema for Zendesk user entities.
 
+Reference:
+    https://developer.zendesk.com/api-reference/ticketing/users/users/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | user_id | int | Unique identifier of the user |
-| name | str | Full name of the user |
 | email | str | Email address of the user |
 | role | str | Role of the user (end-user, agent, admin) |
 | active | bool | Whether the user account is active |
-| created_at | datetime | When the user account was created |
-| updated_at | datetime | When the user account was last updated |
-| last_login_at | Optional[datetime] | When the user last logged in |
+| last_login_at | Optional[Any] | When the user last logged in |
 | organization_id | Optional[int] | ID of the organization the user belongs to |
 | organization_name | Optional[str] | Name of the organization the user belongs to |
 | phone | Optional[str] | Phone number of the user |
@@ -150,12 +153,12 @@ Schema for Zendesk user entities.
 
 Schema for Zendesk organization entities.
 
+Reference:
+    https://developer.zendesk.com/api-reference/ticketing/organizations/organizations/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | organization_id | int | Unique identifier of the organization |
-| name | str | Name of the organization |
-| created_at | datetime | When the organization was created |
-| updated_at | datetime | When the organization was last updated |
 | domain_names | List[str] | Domain names associated with the organization |
 | details | Optional[str] | Details about the organization |
 | notes | Optional[str] | Notes about the organization |
@@ -168,6 +171,9 @@ Schema for Zendesk organization entities.
 
 Schema for Zendesk attachment entities.
 
+Reference:
+    https://developer.zendesk.com/api-reference/ticketing/tickets/ticket-attachments/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | attachment_id | int | Unique identifier of the attachment |
@@ -175,14 +181,8 @@ Schema for Zendesk attachment entities.
 | comment_id | Optional[int] | ID of the comment this attachment belongs to |
 | ticket_subject | Optional[str] | Subject of the ticket this attachment belongs to |
 | content_type | str | MIME type of the attachment |
-| size | int | Size of the attachment in bytes |
 | file_name | str | Original filename of the attachment |
 | thumbnails | List[Dict[str, Any]] | Thumbnail information for the attachment |
-| created_at | datetime | When the attachment was created |
-| file_id | str | ID of the file in the source system |
-| name | str | Name of the file |
-| mime_type | Optional[str] | MIME type of the file |
-| download_url | str | URL to download the file |
 
 </Accordion>
 

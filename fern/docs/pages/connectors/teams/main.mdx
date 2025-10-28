@@ -77,7 +77,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/team
 | visibility | Optional[str] | The visibility of the group and team (Public, Private, HiddenMembership). |
 | is_archived | Optional[bool] | Whether this team is in read-only mode. |
 | web_url | Optional[str] | A hyperlink that goes to the team in Microsoft Teams. |
-| created_datetime | Optional[datetime] | Timestamp at which the team was created. |
 | classification | Optional[str] | Classification for the team (e.g., low, medium, high business impact). |
 | specialization | Optional[str] | Indicates whether the team is intended for a particular use case. |
 | internal_id | Optional[str] | A unique ID for the team used in audit logs. |
@@ -100,7 +99,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/channel
 | is_archived | Optional[bool] | Indicates whether the channel is archived. |
 | is_favorite_by_default | Optional[bool] | Indicates whether the channel is recommended for all team members. |
 | web_url | Optional[str] | A hyperlink that goes to the channel in Microsoft Teams. |
-| created_datetime | Optional[datetime] | Timestamp at which the channel was created. |
 
 </Accordion>
 <Accordion title="TeamsChatEntity">
@@ -114,8 +112,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/chat
 |-------|------|-------------|
 | chat_type | str | Type of chat (oneOnOne, group, meeting). |
 | topic | Optional[str] | Subject or topic for the chat (only for group chats). |
-| created_datetime | Optional[datetime] | Date and time at which the chat was created. |
-| last_updated_datetime | Optional[datetime] | Date and time at which the chat was last updated. |
 | web_url | Optional[str] | The URL for the chat in Microsoft Teams. |
 
 </Accordion>
@@ -137,8 +133,6 @@ Reference: https://learn.microsoft.com/en-us/graph/api/resources/chatmessage
 | body_content | Optional[str] | The content of the message body. |
 | body_content_type | Optional[str] | The type of the content (html or text). |
 | from_user | Optional[Dict[str, Any]] | Details of the sender of the message. |
-| created_datetime | Optional[datetime] | Timestamp of when the message was created. |
-| last_modified_datetime | Optional[datetime] | Timestamp when the message was last modified. |
 | last_edited_datetime | Optional[datetime] | Timestamp when edits to the message were made. |
 | deleted_datetime | Optional[datetime] | Timestamp at which the message was deleted. |
 | importance | Optional[str] | The importance of the message (normal, high, urgent). |

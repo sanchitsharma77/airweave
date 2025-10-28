@@ -50,11 +50,11 @@ The following data models are available for this connector:
 
 Schema for an Outlook Calendar object.
 
-Based on the Microsoft Graph Calendar resource.
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/calendar?view=graph-rest-1.0
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | The display name of the calendar. |
 | color | Optional[str] | Color theme to distinguish the calendar (auto, lightBlue, etc.). |
 | hex_color | Optional[str] | Calendar color in hex format (e.g., #FF0000). |
 | change_key | Optional[str] | Version identifier that changes when the calendar is modified. |
@@ -73,7 +73,8 @@ Based on the Microsoft Graph Calendar resource.
 
 Schema for an Outlook Calendar Event object.
 
-Based on the Microsoft Graph Event resource.
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -81,9 +82,9 @@ Based on the Microsoft Graph Event resource.
 | body_preview | Optional[str] | Preview of the event body content. |
 | body_content | Optional[str] | Full body content of the event. |
 | body_content_type | Optional[str] | Content type of the body (html or text). |
-| start_datetime | Optional[datetime] | Start date and time of the event. |
+| start_datetime | Optional[Any] | Start date and time of the event. |
 | start_timezone | Optional[str] | Timezone for the start time. |
-| end_datetime | Optional[datetime] | End date and time of the event. |
+| end_datetime | Optional[Any] | End date and time of the event. |
 | end_timezone | Optional[str] | Timezone for the end time. |
 | is_all_day | bool | Whether the event lasts all day. |
 | is_cancelled | bool | Whether the event has been cancelled. |
@@ -100,8 +101,6 @@ Based on the Microsoft Graph Event resource.
 | location | Optional[Dict[str, Any]] | Primary location information for the event. |
 | locations | List[Dict[str, Any]] | List of all locations associated with the event. |
 | categories | List[str] | Categories assigned to the event. |
-| created_at | Optional[datetime] | When the event was created. |
-| updated_at | Optional[datetime] | When the event was last modified. |
 | web_link | Optional[str] | URL to open the event in Outlook on the web. |
 | online_meeting_url | Optional[str] | URL to join the online meeting. |
 | online_meeting_provider | Optional[str] | Online meeting provider (teamsForBusiness, etc.). |
@@ -124,6 +123,9 @@ Schema for Outlook Calendar Event attachments.
 
 Represents files attached to calendar events.
 
+Reference:
+    https://learn.microsoft.com/en-us/graph/api/resources/attachment?view=graph-rest-1.0
+
 | Field | Type | Description |
 |-------|------|-------------|
 | event_id | str | ID of the event this attachment belongs to |
@@ -132,7 +134,6 @@ Represents files attached to calendar events.
 | is_inline | bool | Whether the attachment is inline |
 | content_id | Optional[str] | Content ID for inline attachments |
 | last_modified_at | Optional[str] | When the attachment was last modified |
-| metadata | Optional[Dict[str, Any]] | Additional metadata about the attachment |
 
 </Accordion>
 

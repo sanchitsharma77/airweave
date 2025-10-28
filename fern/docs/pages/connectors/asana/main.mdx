@@ -51,8 +51,6 @@ Schema for Asana workspace entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the workspace |
-| asana_gid | str | Globally unique identifier of the workspace |
 | is_organization | bool | Whether the workspace is an organization |
 | email_domains | List[str] | List of email domains that can access this workspace |
 | permalink_url | Optional[str] | URL to access the workspace in the Asana application |
@@ -64,12 +62,10 @@ Schema for Asana project entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the project |
 | workspace_gid | str | Globally unique identifier of the workspace the project belongs to |
 | workspace_name | str | The name of the workspace the project belongs to |
 | color | Optional[str] | Color of the project (e.g. 'dark-pink', 'light-blue') |
 | archived | bool | Whether the project is archived |
-| created_at | Optional[datetime] | The time at which this project was created |
 | current_status | Optional[Dict] | The current status update for this project |
 | default_view | Optional[str] | The default view of the project (list, board, calendar, timeline) |
 | due_date | Optional[str] | The day on which this project is due (YYYY-MM-DD format) |
@@ -78,7 +74,6 @@ Schema for Asana project entities.
 | notes | Optional[str] | Free-form textual information associated with the project |
 | is_public | bool | Whether the project is public to its team |
 | start_on | Optional[str] | The day on which this project starts (YYYY-MM-DD format) |
-| modified_at | Optional[datetime] | The time at which this project was last modified |
 | owner | Optional[Dict] | The owner of this project |
 | team | Optional[Dict] | The team that this project is associated with |
 | members | List[Dict] | Array of users who are members of this project |
@@ -96,9 +91,7 @@ Schema for Asana section entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the section |
 | project_gid | str | Globally unique identifier of the project this section belongs to |
-| created_at | Optional[datetime] | The time at which this section was created |
 | projects | List[Dict] | Deprecated. Array of projects this section is associated with |
 
 </Accordion>
@@ -108,7 +101,6 @@ Schema for Asana task entities.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the task |
 | project_gid | str | Globally unique identifier of the project this task belongs to |
 | section_gid | Optional[str] | Globally unique identifier of the section this task belongs to |
 | actual_time_minutes | Optional[int] | The actual time spent on this task in minutes |
@@ -118,7 +110,6 @@ Schema for Asana task entities.
 | completed | bool | Whether the task is marked complete |
 | completed_at | Optional[datetime] | The time at which this task was completed |
 | completed_by | Optional[Dict] | The user who completed this task |
-| created_at | Optional[datetime] | The time at which this task was created |
 | dependencies | List[Dict] | Array of tasks that this task depends on |
 | dependents | List[Dict] | Array of tasks that depend on this task |
 | due_at | Optional[datetime] | The time at which this task is due with a time component |
@@ -129,7 +120,6 @@ Schema for Asana task entities.
 | is_rendered_as_separator | bool | Whether the task is rendered as a separator in list view |
 | liked | bool | Whether the task is liked by the authorized user |
 | memberships | List[Dict] | Array of projects and sections this task is in |
-| modified_at | Optional[datetime] | The time at which this task was last modified |
 | num_likes | int | The number of users who have liked this task |
 | num_subtasks | int | The number of subtasks on this task |
 | parent | Optional[Dict] | The parent of this task, if applicable |
@@ -151,7 +141,6 @@ Schema for Asana comment/story entities.
 |-------|------|-------------|
 | task_gid | str | Globally unique identifier of the task this comment belongs to |
 | author | Dict | The user who created this comment |
-| created_at | datetime | The time at which this comment was created |
 | resource_subtype | str | The subtype of the comment resource |
 | text | Optional[str] | The plain text content of the comment |
 | html_text | Optional[str] | HTML formatted content of the comment |
@@ -180,8 +169,6 @@ Reference:
 | parent | Optional[Dict[str, Any]] | Parent resource the attachment is on |
 | view_url | Optional[str] | URL to view the attachment |
 | permanent | bool | Whether this is a permanent attachment |
-| updated_at | Optional[datetime] | The time at which this file was last modified |
-| created_at | Optional[datetime] | The time at which this file was created |
 
 </Accordion>
 

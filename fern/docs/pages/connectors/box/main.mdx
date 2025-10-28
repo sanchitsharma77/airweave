@@ -64,10 +64,11 @@ The following data models are available for this connector:
 
 Schema for Box user entities.
 
+Reference:
+    https://developer.box.com/reference/resources/user/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | Display name of the user |
-| box_id | str | Unique Box ID of the user |
 | login | Optional[str] | Login email address of the user |
 | status | Optional[str] | Status of the user (active, inactive, etc.) |
 | job_title | Optional[str] | Job title of the user |
@@ -75,8 +76,6 @@ Schema for Box user entities.
 | address | Optional[str] | Address of the user |
 | language | Optional[str] | Language of the user |
 | timezone | Optional[str] | Timezone of the user |
-| created_at | Optional[datetime] | When this user was created |
-| modified_at | Optional[datetime] | When this user was last modified |
 | space_amount | Optional[int] | Total storage space available to the user in bytes |
 | space_used | Optional[int] | Storage space used by the user in bytes |
 | max_upload_size | Optional[int] | Maximum file size the user can upload in bytes |
@@ -87,17 +86,16 @@ Schema for Box user entities.
 
 Schema for Box folder entities.
 
+Reference:
+    https://developer.box.com/reference/resources/folder/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | Name of the folder |
-| box_id | str | Unique Box ID of the folder |
 | description | Optional[str] | Description of the folder |
 | size | Optional[int] | Size of the folder in bytes |
 | path_collection | List[Dict] | Path of parent folders from root to this folder |
-| created_at | Optional[datetime] | When this folder was created |
-| modified_at | Optional[datetime] | When this folder was last modified |
-| content_created_at | Optional[datetime] | When the content in this folder was originally created |
-| content_modified_at | Optional[datetime] | When the content in this folder was last modified |
+| content_created_at | Optional[Any] | When the content in this folder was originally created |
+| content_modified_at | Optional[Any] | When the content in this folder was last modified |
 | created_by | Optional[Dict] | User who created this folder |
 | modified_by | Optional[Dict] | User who last modified this folder |
 | owned_by | Optional[Dict] | User who owns this folder |
@@ -118,16 +116,11 @@ Schema for Box folder entities.
 
 Schema for Box file entities.
 
-Uses FileEntity base class which provides:
-- file_id: Unique identifier for the file
-- name: Name of the file
-- mime_type: MIME type
-- size: File size in bytes
-- download_url: URL to download the file
+Reference:
+    https://developer.box.com/reference/resources/file/
 
 | Field | Type | Description |
 |-------|------|-------------|
-| box_id | str | Unique Box ID of the file |
 | description | Optional[str] | Description of the file |
 | parent_folder_id | str | ID of the parent folder |
 | parent_folder_name | str | Name of the parent folder |
@@ -136,10 +129,8 @@ Uses FileEntity base class which provides:
 | extension | Optional[str] | File extension |
 | version_number | Optional[str] | Version number of the file |
 | comment_count | Optional[int] | Number of comments on this file |
-| created_at | Optional[datetime] | When this file was created in Box |
-| modified_at | Optional[datetime] | When this file was last modified in Box |
-| content_created_at | Optional[datetime] | When the content of this file was originally created |
-| content_modified_at | Optional[datetime] | When the content of this file was last modified |
+| content_created_at | Optional[Any] | When the content of this file was originally created |
+| content_modified_at | Optional[Any] | When the content of this file was last modified |
 | created_by | Optional[Dict] | User who created this file |
 | modified_by | Optional[Dict] | User who last modified this file |
 | owned_by | Optional[Dict] | User who owns this file |
@@ -158,15 +149,15 @@ Uses FileEntity base class which provides:
 
 Schema for Box comment entities.
 
+Reference:
+    https://developer.box.com/reference/resources/comment/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| box_id | str | Unique Box ID of the comment |
 | file_id | str | ID of the file this comment is on |
 | file_name | str | Name of the file |
 | message | str | Content of the comment |
 | created_by | Dict | User who created this comment |
-| created_at | datetime | When this comment was created |
-| modified_at | Optional[datetime] | When this comment was last modified |
 | is_reply_comment | bool | Whether this comment is a reply to another comment |
 | tagged_message | Optional[str] | Tagged version of the message with user mentions |
 
@@ -175,9 +166,11 @@ Schema for Box comment entities.
 
 Schema for Box collaboration entities.
 
+Reference:
+    https://developer.box.com/reference/resources/collaboration/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| box_id | str | Unique Box ID of the collaboration |
 | role | str | Role of the collaborator (editor, viewer, previewer, etc.) |
 | accessible_by | Dict | User or group that this collaboration applies to |
 | item | Dict | File or folder that is being collaborated on |
@@ -185,13 +178,11 @@ Schema for Box collaboration entities.
 | item_type | str | Type of the item (file or folder) |
 | item_name | str | Name of the item being collaborated on |
 | status | str | Status of the collaboration (accepted, pending, etc.) |
-| created_at | Optional[datetime] | When this collaboration was created |
-| modified_at | Optional[datetime] | When this collaboration was last modified |
 | created_by | Optional[Dict] | User who created this collaboration |
-| expires_at | Optional[datetime] | When this collaboration expires |
+| expires_at | Optional[Any] | When this collaboration expires |
 | is_access_only | Optional[bool] | Whether this is an access-only collaboration |
 | invite_email | Optional[str] | Email address invited to collaborate |
-| acknowledged_at | Optional[datetime] | When the collaboration was acknowledged |
+| acknowledged_at | Optional[Any] | When the collaboration was acknowledged |
 
 </Accordion>
 

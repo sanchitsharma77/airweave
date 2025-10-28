@@ -61,7 +61,6 @@ See: https://developers.google.com/calendar/api/v3/reference/calendars
 
 | Field | Type | Description |
 |-------|------|-------------|
-| calendar_id | str | Unique identifier for the calendar. |
 | summary | Optional[str] | Title of the calendar. |
 | description | Optional[str] | Description of the calendar. |
 | location | Optional[str] | Geographic location of the calendar. |
@@ -76,7 +75,6 @@ See: https://developers.google.com/calendar/api/v3/reference/calendarList
 
 | Field | Type | Description |
 |-------|------|-------------|
-| calendar_id | str | Unique identifier for the calendar. |
 | summary | Optional[str] | Title of the calendar. |
 | summary_override | Optional[str] | User-defined name for the calendar, if set. |
 | color_id | Optional[str] | Color ID reference for the calendar. |
@@ -97,11 +95,8 @@ See: https://developers.google.com/calendar/api/v3/reference/events
 
 | Field | Type | Description |
 |-------|------|-------------|
-| event_id | str | Unique identifier for the event. |
 | status | Optional[str] | Status of the event (e.g., 'confirmed'). |
 | html_link | Optional[str] | An absolute link to the event in the Google Calendar UI. |
-| created_at | Optional[datetime] | When the event was created. |
-| updated_at | Optional[datetime] | When the event was last modified. |
 | summary | Optional[str] | Title of the event. |
 | description | Optional[str] | Description of the event. |
 | location | Optional[str] | Geographic location of the event. |

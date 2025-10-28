@@ -50,16 +50,21 @@ The following data models are available for this connector:
 
 Schema for a Jira Project.
 
+Reference:
+    https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-projects/
+
 | Field | Type | Description |
 |-------|------|-------------|
 | project_key | str | Unique key of the project (e.g., 'PROJ'). |
-| name | Optional[str] | Name of the project. |
 | description | Optional[str] | Description of the project. |
 
 </Accordion>
 <Accordion title="JiraIssueEntity">
 
 Schema for a Jira Issue.
+
+Reference:
+    https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -68,8 +73,6 @@ Schema for a Jira Issue.
 | description | Optional[str] | Detailed description of the issue. |
 | status | Optional[str] | Current workflow status of the issue. |
 | issue_type | Optional[str] | Type of the issue (bug, task, story, etc.). |
-| created_at | Optional[datetime] | Timestamp when the issue was created. |
-| updated_at | Optional[datetime] | Timestamp when the issue was last updated. |
 
 </Accordion>
 

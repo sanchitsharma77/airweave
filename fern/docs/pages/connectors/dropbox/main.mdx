@@ -56,17 +56,11 @@ The following data models are available for this connector:
 
 Schema for Dropbox account-level entities based on the Dropbox API.
 
-REQUIRED fields from ChunkEntity (must be provided):
-- entity_id: ID of the entity this represents in the source
-- breadcrumbs: List of breadcrumbs for this entity (empty for top-level accounts)
-
-OPTIONAL fields from ChunkEntity (automatically populated if available):
-- Other inherited fields from ChunkEntity
+Reference:
+    https://www.dropbox.com/developers/documentation/http/documentation#users-get_current_account
 
 | Field | Type | Description |
 |-------|------|-------------|
-| account_id | str | The user's unique Dropbox ID |
-| name | str | Name for display representing the user's Dropbox account |
 | abbreviated_name | Optional[str] | Abbreviated form of the person's name (typically initials) |
 | familiar_name | Optional[str] | Locale-dependent name (usually given name in US) |
 | given_name | Optional[str] | Also known as first name |
@@ -92,17 +86,11 @@ OPTIONAL fields from ChunkEntity (automatically populated if available):
 
 Schema for Dropbox folder entities matching the Dropbox API.
 
-REQUIRED fields from ChunkEntity (must be provided):
-- entity_id: ID of the entity this represents in the source
-- breadcrumbs: List of breadcrumbs for this entity
-
-OPTIONAL fields from ChunkEntity (automatically populated if available):
-- Other inherited fields from ChunkEntity
+Reference:
+    https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder
 
 | Field | Type | Description |
 |-------|------|-------------|
-| folder_id | str | Unique identifier for the folder |
-| name | str | The name of the folder (last path component) |
 | path_lower | Optional[str] | Lowercase full path starting with slash |
 | path_display | Optional[str] | Display path with proper casing |
 | sharing_info | Optional[Dict] | Sharing information for the folder |
@@ -116,21 +104,16 @@ OPTIONAL fields from ChunkEntity (automatically populated if available):
 
 Schema for Dropbox file entities matching the Dropbox API.
 
-REQUIRED fields from FileEntity (must be provided):
-- file_id: ID of the file in the source system
-- name: Name of the file
-- download_url: URL to download the file
-
-OPTIONAL fields from FileEntity (automatically populated if available):
-- Other inherited fields from ChunkEntity
+Reference:
+    https://www.dropbox.com/developers/documentation/http/documentation#files-list_folder
 
 | Field | Type | Description |
 |-------|------|-------------|
 | path_lower | Optional[str] | Lowercase full path in Dropbox |
 | path_display | Optional[str] | Display path with proper casing |
 | rev | Optional[str] | Unique identifier for the file revision |
-| client_modified | Optional[datetime] | When file was modified by client |
-| server_modified | Optional[datetime] | When file was modified on server |
+| client_modified | Optional[Any] | When file was modified by client |
+| server_modified | Optional[Any] | When file was modified on server |
 | is_downloadable | bool | Whether file can be downloaded directly |
 | content_hash | Optional[str] | Dropbox content hash for integrity checks |
 | sharing_info | Optional[Dict] | Sharing information for the file |

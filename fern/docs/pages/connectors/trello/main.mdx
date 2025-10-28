@@ -48,9 +48,11 @@ The following data models are available for this connector:
 
 Schema for Trello board entities.
 
+Reference:
+    https://developer.atlassian.com/cloud/trello/rest/api-group-boards/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the board |
 | trello_id | str | Trello's unique identifier for the board |
 | desc | Optional[str] | Description of the board |
 | closed | bool | Whether the board is closed/archived |
@@ -65,9 +67,11 @@ Schema for Trello board entities.
 
 Schema for Trello list entities (columns on a board).
 
+Reference:
+    https://developer.atlassian.com/cloud/trello/rest/api-group-lists/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the list |
 | trello_id | str | Trello's unique identifier for the list |
 | id_board | str | ID of the board this list belongs to |
 | board_name | str | Name of the board this list belongs to |
@@ -80,9 +84,11 @@ Schema for Trello list entities (columns on a board).
 
 Schema for Trello card entities.
 
+Reference:
+    https://developer.atlassian.com/cloud/trello/rest/api-group-cards/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name/title of the card |
 | trello_id | str | Trello's unique identifier for the card |
 | desc | Optional[str] | Description/notes on the card |
 | id_board | str | ID of the board this card belongs to |
@@ -92,7 +98,7 @@ Schema for Trello card entities.
 | closed | bool | Whether the card is archived |
 | due | Optional[str] | Due date for the card |
 | due_complete | Optional[bool] | Whether the due date is marked complete |
-| date_last_activity | Optional[datetime] | Last activity date on the card |
+| date_last_activity | Optional[Any] | Last activity date on the card |
 | id_members | List[str] | List of member IDs assigned to this card |
 | members | List[Dict[str, Any]] | Members assigned to this card |
 | id_labels | List[str] | List of label IDs attached to this card |
@@ -111,9 +117,11 @@ Schema for Trello card entities.
 
 Schema for Trello checklist entities.
 
+Reference:
+    https://developer.atlassian.com/cloud/trello/rest/api-group-checklists/
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | str | The name of the checklist |
 | trello_id | str | Trello's unique identifier for the checklist |
 | id_board | str | ID of the board this checklist belongs to |
 | id_card | str | ID of the card this checklist belongs to |
@@ -125,6 +133,9 @@ Schema for Trello checklist entities.
 <Accordion title="TrelloMemberEntity">
 
 Schema for Trello member (user) entities.
+
+Reference:
+    https://developer.atlassian.com/cloud/trello/rest/api-group-members/
 
 | Field | Type | Description |
 |-------|------|-------------|

@@ -83,7 +83,6 @@ https://stripe.com/docs/api/balance_transactions
 |-------|------|-------------|
 | amount | Optional[int] | Gross amount of the transaction, in cents |
 | currency | Optional[str] | Three-letter ISO currency code |
-| created_at | Optional[datetime] | Time at which the transaction was created |
 | description | Optional[str] | Text description of the transaction |
 | fee | Optional[int] | Fees (in cents) taken from this transaction |
 | fee_details | List[Dict[str, Any]] | Detailed breakdown of fees (type, amount, application, etc.) |
@@ -107,7 +106,6 @@ https://stripe.com/docs/api/charges
 | captured | bool | Whether the charge was captured |
 | paid | bool | Whether the charge was paid |
 | refunded | bool | Whether the charge was refunded |
-| created_at | Optional[datetime] | When the charge was created |
 | description | Optional[str] | Arbitrary description of the charge |
 | receipt_url | Optional[str] | URL to view this charge's receipt |
 | customer_id | Optional[str] | ID of the Customer this charge belongs to |
@@ -125,9 +123,7 @@ https://stripe.com/docs/api/customers
 |-------|------|-------------|
 | email | Optional[str] | The customer's email address |
 | phone | Optional[str] | The customer's phone number |
-| name | Optional[str] | The customer's full name |
 | description | Optional[str] | Arbitrary description of the customer |
-| created_at | Optional[datetime] | When the customer was created |
 | currency | Optional[str] | Preferred currency for the customer's recurring payments |
 | default_source | Optional[str] | ID of the default payment source (e.g. card) attached to this customer |
 | delinquent | bool | Whether the customer has any unpaid/overdue invoices |
@@ -145,7 +141,6 @@ https://stripe.com/docs/api/events
 |-------|------|-------------|
 | event_type | Optional[str] | The event's type (e.g., 'charge.succeeded', 'customer.created') |
 | api_version | Optional[str] | API version used to render event data |
-| created_at | Optional[datetime] | When the notification was created (time of the event) |
 | data | Dict[str, Any] | The event payload. Typically includes 'object' and 'previous_attributes'. |
 | livemode | bool | Whether the event was triggered in live mode |
 | pending_webhooks | Optional[int] | Number of webhooks yet to be delivered |
@@ -166,7 +161,6 @@ https://stripe.com/docs/api/invoices
 | amount_due | Optional[int] | Final amount due in cents (before any payment or credit) |
 | amount_paid | Optional[int] | Amount paid in cents |
 | amount_remaining | Optional[int] | Amount remaining to be paid in cents |
-| created_at | Optional[datetime] | When the invoice was created |
 | due_date | Optional[datetime] | Date on which payment is due (if applicable) |
 | paid | bool | Whether the invoice has been fully paid |
 | currency | Optional[str] | Three-letter ISO currency code (e.g. 'usd') |
@@ -185,7 +179,6 @@ https://stripe.com/docs/api/payment_intents
 | currency | Optional[str] | Three-letter ISO currency code |
 | status | Optional[str] | Status of the PaymentIntent (e.g. 'requires_payment_method', 'succeeded') |
 | description | Optional[str] | Arbitrary description for the PaymentIntent |
-| created_at | Optional[datetime] | When the PaymentIntent was created |
 | customer_id | Optional[str] | ID of the Customer this PaymentIntent is for (if any) |
 | metadata | Dict[str, Any] | Set of key-value pairs attached to the PaymentIntent |
 
@@ -202,7 +195,6 @@ https://stripe.com/docs/api/payment_methods
 | billing_details | Dict[str, Any] | Billing information associated with the PaymentMethod |
 | customer_id | Optional[str] | ID of the Customer to which this PaymentMethod is saved (if any) |
 | card | Optional[Dict[str, Any]] | If the PaymentMethod type is 'card', details about the card (brand, last4, etc.) |
-| created_at | Optional[datetime] | When the PaymentMethod was created |
 | metadata | Dict[str, Any] | Set of key-value pairs that can be attached to the PaymentMethod |
 
 </Accordion>
@@ -217,7 +209,6 @@ https://stripe.com/docs/api/payouts
 | amount | Optional[int] | Amount in cents to be transferred |
 | currency | Optional[str] | Three-letter ISO currency code |
 | arrival_date | Optional[datetime] | Date the payout is expected to arrive in the bank |
-| created_at | Optional[datetime] | When this payout was created |
 | description | Optional[str] | An arbitrary string attached to the payout |
 | destination | Optional[str] | ID of the bank account or card the payout was sent to |
 | method | Optional[str] | The method used to send this payout (e.g., 'standard', 'instant') |
@@ -236,7 +227,6 @@ https://stripe.com/docs/api/refunds
 |-------|------|-------------|
 | amount | Optional[int] | Amount in cents refunded |
 | currency | Optional[str] | Three-letter ISO currency code |
-| created_at | Optional[datetime] | When this refund was created |
 | status | Optional[str] | Status of the refund (e.g., 'pending', 'succeeded', 'failed') |
 | reason | Optional[str] | Reason for the refund (duplicate, fraudulent, requested_by_customer, etc.) |
 | receipt_number | Optional[str] | Transaction number that appears on email receipts issued for this refund |
@@ -259,7 +249,6 @@ https://stripe.com/docs/api/subscriptions
 | current_period_end | Optional[datetime] | End of the current billing period for this subscription |
 | cancel_at_period_end | bool | Whether the subscription will cancel at the end of the current period |
 | canceled_at | Optional[datetime] | When the subscription was canceled (if any) |
-| created_at | Optional[datetime] | When the subscription was first created |
 | metadata | Dict[str, Any] | Set of key-value pairs attached to the subscription |
 
 </Accordion>

@@ -49,14 +49,15 @@ The following data models are available for this connector:
 
 Schema for HubSpot contact entities with flexible property handling.
 
+Reference:
+    https://developers.hubspot.com/docs/api/crm/contacts
+
 | Field | Type | Description |
 |-------|------|-------------|
 | first_name | Optional[str] | The contact's first name |
 | last_name | Optional[str] | The contact's last name |
 | email | Optional[str] | The contact's email address |
 | properties | Dict[str, Any] | All properties from HubSpot contact object |
-| created_at | Optional[datetime] | Timestamp when the contact was created |
-| updated_at | Optional[datetime] | Timestamp when the contact was last updated |
 | archived | bool | Whether the contact is archived |
 
 </Accordion>
@@ -64,13 +65,13 @@ Schema for HubSpot contact entities with flexible property handling.
 
 Schema for HubSpot company entities with flexible property handling.
 
+Reference:
+    https://developers.hubspot.com/docs/api/crm/companies
+
 | Field | Type | Description |
 |-------|------|-------------|
-| name | Optional[str] | The company's name |
 | domain | Optional[str] | The company's domain name |
 | properties | Dict[str, Any] | All properties from HubSpot company object |
-| created_at | Optional[datetime] | Timestamp when the company was created |
-| updated_at | Optional[datetime] | Timestamp when the company was last updated |
 | archived | bool | Whether the company is archived |
 
 </Accordion>
@@ -78,13 +79,14 @@ Schema for HubSpot company entities with flexible property handling.
 
 Schema for HubSpot deal entities with flexible property handling.
 
+Reference:
+    https://developers.hubspot.com/docs/api/crm/deals
+
 | Field | Type | Description |
 |-------|------|-------------|
 | deal_name | Optional[str] | The name of the deal |
 | amount | Optional[float] | The monetary value of the deal |
 | properties | Dict[str, Any] | All properties from HubSpot deal object |
-| created_at | Optional[datetime] | Timestamp when the deal was created |
-| updated_at | Optional[datetime] | Timestamp when the deal was last updated |
 | archived | bool | Whether the deal is archived |
 
 </Accordion>
@@ -92,13 +94,14 @@ Schema for HubSpot deal entities with flexible property handling.
 
 Schema for HubSpot ticket entities with flexible property handling.
 
+Reference:
+    https://developers.hubspot.com/docs/api/crm/tickets
+
 | Field | Type | Description |
 |-------|------|-------------|
 | subject | Optional[str] | The subject of the support ticket |
 | content | Optional[str] | The content or description of the ticket |
 | properties | Dict[str, Any] | All properties from HubSpot ticket object |
-| created_at | Optional[datetime] | Timestamp when the ticket was created |
-| updated_at | Optional[datetime] | Timestamp when the ticket was last updated |
 | archived | bool | Whether the ticket is archived |
 
 </Accordion>

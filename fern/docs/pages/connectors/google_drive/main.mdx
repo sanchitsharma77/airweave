@@ -79,11 +79,8 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| drive_id | str | Unique ID of the shared drive. |
-| name | Optional[str] | The name of this shared drive. |
 | kind | Optional[str] | Identifies what kind of resource this is; typically "drive#drive". |
 | color_rgb | Optional[str] | The color of this shared drive as an RGB hex string. |
-| created_time | Optional[datetime] | When the shared drive was created (RFC 3339 date-time). |
 | hidden | bool | Whether the shared drive is hidden from default view. |
 | org_unit_id | Optional[str] | The organizational unit of this shared drive, if applicable. |
 
@@ -97,20 +94,15 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| file_id | str | Unique ID of the file. |
-| name | Optional[str] | Name of the file. |
-| mime_type | Optional[str] | MIME type of the file. |
 | description | Optional[str] | Optional description of the file. |
 | starred | bool | Indicates whether the user has starred the file. |
 | trashed | bool | Whether the file is in the trash. |
 | explicitly_trashed | bool | Whether the file was explicitly trashed by the user. |
 | parents | List[str] | IDs of the parent folders containing this file. |
+| owners | List[Any] | Owners of the file. |
 | shared | bool | Whether the file is shared. |
 | web_view_link | Optional[str] | Link for opening the file in a relevant Google editor or viewer. |
 | icon_link | Optional[str] | A static, far-reaching URL to the file's icon. |
-| created_time | Optional[datetime] | When the file was created (RFC 3339 date-time). |
-| modified_time | Optional[datetime] | When the file was last modified (RFC 3339 date-time). |
-| size | Optional[int] | The size of the file's content in bytes. |
 | md5_checksum | Optional[str] | MD5 checksum for the content of the file. |
 
 </Accordion>
@@ -119,13 +111,11 @@ Reference:
 Deletion signal for a Google Drive file.
 
 Emitted when the Drive Changes API reports a file was removed (deleted or access lost).
-The `entity_id` matches the original file's `file_id` used for `GoogleDriveFileEntity` so
-downstream deletion can target the correct parent/children.
+The `entity_id` matches the original file's ID so downstream deletion can target
+the correct parent/children.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| file_id | str | ID of the deleted file |
-| deletion_status | str | Status indicating the file was removed (e.g., 'removed') |
 
 </Accordion>
 
