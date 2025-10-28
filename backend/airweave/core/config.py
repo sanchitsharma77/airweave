@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     TEMPORAL_ENABLED: bool = False
     TEMPORAL_DISABLE_SANDBOX: bool = False
 
+    # Temporal worker graceful shutdown configuration
+    TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: int = 7200  # 2 hours in seconds
+    WORKER_METRICS_PORT: int = 8888  # Port for /drain and /health endpoints
+
     # Stripe billing settings
     STRIPE_ENABLED: bool = False
     STRIPE_SECRET_KEY: str = ""

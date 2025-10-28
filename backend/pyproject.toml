@@ -64,6 +64,7 @@ groq = "^0.31.1"
 cohere = "^5.13.11"
 cerebras-cloud-sdk = "^1.50.1"
 cryptography = "^46.0.2"
+aiohttp = "^3.9.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
