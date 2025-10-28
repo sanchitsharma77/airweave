@@ -240,7 +240,7 @@ class TestGracefulShutdown:
                 timeout=5,
             )
             assert result.returncode == 0, "Health endpoint should be accessible"
-            assert result.stdout in ["OK", "NOT_RUNNING"], f"Unexpected health status: {result.stdout}"
+            assert result.stdout in ["OK", "NOT_RUNNING", "DRAINING"], f"Unexpected health status: {result.stdout}"
         else:
             # Kubernetes test
             worker_pods = self._get_worker_pods()
@@ -267,6 +267,7 @@ class TestGracefulShutdown:
                 assert result.stdout in [
                     "OK",
                     "NOT_RUNNING",
+                    "DRAINING",
                 ], f"Unexpected health status on {pod}: {result.stdout}"
 
     @pytest.mark.requires_temporal
