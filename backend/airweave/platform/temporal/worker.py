@@ -104,10 +104,10 @@ class TemporalWorker:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "localhost", settings.WORKER_METRICS_PORT)
+        site = web.TCPSite(runner, "0.0.0.0", settings.WORKER_METRICS_PORT)
         await site.start()
         self.metrics_server = runner
-        logger.info(f"Control server started on localhost:{settings.WORKER_METRICS_PORT}")
+        logger.info(f"Control server started on 0.0.0.0:{settings.WORKER_METRICS_PORT}")
 
     async def _handle_drain(self, request):
         """Handle drain request from PreStop hook.
@@ -139,6 +139,8 @@ class TemporalWorker:
         """Health check endpoint."""
         if not self.running:
             return web.Response(text="NOT_RUNNING", status=503)
+        if self.draining:
+            return web.Response(text="DRAINING", status=503)
         return web.Response(text="OK", status=200)
 
     def _get_sandbox_config(self):
