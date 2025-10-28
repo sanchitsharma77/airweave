@@ -346,10 +346,19 @@ class QdrantDestination(VectorDBDestination):
             mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
         )
 
+        # CRITICAL: Remove explicit None values from timestamps (Pydantic may include them)
+        # This prevents Qdrant decay formula errors on documents without valid timestamps
+        if data_object.get("updated_at") is None:
+            data_object.pop("updated_at", None)
+        if data_object.get("created_at") is None:
+            data_object.pop("created_at", None)
+
         # CRITICAL: Normalize timestamps for temporal relevance
-        # If updated_at is missing but created_at exists, use created_at as fallback
+        # If updated_at is missing/null but created_at has a value, use created_at as fallback
         # This ensures temporal decay can work on documents that only have created_at
-        if "updated_at" not in data_object and "created_at" in data_object:
+        if (
+            "updated_at" not in data_object or data_object.get("updated_at") is None
+        ) and data_object.get("created_at") is not None:
             data_object["updated_at"] = data_object["created_at"]
             self.logger.debug(
                 f"[Qdrant] Normalized timestamp: copied created_at → updated_at "
@@ -399,10 +408,19 @@ class QdrantDestination(VectorDBDestination):
             mode="json", exclude_none=True, exclude={"airweave_system_metadata": {"vectors"}}
         )
 
+        # CRITICAL: Remove explicit None values from timestamps (Pydantic may include them)
+        # This prevents Qdrant decay formula errors on documents without valid timestamps
+        if entity_data.get("updated_at") is None:
+            entity_data.pop("updated_at", None)
+        if entity_data.get("created_at") is None:
+            entity_data.pop("created_at", None)
+
         # CRITICAL: Normalize timestamps for temporal relevance
-        # If updated_at is missing but created_at exists, use created_at as fallback
+        # If updated_at is missing/null but created_at has a value, use created_at as fallback
         # This ensures temporal decay can work on documents that only have created_at
-        if "updated_at" not in entity_data and "created_at" in entity_data:
+        if (
+            "updated_at" not in entity_data or entity_data.get("updated_at") is None
+        ) and entity_data.get("created_at") is not None:
             entity_data["updated_at"] = entity_data["created_at"]
             self.logger.debug(
                 f"[Qdrant] Normalized timestamp: copied created_at → updated_at "

@@ -80,8 +80,10 @@ class TemporalRelevance(SearchOperation):
 
         # CRITICAL: Filter to only documents with updated_at field
         # This prevents Qdrant decay formula errors on documents without timestamps
-        has_timestamp_condition = rest.IsNullCondition(
-            is_null=rest.PayloadField(key=self.DATETIME_FIELD)
+        # IsEmpty matches: field doesn't exist OR is null OR is []
+        # We use must_not to require: field exists AND has a value
+        has_timestamp_condition = rest.IsEmptyCondition(
+            is_empty=rest.PayloadField(key=self.DATETIME_FIELD)
         )
 
         if qdrant_filter:
@@ -209,14 +211,16 @@ class TemporalRelevance(SearchOperation):
             filter_dict: Existing filter dict from state (may be None)
 
         Returns:
-            Filter dict with must_not condition to exclude null timestamps
+            Filter dict with must_not condition to exclude empty/missing timestamps
         """
-        # Build the IsNull condition to exclude documents without timestamps
-        is_null_condition = {"is_null": {"key": self.DATETIME_FIELD}}
+        # Build the IsEmpty condition to exclude documents without timestamps
+        # IsEmpty matches: field doesn't exist OR field is null OR field is []
+        # We use must_not to invert it: field exists AND has a value
+        is_empty_condition = {"is_empty": {"key": self.DATETIME_FIELD}}
 
         if not filter_dict:
             # No existing filter - create new one with just the timestamp exclusion
-            return {"must_not": [is_null_condition]}
+            return {"must_not": [is_empty_condition]}
 
         # Merge with existing filter
         updated_filter = filter_dict.copy()
@@ -225,7 +229,7 @@ class TemporalRelevance(SearchOperation):
             updated_filter["must_not"] = []
 
         # Add timestamp exclusion to must_not conditions
-        updated_filter["must_not"].append(is_null_condition)
+        updated_filter["must_not"].append(is_empty_condition)
 
         return updated_filter
 
