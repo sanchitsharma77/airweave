@@ -241,7 +241,7 @@ class GoogleDocsSource(BaseSource):
                             try:
                                 await self.file_downloader.download_from_url(
                                     entity=entity,
-                                    http_client_factory=lambda: httpx.AsyncClient(timeout=60.0),
+                                    http_client_factory=self.http_client,
                                     access_token_provider=self.get_access_token,
                                     logger=self.logger,
                                 )
@@ -349,7 +349,7 @@ class GoogleDocsSource(BaseSource):
                         try:
                             await self.file_downloader.download_from_url(
                                 entity=entity,
-                                http_client_factory=lambda: httpx.AsyncClient(timeout=60.0),
+                                http_client_factory=self.http_client,
                                 access_token_provider=self.get_access_token,
                                 logger=self.logger,
                             )
