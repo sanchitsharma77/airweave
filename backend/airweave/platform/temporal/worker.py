@@ -38,8 +38,11 @@ class TemporalWorker:
     async def start(self) -> None:
         """Start the Temporal worker."""
         try:
-            # Start control server for /drain endpoint and metrics
-            await self._start_control_server()
+            # Start control server for /drain endpoint and metrics (non-blocking)
+            try:
+                await self._start_control_server()
+            except Exception as e:
+                logger.warning(f"Failed to start control server (metrics unavailable): {e}")
 
             client = await temporal_client.get_client()
             task_queue = settings.TEMPORAL_TASK_QUEUE

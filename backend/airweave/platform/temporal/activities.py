@@ -49,7 +49,7 @@ async def _run_sync_task(
 
 # Import inside the activity to avoid issues with Temporal's sandboxing
 @activity.defn
-async def run_sync_activity(
+async def run_sync_activity(  # noqa: C901
     sync_dict: Dict[str, Any],
     sync_job_dict: Dict[str, Any],
     collection_dict: Dict[str, Any],
@@ -107,17 +107,24 @@ async def run_sync_activity(
 
     ctx.logger.debug(f"\n\nStarting sync activity for job {sync_job.id}\n\n")
 
-    # Track this activity in worker metrics
-    async with worker_metrics.track_activity(
-        activity_name="run_sync_activity",
-        sync_job_id=sync_job.id,
-        organization_id=organization.id,
-        metadata={
-            "connection_name": connection.name,
-            "collection_name": collection.name,
-            "force_full_sync": force_full_sync,
-        },
-    ):
+    # Track this activity in worker metrics (fail-safe: never crash sync)
+    try:
+        tracking_context = worker_metrics.track_activity(
+            activity_name="run_sync_activity",
+            sync_job_id=sync_job.id,
+            organization_id=organization.id,
+            metadata={
+                "connection_name": connection.name,
+                "collection_name": collection.name,
+                "force_full_sync": force_full_sync,
+            },
+        )
+        await tracking_context.__aenter__()
+    except Exception as e:
+        ctx.logger.warning(f"Failed to register activity in metrics: {e}")
+        tracking_context = None
+
+    try:
         # Start the sync task
         sync_task = asyncio.create_task(
             _run_sync_task(
@@ -178,6 +185,13 @@ async def run_sync_activity(
         except Exception as e:
             ctx.logger.error(f"Failed sync activity for job {sync_job.id}: {e}")
             raise
+    finally:
+        # Clean up metrics tracking (fail-safe)
+        if tracking_context:
+            try:
+                await tracking_context.__aexit__(None, None, None)
+            except Exception as cleanup_err:
+                ctx.logger.warning(f"Failed to cleanup metrics tracking: {cleanup_err}")
 
 
 @activity.defn
