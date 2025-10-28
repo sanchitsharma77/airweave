@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -9,6 +10,29 @@ import resend
 
 from airweave.core.config import settings
 from airweave.core.logging import logger
+
+# Rate limiter: Track last request time to respect Resend's 2 req/sec limit
+_last_request_time = 0.0
+_rate_limit_lock = asyncio.Lock()
+
+
+async def _wait_for_rate_limit() -> None:
+    """Ensure we don't exceed Resend's rate limit of 2 requests per second.
+
+    This adds a minimum delay of 0.5 seconds between requests.
+    """
+    global _last_request_time
+
+    async with _rate_limit_lock:
+        now = time.monotonic()
+        time_since_last_request = now - _last_request_time
+        min_interval = 0.5  # 2 requests per second = 0.5 seconds minimum between requests
+
+        if time_since_last_request < min_interval:
+            sleep_time = min_interval - time_since_last_request
+            await asyncio.sleep(sleep_time)
+
+        _last_request_time = time.monotonic()
 
 
 def _send_email_via_resend_sync(
@@ -50,8 +74,9 @@ async def send_email_via_resend(
     html_body: str,
     from_email: Optional[str] = None,
     scheduled_at: Optional[str] = None,
+    max_retries: int = 3,
 ) -> bool:
-    """Send an email via Resend asynchronously.
+    """Send an email via Resend asynchronously with rate limiting and retry logic.
 
     Args:
     ----
@@ -60,6 +85,7 @@ async def send_email_via_resend(
         html_body (str): HTML email body
         from_email (Optional[str]): Sender email (defaults to settings.RESEND_FROM_EMAIL)
         scheduled_at (Optional[str]): ISO 8601 timestamp for scheduled delivery
+        max_retries (int): Maximum number of retry attempts for rate limit errors (default: 3)
 
     Returns:
     -------
@@ -70,20 +96,42 @@ async def send_email_via_resend(
         logger.debug("RESEND_API_KEY or RESEND_FROM_EMAIL not configured - skipping email")
         return False
 
-    try:
-        await asyncio.to_thread(
-            _send_email_via_resend_sync,
-            to_email,
-            subject,
-            html_body,
-            from_email,
-            scheduled_at,
-        )
-        logger.info(f"Email sent to {to_email}: {subject}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
-        return False
+    # Apply rate limiting before each attempt
+    await _wait_for_rate_limit()
+
+    for attempt in range(max_retries + 1):
+        try:
+            await asyncio.to_thread(
+                _send_email_via_resend_sync,
+                to_email,
+                subject,
+                html_body,
+                from_email,
+                scheduled_at,
+            )
+            logger.info(f"Email sent to {to_email}: {subject}")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+
+            # Check if it's a rate limit error
+            is_rate_limit = "Too many requests" in error_msg or "rate limit" in error_msg.lower()
+
+            if is_rate_limit and attempt < max_retries:
+                # Exponential backoff: 1s, 2s, 4s
+                backoff_time = 2**attempt
+                logger.warning(
+                    f"Rate limit hit sending email to {to_email}. "
+                    f"Retrying in {backoff_time}s (attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(backoff_time)
+                continue
+
+            # Either not a rate limit error, or we've exhausted retries
+            logger.error(f"Failed to send email to {to_email} after {attempt + 1} attempts: {e}")
+            return False
+
+    return False
 
 
 def _send_welcome_email_sync(to_email: str, user_name: str) -> None:
