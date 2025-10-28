@@ -11,9 +11,9 @@ from airweave.platform.sync.exceptions import SyncFailureError
 class SemanticChunker(BaseChunker):
     """Singleton semantic chunker with local inference (no API calls).
 
-    Two-stage approach (internal implementation detail):
+    Two-stage chunking approach (internal implementation detail):
     1. SemanticChunker: Detects semantic boundaries via embedding similarity
-    2. SentenceChunker: Safety net to split any chunks exceeding token limit
+    2. TokenChunker fallback: Force-splits any oversized chunks at token boundaries
 
     The chunker is shared across all syncs in the pod to avoid reloading
     the embedding model for every sync job.
@@ -75,7 +75,7 @@ class SemanticChunker(BaseChunker):
             return
 
         self._semantic_chunker = None  # Lazy init
-        self._sentence_chunker = None  # Lazy init
+        self._token_chunker = None  # Lazy init (emergency fallback)
         self._tiktoken_tokenizer = None  # Lazy init
         self._initialized = True
 
@@ -87,7 +87,7 @@ class SemanticChunker(BaseChunker):
     def _ensure_chunkers(self):
         """Lazy initialization of chunker models.
 
-        Initializes SemanticChunker (embedding similarity) + SentenceChunker (safety net).
+        Initializes SemanticChunker (embedding similarity) for recursive semantic splitting.
         SemanticChunker uses local embedding model for fast semantic boundary detection.
 
         Raises:
@@ -99,7 +99,7 @@ class SemanticChunker(BaseChunker):
         try:
             import tiktoken
             from chonkie import SemanticChunker as ChonkieSemanticChunker
-            from chonkie import SentenceChunker
+            from chonkie import TokenChunker
 
             # Initialize tiktoken tokenizer for accurate OpenAI token counting
             self._tiktoken_tokenizer = tiktoken.get_encoding(self.TOKENIZER)
@@ -127,29 +127,31 @@ class SemanticChunker(BaseChunker):
                 filter_tolerance=self.FILTER_TOLERANCE,  # Boundary tolerance
             )
 
-            # Initialize SentenceChunker for safety net (hard limit enforcement)
-            self._sentence_chunker = SentenceChunker(
+            # Initialize TokenChunker for fallback
+            # Splits at exact token boundaries when semantic chunking produces oversized chunks
+            # GUARANTEES chunks ≤ MAX_TOKENS_PER_CHUNK (uses same tokenizer for encode/decode)
+            self._token_chunker = TokenChunker(
                 tokenizer=self._tiktoken_tokenizer,
                 chunk_size=self.MAX_TOKENS_PER_CHUNK,
-                chunk_overlap=self.OVERLAP_TOKENS,
-                min_sentences_per_chunk=1,
+                chunk_overlap=0,
             )
 
             logger.info(
                 f"Loaded SemanticChunker (model: {self.EMBEDDING_MODEL}, "
-                f"target_size: {self.SEMANTIC_CHUNK_SIZE}, threshold: {self.SIMILARITY_THRESHOLD}, "
-                f"hard_limit: {self.MAX_TOKENS_PER_CHUNK}) + SentenceChunker safety net"
+                f"target_size: {self.SEMANTIC_CHUNK_SIZE}, "
+                f"threshold: {self.SIMILARITY_THRESHOLD}, "
+                f"hard_limit: {self.MAX_TOKENS_PER_CHUNK}) + TokenChunker fallback"
             )
 
         except Exception as e:
             raise SyncFailureError(f"Failed to initialize chunkers: {e}")
 
     async def chunk_batch(self, texts: List[str]) -> List[List[Dict[str, Any]]]:
-        """Chunk a batch of texts with two-stage approach.
+        """Chunk a batch of texts with semantic chunking + TokenChunker fallback.
 
         Stage 1: SemanticChunker detects semantic boundaries (embedding similarity)
         Stage 1.5: Recount tokens with tiktoken cl100k_base (OpenAI compatibility)
-        Stage 2: SentenceChunker splits any chunks exceeding MAX_TOKENS_PER_CHUNK
+        Stage 2: TokenChunker force-splits any oversized chunks at token boundaries (hard limit)
 
         Uses run_in_thread_pool because Chonkie is synchronous (avoids blocking event loop).
 
@@ -191,8 +193,8 @@ class SemanticChunker(BaseChunker):
                 if chunk["token_count"] > self.MAX_TOKENS_PER_CHUNK:
                     raise SyncFailureError(
                         f"PROGRAMMING ERROR: Chunk has {chunk['token_count']} tokens "
-                        f"after safety net (max: {self.MAX_TOKENS_PER_CHUNK}). "
-                        "SentenceChunker failed to enforce hard limit."
+                        f"after TokenChunker fallback (max: {self.MAX_TOKENS_PER_CHUNK}). "
+                        "TokenChunker failed to enforce hard limit."
                     )
 
         return final_results
@@ -216,100 +218,10 @@ class SemanticChunker(BaseChunker):
 
         return semantic_results
 
-    def _recursive_safety_split(
-        self, split_results: List[List[Any]], max_iterations: int = 5
-    ) -> List[List[Any]]:
-        """Recursively split chunks until all are within MAX_TOKENS_PER_CHUNK.
-
-        Dynamically reduces chunk size by 1000 tokens on each iteration to account
-        for tokenizer mismatch between Chonkie and tiktoken.
-
-        Args:
-            split_results: List of chunk lists from SentenceChunker
-            max_iterations: Maximum recursion depth to prevent infinite loops
-
-        Returns:
-            List of chunk lists with all chunks within token limit
-        """
-        iteration = 0
-        CHUNK_SIZE_REDUCTION = 1000  # Reduce by 1000 tokens each iteration
-
-        while iteration < max_iterations:
-            # Recount all chunks with tiktoken
-            for split_chunks in split_results:
-                for chunk in split_chunks:
-                    chunk.token_count = len(self._tiktoken_tokenizer.encode(chunk.text))
-
-            # Find chunks still exceeding limit
-            still_oversized = []
-            still_oversized_indices = []  # Track (doc_idx, chunk_idx) for replacement
-
-            for doc_idx, split_chunks in enumerate(split_results):
-                for chunk_idx, chunk in enumerate(split_chunks):
-                    if chunk.token_count > self.MAX_TOKENS_PER_CHUNK:
-                        still_oversized.append(chunk.text)
-                        still_oversized_indices.append((doc_idx, chunk_idx))
-
-            if not still_oversized:
-                # All chunks fit within limit
-                logger.debug(f"Safety net recursive split completed after {iteration} iterations")
-                return split_results
-
-            # Calculate reduced chunk size for this iteration
-            # Start at MAX_TOKENS_PER_CHUNK, reduce by 1000 each iteration
-            reduced_chunk_size = max(
-                1000,  # Minimum chunk size (safety floor)
-                self.MAX_TOKENS_PER_CHUNK - (iteration * CHUNK_SIZE_REDUCTION),
-            )
-
-            # Re-split the oversized chunks with smaller chunk size
-            logger.warning(
-                f"Safety net iteration {iteration + 1}: {len(still_oversized)} chunks still exceed "
-                f"{self.MAX_TOKENS_PER_CHUNK} tokens. "
-                f"Re-splitting with chunk_size={reduced_chunk_size}..."
-            )
-
-            # Create temporary SentenceChunker with reduced chunk size
-            from chonkie.chunker.sentence import SentenceChunker
-
-            reduced_chunker = SentenceChunker(
-                tokenizer=self._sentence_chunker.tokenizer,
-                chunk_size=reduced_chunk_size,
-                chunk_overlap=0,
-            )
-
-            re_split_results = reduced_chunker.chunk_batch(still_oversized)
-
-            # Replace oversized chunks with their re-split sub-chunks
-            for (doc_idx, chunk_idx), re_split_chunks in zip(
-                still_oversized_indices, re_split_results, strict=False
-            ):
-                # Mark the original chunk for deletion and insert re-split chunks
-                original_chunk = split_results[doc_idx][chunk_idx]
-                original_chunk._marked_for_deletion = True  # Mark for removal
-
-                # Insert re-split chunks after the original position
-                split_results[doc_idx].extend(re_split_chunks)
-
-            # Remove marked chunks
-            for doc_idx in range(len(split_results)):
-                split_results[doc_idx] = [
-                    c for c in split_results[doc_idx] if not hasattr(c, "_marked_for_deletion")
-                ]
-
-            iteration += 1
-
-        # Max iterations reached - log error
-        logger.error(
-            f"Safety net failed after {max_iterations} iterations. "
-            "Some chunks may still exceed limit."
-        )
-        return split_results
-
     def _apply_safety_net_batched(  # noqa: C901
         self, semantic_results: List[List[Any]]
     ) -> List[List[Dict[str, Any]]]:
-        """Split oversized chunks using batched sentence chunking.
+        """Split oversized chunks using TokenChunker fallback.
 
         Example flow:
         # INPUT: semantic_results (List of List of Chunk objects)
@@ -338,15 +250,15 @@ class SemanticChunker(BaseChunker):
                 1: (2, 0),  # Position 1 in oversized_texts → doc_idx=2, chunk_idx=0
             }
 
-            # STEP 2: Batch split with SentenceChunker
-            split_results = sentence_chunker.chunk_batch(oversized_texts)
+            # STEP 2: TokenChunker fallback (hard limit enforcement)
+            split_results = token_chunker.chunk_batch(oversized_texts)
             # Returns:
             split_results = [
-                # Position 0 (doc 0, chunk 1) → split into 2
+                # Position 0 (doc 0, chunk 1) → split into 2 token-boundary chunks
                 [Chunk(text="...", token_count=4750),
                 Chunk(text="...", token_count=4750)],
 
-                # Position 1 (doc 2, chunk 0) → split into 2
+                # Position 1 (doc 2, chunk 0) → split into 2 token-boundary chunks
                 [Chunk(text="...", token_count=5000),
                 Chunk(text="...", token_count=5000)]
             ]
@@ -396,18 +308,18 @@ class SemanticChunker(BaseChunker):
                     oversized_texts.append(chunk.text)
                     oversized_map[pos] = (doc_idx, chunk_idx)
 
-        # Batch process all oversized chunks with SentenceChunker
-        # Use recursive splitting to ensure all chunks fit within limit
+        # Batch process all oversized chunks with TokenChunker fallback
+        # TokenChunker enforces hard limit in one pass (no recursion needed)
         split_results_by_position = {}
         if oversized_texts:
             logger.debug(
                 f"Safety net: splitting {len(oversized_texts)} chunks "
-                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens"
+                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens with TokenChunker"
             )
-            split_results = self._sentence_chunker.chunk_batch(oversized_texts)
 
-            # Recount with tiktoken and recursively re-split if needed
-            split_results = self._recursive_safety_split(split_results)
+            # Use TokenChunker to split at exact token boundaries
+            # GUARANTEED to produce chunks ≤ MAX_TOKENS_PER_CHUNK in one pass
+            split_results = self._token_chunker.chunk_batch(oversized_texts)
 
             split_results_by_position = dict(enumerate(split_results))
 
@@ -439,8 +351,8 @@ class SemanticChunker(BaseChunker):
 
         if oversized_texts:
             logger.debug(
-                f"Safety net split {len(oversized_texts)} chunks "
-                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens"
+                f"TokenChunker fallback split {len(oversized_texts)} chunks "
+                f"that exceeded {self.MAX_TOKENS_PER_CHUNK} tokens"
             )
 
         return final_results
