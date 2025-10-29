@@ -96,10 +96,10 @@ async def send_email_via_resend(
         logger.debug("RESEND_API_KEY or RESEND_FROM_EMAIL not configured - skipping email")
         return False
 
-    # Apply rate limiting before each attempt
-    await _wait_for_rate_limit()
-
     for attempt in range(max_retries + 1):
+        # Apply rate limiting before each attempt (including retries)
+        await _wait_for_rate_limit()
+
         try:
             await asyncio.to_thread(
                 _send_email_via_resend_sync,
