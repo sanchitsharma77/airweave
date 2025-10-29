@@ -1170,10 +1170,10 @@
             "format": "uuid",
             "title": "Id"
           },
-          "organization": {
+          "organization_id": {
             "type": "string",
             "format": "uuid",
-            "title": "Organization"
+            "title": "Organization Id"
           },
           "created_at": {
             "type": "string",
@@ -1227,36 +1227,42 @@
             "title": "Modified By Email"
           },
           "decrypted_key": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Decrypted Key"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "organization",
+          "organization_id",
           "created_at",
           "modified_at",
-          "expiration_date",
-          "decrypted_key"
+          "expiration_date"
         ],
         "title": "APIKey",
         "description": "Schema for API keys returned to clients - includes decrypted key."
       },
       "APIKeyCreate": {
         "properties": {
-          "expiration_date": {
+          "expiration_days": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "date-time"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Expiration Date",
-            "description": "Expiration date for the API key, defaults to 180 days from now"
+            "title": "Expiration Days",
+            "description": "Number of days until the API key expires (default: 90, max: 365)",
+            "default": 90
           }
         },
         "type": "object",
