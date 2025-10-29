@@ -299,7 +299,6 @@ class FederatedSearch(SearchOperation):
                 operation_call=call_provider,
                 operation_name="FederatedSearch",
                 ctx=ctx,
-                state=state,
             )
 
             # Normalize and ensure single-word coverage
