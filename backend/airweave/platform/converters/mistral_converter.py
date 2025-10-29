@@ -8,6 +8,9 @@ import tempfile
 import time
 from typing import Dict, List
 
+from httpx import HTTPStatusError, ReadTimeout, TimeoutException
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
 from airweave.core.config import settings
 from airweave.core.logging import logger
 from airweave.platform.converters._base import BaseTextConverter
@@ -19,6 +22,12 @@ from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailure
 
 # Mistral OCR file size limit
 MAX_FILE_SIZE_BYTES = 50_000_000  # 50MB Mistral limit
+
+# Retry configuration (matching Notion pattern)
+MAX_RETRIES = 5  # Maximum retry attempts
+RETRY_MIN_WAIT = 10  # Minimum wait between retries (seconds)
+RETRY_MAX_WAIT = 60  # Maximum wait between retries (seconds)
+RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
 
 
 # ==================== MISTRAL CONVERTER ====================
@@ -70,6 +79,35 @@ class MistralConverter(BaseTextConverter):
             logger.debug("Mistral client initialized for document conversion")
         except ImportError:
             raise SyncFailureError("mistralai package required but not installed")
+
+    async def _mistral_api_call_with_retry(self, operation):
+        """Generic wrapper for Mistral API calls with rate limiting + retry.
+
+        Args:
+            operation: Sync function to call (will be run in thread pool)
+
+        Returns:
+            Result from operation
+
+        Raises:
+            Exception: If operation fails after retries
+        """
+
+        @retry(
+            retry=retry_if_exception_type(
+                (TimeoutException, ReadTimeout, HTTPStatusError, Exception)
+            ),
+            stop=stop_after_attempt(MAX_RETRIES),
+            wait=wait_exponential(
+                multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT
+            ),
+            reraise=True,
+        )
+        async def _call():
+            await self.rate_limiter.acquire()  # Rate limit before each attempt
+            return await run_in_thread_pool(operation)
+
+        return await _call()
 
     async def convert_batch(self, file_paths: List[str]) -> Dict[str, str]:
         """Convert document files to markdown text using Mistral batch OCR API.
@@ -641,27 +679,20 @@ class MistralConverter(BaseTextConverter):
         async def _upload_one(unique_key: str, chunk_path: str):
             async with semaphore:
                 try:
-                    # Acquire rate limit slot BEFORE uploading
-                    await self.rate_limiter.acquire()
-
+                    # Upload file with retry + rate limiting
                     def _upload():
                         with open(chunk_path, "rb") as f:
-                            uploaded = self._mistral_client.files.upload(
+                            return self._mistral_client.files.upload(
                                 file={"file_name": os.path.basename(chunk_path), "content": f},
                                 purpose="ocr",
-                            )
-                        return uploaded.id
+                            ).id
 
-                    file_id = await run_in_thread_pool(_upload)
+                    file_id = await self._mistral_api_call_with_retry(_upload)
 
-                    # Get signed URL (also rate limited)
-                    await self.rate_limiter.acquire()
-
-                    def _get_signed_url():
-                        signed_url = self._mistral_client.files.get_signed_url(file_id=file_id)
-                        return signed_url.url
-
-                    signed_url = await run_in_thread_pool(_get_signed_url)
+                    # Get signed URL with retry + rate limiting
+                    signed_url = await self._mistral_api_call_with_retry(
+                        lambda: self._mistral_client.files.get_signed_url(file_id=file_id).url
+                    )
 
                     # Store result
                     upload_key = f"{unique_key}__chunk_{chunk_path}"
@@ -743,26 +774,26 @@ class MistralConverter(BaseTextConverter):
         Raises:
             EntityProcessingError: If submission fails
         """
-        # Rate limit the upload
-        await self.rate_limiter.acquire()
+        try:
+            # Upload JSONL with retry + rate limiting
+            def _upload_jsonl():
+                with open(jsonl_path, "rb") as f:
+                    return self._mistral_client.files.upload(
+                        file={"file_name": "batch.jsonl", "content": f}, purpose="batch"
+                    ).id
 
-        def _submit():
-            # Upload JSONL
-            with open(jsonl_path, "rb") as f:
-                batch_data = self._mistral_client.files.upload(
-                    file={"file_name": "batch.jsonl", "content": f}, purpose="batch"
-                )
+            batch_file_id = await self._mistral_api_call_with_retry(_upload_jsonl)
 
-            # Create batch job
-            job = self._mistral_client.batch.jobs.create(
-                input_files=[batch_data.id], model="mistral-ocr-latest", endpoint="/v1/ocr"
+            # Create batch job with retry + rate limiting
+            job_id = await self._mistral_api_call_with_retry(
+                lambda: self._mistral_client.batch.jobs.create(
+                    input_files=[batch_file_id], model="mistral-ocr-latest", endpoint="/v1/ocr"
+                ).id
             )
 
-            logger.debug(f"Submitted batch job {job.id} (batch file: {batch_data.id})")
-            return job.id, batch_data.id
+            logger.debug(f"Submitted batch job {job_id} (batch file: {batch_file_id})")
+            return job_id, batch_file_id
 
-        try:
-            return await run_in_thread_pool(_submit)
         except Exception as e:
             raise EntityProcessingError(f"Failed to submit Mistral batch job: {e}")
 
@@ -785,14 +816,11 @@ class MistralConverter(BaseTextConverter):
             if elapsed > timeout:
                 raise EntityProcessingError(f"Mistral batch job {job_id} timeout after {timeout}s")
 
-            # Rate limit the status check
-            await self.rate_limiter.acquire()
-
-            def _check():
-                return self._mistral_client.batch.jobs.get(job_id=job_id)
-
+            # Check status with retry + rate limiting
             try:
-                job = await run_in_thread_pool(_check)
+                job = await self._mistral_api_call_with_retry(
+                    lambda: self._mistral_client.batch.jobs.get(job_id=job_id)
+                )
             except Exception as e:
                 raise EntityProcessingError(f"Failed to check batch job status: {e}")
 
@@ -825,31 +853,34 @@ class MistralConverter(BaseTextConverter):
         Returns:
             Dict mapping upload_key -> markdown content
         """
-        # Rate limit the download
-        await self.rate_limiter.acquire()
-
-        def _download():
-            job = self._mistral_client.batch.jobs.get(job_id=job_id)
+        try:
+            # Get job with retry + rate limiting to get output file ID
+            job = await self._mistral_api_call_with_retry(
+                lambda: self._mistral_client.batch.jobs.get(job_id=job_id)
+            )
             if not hasattr(job, "output_file") or not job.output_file:
                 raise Exception("Batch job has no output file")
-            response = self._mistral_client.files.download(file_id=job.output_file)
+
+            # Download output file with retry + rate limiting
+            response = await self._mistral_api_call_with_retry(
+                lambda: self._mistral_client.files.download(file_id=job.output_file)
+            )
 
             # Handle different response types
             try:
                 if isinstance(response, bytes):
-                    return response
-                if hasattr(response, "read"):
-                    return response.read()
-                if hasattr(response, "content"):
-                    return response.content
-                if hasattr(response, "text"):
-                    return response.text.encode("utf-8")
-                return str(response).encode("utf-8")
+                    result_data = response
+                elif hasattr(response, "read"):
+                    result_data = response.read()
+                elif hasattr(response, "content"):
+                    result_data = response.content
+                elif hasattr(response, "text"):
+                    result_data = response.text.encode("utf-8")
+                else:
+                    result_data = str(response).encode("utf-8")
             except Exception:
-                return response
+                result_data = response
 
-        try:
-            result_data = await run_in_thread_pool(_download)
         except Exception as e:
             raise EntityProcessingError(f"Failed to download batch results: {e}")
 
@@ -1009,11 +1040,12 @@ class MistralConverter(BaseTextConverter):
 
         async def _delete(file_id):
             try:
-                # Rate limit deletion
-                await self.rate_limiter.acquire()
-                await run_in_thread_pool(self._mistral_client.files.delete, file_id=file_id)
+                # Delete with retry + rate limiting (best effort)
+                await self._mistral_api_call_with_retry(
+                    lambda: self._mistral_client.files.delete(file_id=file_id)
+                )
             except Exception:
-                pass  # Best effort cleanup
+                pass  # Best effort cleanup - don't fail if deletion fails
 
         # Collect all file IDs
         file_ids = [info["file_id"] for info in upload_map.values()]
