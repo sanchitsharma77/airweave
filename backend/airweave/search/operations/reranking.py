@@ -205,6 +205,9 @@ class Reranking(SearchOperation):
 
         textual_representation already contains formatted content from entity_pipeline.py,
         so we use it directly without building document strings.
+
+        For backward compatibility with old entities, falls back to embeddable_text and
+        other legacy fields if textual_representation is missing.
         """
         documents: List[str] = []
         for i, result in enumerate(results):
@@ -214,12 +217,24 @@ class Reranking(SearchOperation):
             if not isinstance(payload, dict):
                 payload = {}
 
-            # textual_representation is always present after entity_pipeline.py
-            doc = payload.get("textual_representation", "")
+            # Try new field first (present in all newly synced entities)
+            doc = payload.get("textual_representation", "").strip()
+
+            # Fallback to legacy fields for old entities (pre-refactor)
+            if not doc:
+                doc = (
+                    payload.get("embeddable_text", "").strip()
+                    or payload.get("md_content", "").strip()
+                    or payload.get("content", "").strip()
+                    or payload.get("text", "").strip()
+                    or ""
+                )
+
             if not doc:
                 raise ValueError(
-                    f"Result at index {i} missing textual_representation. "
-                    "All entities should have this field after entity_pipeline.py processing."
+                    f"Result at index {i} missing textual content. "
+                    "Entity has no textual_representation, embeddable_text, "
+                    "md_content, content, or text field."
                 )
             documents.append(doc)
 
