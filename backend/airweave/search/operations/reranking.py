@@ -187,7 +187,7 @@ class Reranking(SearchOperation):
         else:
             results_to_rerank = results
 
-        documents = self._prepare_documents(results_to_rerank)
+        documents = self._prepare_documents(results_to_rerank, ctx)
 
         top_n = min(len(documents), offset + limit)
 
@@ -200,7 +200,7 @@ class Reranking(SearchOperation):
         )
         return documents, top_n
 
-    def _prepare_documents(self, results: List[dict]) -> List[str]:
+    def _prepare_documents(self, results: List[dict], ctx: ApiContext) -> List[str]:
         """Extract textual_representation from result payloads.
 
         textual_representation already contains formatted content from entity_pipeline.py,
@@ -231,10 +231,12 @@ class Reranking(SearchOperation):
                 )
 
             if not doc:
-                raise ValueError(
-                    f"Result at index {i} missing textual content. "
-                    "Entity has no textual_representation, embeddable_text, "
-                    "md_content, content, or text field."
+                # Ultimate fallback: stringify the entire payload
+                # This ensures reranking never fails, even for malformed entities
+                doc = str(payload)
+                ctx.logger.warning(
+                    f"[Reranking] Result at index {i} missing textual content fields. "
+                    f"Using str(payload) fallback. Entity ID: {payload.get('entity_id', 'unknown')}"
                 )
             documents.append(doc)
 

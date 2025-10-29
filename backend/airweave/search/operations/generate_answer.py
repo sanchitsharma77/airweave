@@ -73,7 +73,7 @@ class GenerateAnswer(SearchOperation):
 
             # Budget and format results for THIS SPECIFIC provider
             formatted_context, chosen_count = self._budget_and_format_results(
-                results, context.query, provider
+                results, context.query, provider, ctx
             )
             chosen_count_for_metrics = chosen_count  # Store for metrics
 
@@ -122,7 +122,7 @@ class GenerateAnswer(SearchOperation):
         )
 
     def _budget_and_format_results(
-        self, results: List[Dict], query: str, provider: BaseProvider
+        self, results: List[Dict], query: str, provider: BaseProvider, ctx: ApiContext
     ) -> tuple[str, int]:
         """Format results while respecting token budget for specific provider.
 
@@ -130,6 +130,7 @@ class GenerateAnswer(SearchOperation):
             results: Search results to format
             query: User query
             provider: The actual provider that will be used (not a random one!)
+            ctx: API context for logging
 
         Returns:
             Tuple of (formatted_context, chosen_count)
@@ -163,7 +164,7 @@ class GenerateAnswer(SearchOperation):
         running_tokens = 0
 
         for i, result in enumerate(results):
-            formatted_result = self._format_single_result(i + 1, result)
+            formatted_result = self._format_single_result(i + 1, result, ctx)
             result_tokens = provider.count_tokens(formatted_result, tokenizer)
             separator_tokens = provider.count_tokens(separator, tokenizer) if i > 0 else 0
 
@@ -178,7 +179,7 @@ class GenerateAnswer(SearchOperation):
 
         # Ensure at least one result if possible
         if not chosen_parts and results:
-            first_result = self._format_single_result(1, results[0])
+            first_result = self._format_single_result(1, results[0], ctx)
             first_tokens = provider.count_tokens(first_result, tokenizer)
             if first_tokens <= budget:
                 return first_result, 1
@@ -189,7 +190,7 @@ class GenerateAnswer(SearchOperation):
 
         return "".join(chosen_parts), chosen_count
 
-    def _format_single_result(self, index: int, result: Dict) -> str:
+    def _format_single_result(self, index: int, result: Dict, ctx: ApiContext) -> str:
         """Format a single search result for LLM context.
 
         textual_representation already contains all formatted content from entity_pipeline.py,
@@ -201,6 +202,7 @@ class GenerateAnswer(SearchOperation):
         Args:
             index: Result index (1-based)
             result: Single search result
+            ctx: API context for logging
 
         Returns:
             Formatted string with entity ID and textual representation
@@ -231,10 +233,12 @@ class GenerateAnswer(SearchOperation):
             )
 
         if not content:
-            raise ValueError(
-                f"Result {index} (entity {entity_id}) missing textual content. "
-                "Entity has no textual_representation, embeddable_text, "
-                "md_content, content, text, or description field."
+            # Ultimate fallback: stringify the entire payload
+            # This ensures answer generation never fails, even for malformed entities
+            content = str(payload)
+            ctx.logger.warning(
+                f"[GenerateAnswer] Result {index} (entity {entity_id}) missing text fields. "
+                f"Using str(payload) fallback."
             )
 
         # Build formatted entry with score and content
