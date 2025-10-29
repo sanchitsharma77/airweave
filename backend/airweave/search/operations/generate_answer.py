@@ -195,6 +195,9 @@ class GenerateAnswer(SearchOperation):
         textual_representation already contains all formatted content from entity_pipeline.py,
         so we use it directly with minimal wrapping.
 
+        For backward compatibility with old entities, falls back to embeddable_text and
+        other legacy fields if textual_representation is missing.
+
         Args:
             index: Result index (1-based)
             result: Single search result
@@ -213,12 +216,25 @@ class GenerateAnswer(SearchOperation):
         # Extract entity ID
         entity_id = payload.get("entity_id") or f"result_{index}"
 
-        # textual_representation is always present after entity_pipeline.py
+        # Try new field first (present in all newly synced entities)
         content = payload.get("textual_representation", "").strip()
+
+        # Fallback to legacy fields for old entities (pre-refactor)
+        if not content:
+            content = (
+                payload.get("embeddable_text", "").strip()
+                or payload.get("md_content", "").strip()
+                or payload.get("content", "").strip()
+                or payload.get("text", "").strip()
+                or payload.get("description", "").strip()
+                or ""
+            )
+
         if not content:
             raise ValueError(
-                f"Result {index} (entity {entity_id}) missing textual_representation. "
-                "All entities should have this field after entity_pipeline.py processing."
+                f"Result {index} (entity {entity_id}) missing textual content. "
+                "Entity has no textual_representation, embeddable_text, "
+                "md_content, content, text, or description field."
             )
 
         # Build formatted entry with score and content
