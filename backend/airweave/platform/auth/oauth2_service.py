@@ -547,9 +547,14 @@ class OAuth2Service:
 
         # Include additional_frontend_params (e.g., audience for Atlassian)
         # These are often required for the refreshed token to access the same resources
-        if hasattr(integration_config, "additional_frontend_params") and integration_config.additional_frontend_params:
+        if (
+            hasattr(integration_config, "additional_frontend_params")
+            and integration_config.additional_frontend_params
+        ):
             payload.update(integration_config.additional_frontend_params)
-            logger.debug(f"Including additional params in token refresh: {list(integration_config.additional_frontend_params.keys())}")
+            logger.debug(
+                f"Including additional params in token refresh: {list(integration_config.additional_frontend_params.keys())}"
+            )
 
         if integration_config.client_credential_location == "header":
             encoded_credentials = OAuth2Service._encode_client_credentials(client_id, client_secret)
