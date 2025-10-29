@@ -99,7 +99,7 @@ async def check_and_notify_expiring_keys_activity() -> dict[str, int]:
 
     # Define notification thresholds
     thresholds = [
-        ("14_days", now + timedelta(days=14), now + timedelta(days=300)),  # 14-300  days window
+        ("14_days", now + timedelta(days=14), now + timedelta(days=15)),  # 14-15  days window
         ("3_days", now + timedelta(days=3), now + timedelta(days=4)),  # 3-4 days window
         ("expired", now - timedelta(hours=24), now),  # Recently expired (last 2h)
     ]
