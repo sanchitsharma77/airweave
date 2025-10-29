@@ -8,6 +8,9 @@ import tempfile
 import time
 from typing import Dict, List
 
+from httpx import HTTPStatusError, ReadTimeout, TimeoutException
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
 from airweave.core.config import settings
 from airweave.core.logging import logger
 from airweave.platform.converters._base import BaseTextConverter
@@ -19,6 +22,12 @@ from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailure
 
 # Mistral OCR file size limit
 MAX_FILE_SIZE_BYTES = 50_000_000  # 50MB Mistral limit
+
+# Retry configuration (matching Notion pattern)
+MAX_RETRIES = 5  # Maximum retry attempts
+RETRY_MIN_WAIT = 10  # Minimum wait between retries (seconds)
+RETRY_MAX_WAIT = 60  # Maximum wait between retries (seconds)
+RETRY_MULTIPLIER = 2  # Exponential backoff multiplier
 
 
 # ==================== MISTRAL CONVERTER ====================
@@ -70,6 +79,229 @@ class MistralConverter(BaseTextConverter):
             logger.debug("Mistral client initialized for document conversion")
         except ImportError:
             raise SyncFailureError("mistralai package required but not installed")
+
+    def _should_retry_mistral_error(self, exception: Exception) -> bool:
+        """Determine if a Mistral API error should be retried.
+
+        Args:
+            exception: Exception raised by Mistral API
+
+        Returns:
+            True if error is retryable (429, 502, 503, 504, timeout)
+        """
+        # Retry on timeout/connection errors
+        if isinstance(exception, (TimeoutException, ReadTimeout)):
+            return True
+
+        # Retry on HTTPStatusError with specific status codes
+        if isinstance(exception, HTTPStatusError):
+            return exception.response.status_code in {429, 502, 503, 504}
+
+        # Check for Mistral SDK exceptions (if they exist)
+        # The SDK may wrap httpx exceptions or have its own exception types
+        exception_str = str(exception).lower()
+        if any(
+            keyword in exception_str
+            for keyword in ["rate limit", "429", "502", "503", "504", "timeout"]
+        ):
+            logger.warning(f"Retrying on Mistral error: {exception}")
+            return True
+
+        return False
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_upload_file_with_retry(self, file_path: str, file_name: str) -> str:
+        """Upload file to Mistral with retry logic.
+
+        Args:
+            file_path: Path to file to upload
+            file_name: Name to use for the uploaded file
+
+        Returns:
+            File ID from Mistral
+
+        Raises:
+            Exception: If upload fails after retries
+        """
+        await self.rate_limiter.acquire()
+
+        def _upload():
+            with open(file_path, "rb") as f:
+                uploaded = self._mistral_client.files.upload(
+                    file={"file_name": file_name, "content": f},
+                    purpose="ocr",
+                )
+            return uploaded.id
+
+        try:
+            return await run_in_thread_pool(_upload)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral upload error (will retry): {e}")
+                raise
+            # Non-retryable error
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_get_signed_url_with_retry(self, file_id: str) -> str:
+        """Get signed URL from Mistral with retry logic.
+
+        Args:
+            file_id: File ID to get signed URL for
+
+        Returns:
+            Signed URL
+
+        Raises:
+            Exception: If request fails after retries
+        """
+        await self.rate_limiter.acquire()
+
+        def _get_signed_url():
+            signed_url = self._mistral_client.files.get_signed_url(file_id=file_id)
+            return signed_url.url
+
+        try:
+            return await run_in_thread_pool(_get_signed_url)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral get signed URL error (will retry): {e}")
+                raise
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_create_batch_job_with_retry(self, batch_file_id: str) -> str:
+        """Create batch job in Mistral with retry logic.
+
+        Args:
+            batch_file_id: ID of uploaded batch JSONL file
+
+        Returns:
+            Job ID
+
+        Raises:
+            Exception: If job creation fails after retries
+        """
+        await self.rate_limiter.acquire()
+
+        def _create():
+            job = self._mistral_client.batch.jobs.create(
+                input_files=[batch_file_id], model="mistral-ocr-latest", endpoint="/v1/ocr"
+            )
+            return job.id
+
+        try:
+            return await run_in_thread_pool(_create)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral batch job creation error (will retry): {e}")
+                raise
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_get_batch_job_with_retry(self, job_id: str):
+        """Get batch job status from Mistral with retry logic.
+
+        Args:
+            job_id: Batch job ID
+
+        Returns:
+            Job object
+
+        Raises:
+            Exception: If request fails after retries
+        """
+        await self.rate_limiter.acquire()
+
+        def _check():
+            return self._mistral_client.batch.jobs.get(job_id=job_id)
+
+        try:
+            return await run_in_thread_pool(_check)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral batch job status error (will retry): {e}")
+                raise
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_download_file_with_retry(self, file_id: str):
+        """Download file from Mistral with retry logic.
+
+        Args:
+            file_id: File ID to download
+
+        Returns:
+            File content (bytes or similar)
+
+        Raises:
+            Exception: If download fails after retries
+        """
+        await self.rate_limiter.acquire()
+
+        def _download():
+            return self._mistral_client.files.download(file_id=file_id)
+
+        try:
+            return await run_in_thread_pool(_download)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral download error (will retry): {e}")
+                raise
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError, Exception)),
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),
+        reraise=True,
+    )
+    async def _mistral_delete_file_with_retry(self, file_id: str):
+        """Delete file from Mistral with retry logic.
+
+        Args:
+            file_id: File ID to delete
+
+        Raises:
+            Exception: If deletion fails after retries (best effort, doesn't fail sync)
+        """
+        await self.rate_limiter.acquire()
+
+        def _delete():
+            return self._mistral_client.files.delete(file_id=file_id)
+
+        try:
+            return await run_in_thread_pool(_delete)
+        except Exception as e:
+            if self._should_retry_mistral_error(e):
+                logger.warning(f"Mistral delete error (will retry): {e}")
+                raise
+            raise
 
     async def convert_batch(self, file_paths: List[str]) -> Dict[str, str]:
         """Convert document files to markdown text using Mistral batch OCR API.
@@ -641,27 +873,13 @@ class MistralConverter(BaseTextConverter):
         async def _upload_one(unique_key: str, chunk_path: str):
             async with semaphore:
                 try:
-                    # Acquire rate limit slot BEFORE uploading
-                    await self.rate_limiter.acquire()
+                    # Upload file with retry logic
+                    file_id = await self._mistral_upload_file_with_retry(
+                        chunk_path, os.path.basename(chunk_path)
+                    )
 
-                    def _upload():
-                        with open(chunk_path, "rb") as f:
-                            uploaded = self._mistral_client.files.upload(
-                                file={"file_name": os.path.basename(chunk_path), "content": f},
-                                purpose="ocr",
-                            )
-                        return uploaded.id
-
-                    file_id = await run_in_thread_pool(_upload)
-
-                    # Get signed URL (also rate limited)
-                    await self.rate_limiter.acquire()
-
-                    def _get_signed_url():
-                        signed_url = self._mistral_client.files.get_signed_url(file_id=file_id)
-                        return signed_url.url
-
-                    signed_url = await run_in_thread_pool(_get_signed_url)
+                    # Get signed URL with retry logic
+                    signed_url = await self._mistral_get_signed_url_with_retry(file_id)
 
                     # Store result
                     upload_key = f"{unique_key}__chunk_{chunk_path}"
@@ -743,26 +961,16 @@ class MistralConverter(BaseTextConverter):
         Raises:
             EntityProcessingError: If submission fails
         """
-        # Rate limit the upload
-        await self.rate_limiter.acquire()
-
-        def _submit():
-            # Upload JSONL
-            with open(jsonl_path, "rb") as f:
-                batch_data = self._mistral_client.files.upload(
-                    file={"file_name": "batch.jsonl", "content": f}, purpose="batch"
-                )
-
-            # Create batch job
-            job = self._mistral_client.batch.jobs.create(
-                input_files=[batch_data.id], model="mistral-ocr-latest", endpoint="/v1/ocr"
-            )
-
-            logger.debug(f"Submitted batch job {job.id} (batch file: {batch_data.id})")
-            return job.id, batch_data.id
-
         try:
-            return await run_in_thread_pool(_submit)
+            # Upload JSONL with retry logic
+            batch_file_id = await self._mistral_upload_file_with_retry(jsonl_path, "batch.jsonl")
+
+            # Create batch job with retry logic
+            job_id = await self._mistral_create_batch_job_with_retry(batch_file_id)
+
+            logger.debug(f"Submitted batch job {job_id} (batch file: {batch_file_id})")
+            return job_id, batch_file_id
+
         except Exception as e:
             raise EntityProcessingError(f"Failed to submit Mistral batch job: {e}")
 
@@ -785,14 +993,9 @@ class MistralConverter(BaseTextConverter):
             if elapsed > timeout:
                 raise EntityProcessingError(f"Mistral batch job {job_id} timeout after {timeout}s")
 
-            # Rate limit the status check
-            await self.rate_limiter.acquire()
-
-            def _check():
-                return self._mistral_client.batch.jobs.get(job_id=job_id)
-
+            # Check status with retry logic
             try:
-                job = await run_in_thread_pool(_check)
+                job = await self._mistral_get_batch_job_with_retry(job_id)
             except Exception as e:
                 raise EntityProcessingError(f"Failed to check batch job status: {e}")
 
@@ -825,31 +1028,30 @@ class MistralConverter(BaseTextConverter):
         Returns:
             Dict mapping upload_key -> markdown content
         """
-        # Rate limit the download
-        await self.rate_limiter.acquire()
-
-        def _download():
-            job = self._mistral_client.batch.jobs.get(job_id=job_id)
+        try:
+            # Get job with retry logic to get output file ID
+            job = await self._mistral_get_batch_job_with_retry(job_id)
             if not hasattr(job, "output_file") or not job.output_file:
                 raise Exception("Batch job has no output file")
-            response = self._mistral_client.files.download(file_id=job.output_file)
+
+            # Download output file with retry logic
+            response = await self._mistral_download_file_with_retry(job.output_file)
 
             # Handle different response types
             try:
                 if isinstance(response, bytes):
-                    return response
-                if hasattr(response, "read"):
-                    return response.read()
-                if hasattr(response, "content"):
-                    return response.content
-                if hasattr(response, "text"):
-                    return response.text.encode("utf-8")
-                return str(response).encode("utf-8")
+                    result_data = response
+                elif hasattr(response, "read"):
+                    result_data = response.read()
+                elif hasattr(response, "content"):
+                    result_data = response.content
+                elif hasattr(response, "text"):
+                    result_data = response.text.encode("utf-8")
+                else:
+                    result_data = str(response).encode("utf-8")
             except Exception:
-                return response
+                result_data = response
 
-        try:
-            result_data = await run_in_thread_pool(_download)
         except Exception as e:
             raise EntityProcessingError(f"Failed to download batch results: {e}")
 
@@ -1009,11 +1211,10 @@ class MistralConverter(BaseTextConverter):
 
         async def _delete(file_id):
             try:
-                # Rate limit deletion
-                await self.rate_limiter.acquire()
-                await run_in_thread_pool(self._mistral_client.files.delete, file_id=file_id)
+                # Use retry-wrapped delete method (best effort)
+                await self._mistral_delete_file_with_retry(file_id)
             except Exception:
-                pass  # Best effort cleanup
+                pass  # Best effort cleanup - don't fail if deletion fails
 
         # Collect all file IDs
         file_ids = [info["file_id"] for info in upload_map.values()]
