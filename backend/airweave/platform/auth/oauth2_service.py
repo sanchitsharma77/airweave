@@ -539,6 +539,23 @@ class OAuth2Service:
             "refresh_token": refresh_token,
         }
 
+        # Include scope in refresh request if available
+        # This ensures the refreshed token maintains the same permissions
+        if hasattr(integration_config, "scope") and integration_config.scope:
+            payload["scope"] = integration_config.scope
+            logger.debug(f"Including scope in token refresh: {integration_config.scope}")
+
+        # Include additional_frontend_params (e.g., audience for Atlassian)
+        # These are often required for the refreshed token to access the same resources
+        if (
+            hasattr(integration_config, "additional_frontend_params")
+            and integration_config.additional_frontend_params
+        ):
+            payload.update(integration_config.additional_frontend_params)
+            logger.debug(
+                f"Including additional params in token refresh: {list(integration_config.additional_frontend_params.keys())}"
+            )
+
         if integration_config.client_credential_location == "header":
             encoded_credentials = OAuth2Service._encode_client_credentials(client_id, client_secret)
             headers["Authorization"] = f"Basic {encoded_credentials}"
