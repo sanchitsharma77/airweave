@@ -72,21 +72,18 @@ async def run_sync_activity(  # noqa: C901
         force_full_sync: If True, forces a full sync with orphaned entity deletion
     """
     # Import here to avoid Temporal sandboxing issues
-    from airweave import schemas
+    from airweave import crud, schemas
     from airweave.api.context import ApiContext
     from airweave.core.logging import LoggerConfigurator
+    from airweave.db.session import get_db_context
     from airweave.platform.temporal.worker_metrics import worker_metrics
 
     # Convert dicts back to Pydantic models
     sync = schemas.Sync(**sync_dict)
     sync_job = schemas.SyncJob(**sync_job_dict)
-    collection = schemas.Collection(**collection_dict)
     connection = schemas.Connection(**connection_dict)
 
-    # Reconstruct user if present
     user = schemas.User(**ctx_dict["user"]) if ctx_dict.get("user") else None
-
-    # Reconstruct organization from the dictionary
     organization = schemas.Organization(**ctx_dict["organization"])
 
     ctx = ApiContext(
@@ -104,6 +101,18 @@ async def run_sync_activity(  # noqa: C901
             },
         ),
     )
+
+    collection_id = UUID(collection_dict["id"])
+    async with get_db_context() as db:
+        collection_model = await crud.collection.get(db=db, id=collection_id, ctx=ctx)
+        if not collection_model:
+            raise ValueError(f"Collection {collection_id} not found in database")
+
+        collection = schemas.Collection.model_validate(collection_model, from_attributes=True)
+        ctx.logger.info(
+            f"Fetched fresh collection data from DB: {collection.readable_id} "
+            f"(vector_size={collection.vector_size}, model={collection.embedding_model_name})"
+        )
 
     ctx.logger.debug(f"\n\nStarting sync activity for job {sync_job.id}\n\n")
 
