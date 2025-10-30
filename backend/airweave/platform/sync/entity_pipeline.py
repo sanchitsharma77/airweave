@@ -116,23 +116,7 @@ class EntityPipeline:
         entities: List[BaseEntity],
         sync_context: SyncContext,
     ) -> None:
-        """Process a list of entities.
-
-        - pubsub
-        - batching
-        - config
-
-        0. [X] Determine action
-            0.1 [X] Compute hash
-        1. [X] Create embeddable text
-            1.1 [X] create MD from embeddable fields
-            1.2 [X] convert local file to MD
-        2. [X] Chunk
-        3. [ ] Embed
-            - keyword vector has to be on full entity
-        4. [ ] AirweaveSystemMetadata
-        5. [ ] Persist
-        """
+        """Process a list of entities."""
         unique_entities = await self._filter_duplicates(entities, sync_context)
 
         if not unique_entities:

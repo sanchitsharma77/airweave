@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from typing import TYPE_CHECKING, Literal, Optional
 from uuid import UUID
@@ -70,6 +71,13 @@ class QdrantDestination(VectorDBDestination):
         self.client: AsyncQdrantClient | None = None
         self.vector_size: int = 384  # Default dense vector size
 
+        # Write concurrency control (caps concurrent writes per destination)
+        self._write_sem = asyncio.Semaphore(int(os.getenv("QDRANT_WRITE_CONCURRENCY", "32")))
+
+        # One-time collection readiness cache
+        self._collection_ready: bool = False
+        self._collection_ready_lock = asyncio.Lock()
+
     # ----------------------------------------------------------------------------------
     # Lifecycle / connection
     # ----------------------------------------------------------------------------------
@@ -123,6 +131,31 @@ class QdrantDestination(VectorDBDestination):
 
         await instance.connect_to_qdrant()
         return instance
+
+    async def ensure_collection_ready(self) -> None:
+        """Ensure the physical collection exists exactly once per instance.
+
+        Avoids repeated get_collections() calls under high write load.
+        """
+        await self.ensure_client_readiness()
+        if self._collection_ready:
+            return
+        async with self._collection_ready_lock:
+            if self._collection_ready:
+                return
+            exists = False
+            try:
+                if self.collection_name:
+                    exists = await self.collection_exists(self.collection_name)
+            except Exception:
+                exists = False
+            if not exists:
+                self.logger.error(
+                    f"[Qdrant] Collection {self.collection_name} does NOT exist! "
+                    f"collection_id={self.collection_id}. Creating it now..."
+                )
+                await self.setup_collection(self.vector_size)
+            self._collection_ready = True
 
     async def connect_to_qdrant(self) -> None:
         """Initialize the AsyncQdrantClient and verify connectivity."""
@@ -334,6 +367,7 @@ class QdrantDestination(VectorDBDestination):
     async def insert(self, entity: BaseEntity) -> None:
         """Upsert a single entity into Qdrant."""
         await self.ensure_client_readiness()
+        await self.ensure_collection_ready()
 
         # Sanity checks
         if not entity.airweave_system_metadata or not entity.airweave_system_metadata.vectors:
@@ -379,18 +413,19 @@ class QdrantDestination(VectorDBDestination):
             if isinstance(obj, dict):
                 sparse_part = {KEYWORD_VECTOR_NAME: obj}
 
-        await self.client.upsert(
-            collection_name=self.collection_name,
-            points=[
-                rest.PointStruct(
-                    id=point_id,
-                    vector={DEFAULT_VECTOR_NAME: entity.airweave_system_metadata.vectors[0]}
-                    | sparse_part,
-                    payload=data_object,
-                )
-            ],
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.upsert(
+                collection_name=self.collection_name,
+                points=[
+                    rest.PointStruct(
+                        id=point_id,
+                        vector={DEFAULT_VECTOR_NAME: entity.airweave_system_metadata.vectors[0]}
+                        | sparse_part,
+                        payload=data_object,
+                    )
+                ],
+                wait=True,
+            )
 
     # --------- NEW: helpers to keep bulk_insert simple (fixes C901) -------------------
     def _build_point_struct(self, entity: BaseEntity) -> rest.PointStruct:
@@ -542,20 +577,13 @@ class QdrantDestination(VectorDBDestination):
             return
 
         await self.ensure_client_readiness()
+        await self.ensure_collection_ready()
 
         # Log collection info before building points
         self.logger.info(
             f"[Qdrant] bulk_insert: {len(entities)} entities → collection={self.collection_name}, "
             f"collection_id={self.collection_id}, vector_size={self.vector_size}"
         )
-
-        # Verify collection exists
-        if not await self.collection_exists(self.collection_name):
-            self.logger.error(
-                f"[Qdrant] Collection {self.collection_name} does NOT exist! "
-                f"collection_id={self.collection_id}. Creating it now..."
-            )
-            await self.setup_collection(self.vector_size)
 
         point_structs = [self._build_point_struct(e) for e in entities]
 
@@ -564,7 +592,8 @@ class QdrantDestination(VectorDBDestination):
             return
 
         # Try once with the whole payload; fall back to halving on failure
-        await self._upsert_points_with_fallback(point_structs, min_batch=50)
+        async with self._write_sem:
+            await self._upsert_points_with_fallback(point_structs, min_batch=10)
 
     # ----------------------------------------------------------------------------------
     # Deletes (by parent/sync/etc.)
@@ -572,132 +601,140 @@ class QdrantDestination(VectorDBDestination):
     async def delete(self, db_entity_id: UUID) -> None:
         """Delete all points belonging to a DB entity id (parent)."""
         await self.ensure_client_readiness()
-        await self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=rest.FilterSelector(
-                filter=rest.Filter(
-                    must=[
-                        # CRITICAL: Tenant filter for multi-tenant performance
-                        rest.FieldCondition(
-                            key="airweave_collection_id",
-                            match=rest.MatchValue(value=str(self.collection_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.db_entity_id",
-                            match=rest.MatchValue(value=str(db_entity_id)),
-                        ),
-                    ]
-                )
-            ),
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            # CRITICAL: Tenant filter for multi-tenant performance
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(self.collection_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.db_entity_id",
+                                match=rest.MatchValue(value=str(db_entity_id)),
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
         """Delete all points that have the provided sync job id."""
         await self.ensure_client_readiness()
-        await self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=rest.FilterSelector(
-                filter=rest.Filter(
-                    must=[
-                        # CRITICAL: Tenant filter for multi-tenant performance
-                        rest.FieldCondition(
-                            key="airweave_collection_id",
-                            match=rest.MatchValue(value=str(self.collection_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.sync_id",
-                            match=rest.MatchValue(value=str(sync_id)),
-                        ),
-                    ]
-                )
-            ),
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            # CRITICAL: Tenant filter for multi-tenant performance
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(self.collection_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.sync_id",
+                                match=rest.MatchValue(value=str(sync_id)),
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
 
     async def bulk_delete(self, entity_ids: list[str], sync_id: UUID) -> None:
         """Delete specific entity ids that belong to a particular sync job."""
         if not entity_ids:
             return
         await self.ensure_client_readiness()
-        await self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=rest.FilterSelector(
-                filter=rest.Filter(
-                    must=[
-                        # CRITICAL: Tenant filter for multi-tenant performance
-                        rest.FieldCondition(
-                            key="airweave_collection_id",
-                            match=rest.MatchValue(value=str(self.collection_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.sync_id",
-                            match=rest.MatchValue(value=str(sync_id)),
-                        ),
-                        rest.FieldCondition(key="entity_id", match=rest.MatchAny(any=entity_ids)),
-                    ]
-                )
-            ),
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            # CRITICAL: Tenant filter for multi-tenant performance
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(self.collection_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.sync_id",
+                                match=rest.MatchValue(value=str(sync_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="entity_id",
+                                match=rest.MatchAny(any=entity_ids),
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
 
     async def bulk_delete_by_parent_id(self, parent_id: str, sync_id: UUID | str) -> None:
         """Delete all points for a given parent (db entity) id and sync id."""
         if not parent_id:
             return
         await self.ensure_client_readiness()
-        await self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=rest.FilterSelector(
-                filter=rest.Filter(
-                    must=[
-                        # CRITICAL: Tenant filter for multi-tenant performance
-                        rest.FieldCondition(
-                            key="airweave_collection_id",
-                            match=rest.MatchValue(value=str(self.collection_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.original_entity_id",
-                            match=rest.MatchValue(value=str(parent_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.sync_id",
-                            match=rest.MatchValue(value=str(sync_id)),
-                        ),
-                    ]
-                )
-            ),
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            # CRITICAL: Tenant filter for multi-tenant performance
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(self.collection_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.original_entity_id",
+                                match=rest.MatchValue(value=str(parent_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.sync_id",
+                                match=rest.MatchValue(value=str(sync_id)),
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
 
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
         """Delete all points whose parent id is in the provided list and match sync id."""
         if not parent_ids:
             return
         await self.ensure_client_readiness()
-        await self.client.delete(
-            collection_name=self.collection_name,
-            points_selector=rest.FilterSelector(
-                filter=rest.Filter(
-                    must=[
-                        # CRITICAL: Tenant filter for multi-tenant performance
-                        rest.FieldCondition(
-                            key="airweave_collection_id",
-                            match=rest.MatchValue(value=str(self.collection_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.sync_id",
-                            match=rest.MatchValue(value=str(sync_id)),
-                        ),
-                        rest.FieldCondition(
-                            key="airweave_system_metadata.original_entity_id",
-                            match=rest.MatchAny(any=[str(pid) for pid in parent_ids]),
-                        ),
-                    ]
-                )
-            ),
-            wait=True,
-        )
+        async with self._write_sem:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=rest.FilterSelector(
+                    filter=rest.Filter(
+                        must=[
+                            # CRITICAL: Tenant filter for multi-tenant performance
+                            rest.FieldCondition(
+                                key="airweave_collection_id",
+                                match=rest.MatchValue(value=str(self.collection_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.sync_id",
+                                match=rest.MatchValue(value=str(sync_id)),
+                            ),
+                            rest.FieldCondition(
+                                key="airweave_system_metadata.original_entity_id",
+                                match=rest.MatchAny(any=[str(pid) for pid in parent_ids]),
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
 
     # ----------------------------------------------------------------------------------
     # Query building (legacy-compatible sparse semantics)
