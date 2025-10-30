@@ -513,7 +513,7 @@ class QdrantDestination(VectorDBDestination):
             timeout_errors = ()
 
         # Proactively batch large upserts to prevent timeouts and allow heartbeats
-        MAX_BATCH_SIZE = 250
+        MAX_BATCH_SIZE = 100
 
         if len(points) > MAX_BATCH_SIZE:
             self.logger.debug(
