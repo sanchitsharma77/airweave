@@ -1504,8 +1504,8 @@ class EntityPipeline:
 
         @retry(
             retry=retry_if_exception_type(retry_exception_types),
-            stop=stop_after_attempt(6),  # 1 initial + 5 retries = 6 total
-            wait=wait_exponential(multiplier=2, min=2, max=60),  # 2s, 4s, 8s, 16s, 32s, 60s
+            stop=stop_after_attempt(4),  # 1 initial + 3 retries = 4 total
+            wait=wait_exponential(multiplier=2, min=2, max=60),  # 2s, 4s, 8s, 16s
             reraise=True,
         )
         async def _execute_with_retry():
