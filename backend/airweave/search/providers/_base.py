@@ -25,14 +25,20 @@ class BaseProvider(ABC):
     def is_retryable_error(error: Exception) -> bool:
         """Check if error should trigger provider fallback.
 
-        Retryable errors:
-        - Rate limiting (429)
-        - Server errors (500, 502, 503, 504)
+        In a multi-provider system, most errors are "retryable" because each provider
+        has different capabilities, credentials, and availability. We try the next
+        provider unless the error indicates a fundamental problem with the request itself.
 
-        Non-retryable errors:
-        - Authentication (401, 403)
-        - Validation errors (400, 422)
-        - Not found (404)
+        Provider-specific errors (SHOULD fallback):
+        - 401, 403: Auth errors (each provider has its own API key)
+        - 404: Not found (model might exist on another provider)
+        - 429: Rate limiting (try provider with capacity)
+        - 500, 502, 503, 504: Server errors (provider infrastructure issues)
+        - 400, 422: Validation errors (might be provider-specific schema requirements)
+
+        Request-level errors (SHOULD NOT fallback):
+        - Programming errors (ValueError, TypeError, AttributeError, etc.)
+        - These indicate bugs in our code, not provider issues
 
         Args:
             error: Exception to check
@@ -44,7 +50,12 @@ class BaseProvider(ABC):
 
         # Check for HTTP status codes and error patterns in error message
         retryable_patterns = [
-            r"429",  # Rate limit
+            r"400",  # Bad request
+            r"401",  # Unauthorized
+            r"403",  # Forbidden
+            r"404",  # Not found
+            r"422",  # Unprocessable entity
+            r"429",  # Too many requests
             r"500",  # Internal server error
             r"502",  # Bad gateway
             r"503",  # Service unavailable
