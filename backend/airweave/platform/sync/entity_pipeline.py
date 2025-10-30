@@ -6,10 +6,16 @@ import json
 import os
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 import aiofiles
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from airweave import crud, models
 from airweave.db.session import get_db_context
@@ -67,7 +73,13 @@ class EntityPipeline:
 
         # Delete all chunks for these parent entities (using bulk_delete_by_parent_ids)
         for destination in sync_context.destinations:
-            await destination.bulk_delete_by_parent_ids(entity_ids, sync_context.sync.id)
+            await self._retry_destination_operation(
+                operation=lambda dest=destination: dest.bulk_delete_by_parent_ids(
+                    entity_ids, sync_context.sync.id
+                ),
+                operation_name="orphan cleanup delete",
+                sync_context=sync_context,
+            )
 
         async with get_db_context() as db:
             await crud.entity.bulk_remove(db=db, ids=db_ids, ctx=sync_context.ctx)
@@ -564,10 +576,13 @@ class EntityPipeline:
             f"Deleting {len(parent_ids_to_delete)} entities from destinations"
         )
         for dest in sync_context.destinations:
-            try:
-                await dest.bulk_delete_by_parent_ids(parent_ids_to_delete, sync_context.sync.id)
-            except Exception as e:
-                raise SyncFailureError(f"Destination delete failed: {e}")
+            await self._retry_destination_operation(
+                operation=lambda d=dest: d.bulk_delete_by_parent_ids(
+                    parent_ids_to_delete, sync_context.sync.id
+                ),
+                operation_name="delete",
+                sync_context=sync_context,
+            )
 
         # Delete from database
         existing_map = partitions["existing_map"]
@@ -1237,18 +1252,22 @@ class EntityPipeline:
                 f"Clearing {len(parent_ids_to_clear)} updated entities from destinations"
             )
             for dest in sync_context.destinations:
-                try:
-                    await dest.bulk_delete_by_parent_ids(parent_ids_to_clear, sync_context.sync.id)
-                except Exception as e:
-                    raise SyncFailureError(f"Destination clear failed: {e}")
+                await self._retry_destination_operation(
+                    operation=lambda d=dest: d.bulk_delete_by_parent_ids(
+                        parent_ids_to_clear, sync_context.sync.id
+                    ),
+                    operation_name="update clear",
+                    sync_context=sync_context,
+                )
 
         # Insert new chunks
         sync_context.logger.debug(f"Inserting {len(chunk_entities)} chunk entities to destinations")
         for dest in sync_context.destinations:
-            try:
-                await dest.bulk_insert(chunk_entities)
-            except Exception as e:
-                raise SyncFailureError(f"Destination insert failed: {e}")
+            await self._retry_destination_operation(
+                operation=lambda d=dest: d.bulk_insert(chunk_entities),
+                operation_name="insert",
+                sync_context=sync_context,
+            )
 
         sync_context.logger.debug("Destination persistence complete (commit point)")
 
@@ -1426,6 +1445,96 @@ class EntityPipeline:
         for stat, count in counts.items():
             if count > 0:
                 await sync_context.progress.increment(stat, count)
+
+    # ------------------------------------------------------------------------------------
+    # Retry Logic for Destination Operations
+    # ------------------------------------------------------------------------------------
+
+    async def _retry_destination_operation(
+        self,
+        operation: Callable,
+        operation_name: str,
+        sync_context: SyncContext,
+    ):
+        """Retry a destination operation with exponential backoff for transient errors.
+
+        Uses tenacity to retry specific exception types (timeouts, disconnections, rate limits).
+        Permanent errors (auth, not found) fail immediately without retry.
+
+        Args:
+            operation: Async callable to retry
+            operation_name: Human-readable operation name for logging
+            sync_context: Sync context with logger
+
+        Returns:
+            Result of the operation
+
+        Raises:
+            SyncFailureError: After all retries exhausted or on permanent errors
+        """
+        # Build exception tuple for retryable errors
+        retry_exception_types: tuple[type[Exception], ...] = (ConnectionError, TimeoutError)
+        try:
+            import httpcore
+            import httpx
+
+            retry_exception_types = (
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.ConnectTimeout,
+                httpx.RemoteProtocolError,  # Server disconnected
+                httpcore.ReadTimeout,
+                httpcore.WriteTimeout,
+                httpcore.ConnectTimeout,
+                httpcore.RemoteProtocolError,
+                ConnectionError,
+                TimeoutError,
+            )
+        except ImportError:
+            pass  # Use fallback
+
+        # Add Qdrant-specific exceptions if available
+        try:
+            from qdrant_client.http.exceptions import ApiException
+
+            # Catch all Qdrant API exceptions (base class catches UnexpectedResponse, etc.)
+            retry_exception_types = retry_exception_types + (ApiException,)
+        except ImportError:
+            pass
+
+        @retry(
+            retry=retry_if_exception_type(retry_exception_types),
+            stop=stop_after_attempt(4),  # 1 initial + 3 retries = 4 total
+            wait=wait_exponential(multiplier=2, min=2, max=60),  # 2s, 4s, 8s, 16s
+            reraise=True,
+        )
+        async def _execute_with_retry():
+            try:
+                return await operation()
+            except Exception as e:
+                # Detect permanent errors (auth, not found) and fail without retry
+                error_msg = str(e).lower()
+                permanent_indicators = ["401", "403", "404", "400", "unauthorized", "forbidden"]
+
+                if any(indicator in error_msg for indicator in permanent_indicators):
+                    sync_context.logger.error(
+                        f"🚫 Destination '{operation_name}' permanent error: {e}"
+                    )
+                    # Raise SyncFailureError (NOT in retry_exception_types) to stop retries
+                    raise SyncFailureError(f"Destination {operation_name} failed: {e}")
+                # Let other exceptions bubble up for tenacity to handle
+                raise
+
+        try:
+            return await _execute_with_retry()
+        except SyncFailureError:
+            raise  # Already wrapped
+        except Exception as e:
+            # Retries exhausted or non-retryable error
+            sync_context.logger.error(
+                f"💥 Destination '{operation_name}' failed after retries: {e}"
+            )
+            raise SyncFailureError(f"Destination {operation_name} failed: {e}")
 
     # ------------------------------------------------------------------------------------
     # File Cleanup
