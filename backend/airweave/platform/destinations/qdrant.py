@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from typing import TYPE_CHECKING, Literal, Optional
 from uuid import UUID
@@ -55,6 +54,9 @@ KEYWORD_VECTOR_NAME = "bm25"
 class QdrantDestination(VectorDBDestination):
     """Qdrant destination with multi-tenant support and legacy compatibility."""
 
+    # Default write concurrency (simple, code-local tuning)
+    DEFAULT_WRITE_CONCURRENCY: int = 32
+
     def __init__(self):
         """Initialize defaults and placeholders for connection and collection state."""
         super().__init__()
@@ -72,7 +74,7 @@ class QdrantDestination(VectorDBDestination):
         self.vector_size: int = 384  # Default dense vector size
 
         # Write concurrency control (caps concurrent writes per destination)
-        self._write_sem = asyncio.Semaphore(int(os.getenv("QDRANT_WRITE_CONCURRENCY", "32")))
+        self._write_sem = asyncio.Semaphore(self.DEFAULT_WRITE_CONCURRENCY)
 
         # One-time collection readiness cache
         self._collection_ready: bool = False
