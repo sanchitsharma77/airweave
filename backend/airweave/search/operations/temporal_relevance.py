@@ -171,27 +171,33 @@ class TemporalRelevance(SearchOperation):
             # Don't fail - just skip temporal relevance
             return
 
-        if newest <= oldest:
+        # Calculate scale as full time span for linear decay
+        scale_seconds = (newest - oldest).total_seconds()
+
+        # Handle edge cases: single timestamp or invalid time range
+        if scale_seconds == 0:
+            # All documents have the same timestamp - temporal decay not meaningful
+            await context.emitter.emit(
+                "recency_skipped",
+                {"reason": "single_timestamp", "timestamp": str(oldest)},
+                op_name=self.__class__.__name__,
+            )
+            ctx.logger.warning(
+                f"[TemporalRelevance] All documents have the same timestamp ({oldest}). "
+                f"Skipping temporal decay (cannot compute range with single point)."
+            )
+            return
+        elif scale_seconds < 0:
+            # Time going backwards - this is truly invalid
             await context.emitter.emit(
                 "recency_skipped",
                 {"reason": "invalid_range"},
                 op_name=self.__class__.__name__,
             )
             raise ValueError(
-                f"Invalid time range: newest ({newest}) <= oldest ({oldest}). "
-                "Cannot compute temporal decay."
+                f"Invalid time range: newest ({newest}) < oldest ({oldest}). "
+                "Time appears to be going backwards."
             )
-
-        # Calculate scale as full time span for linear decay
-        scale_seconds = (newest - oldest).total_seconds()
-
-        if scale_seconds <= 0:
-            await context.emitter.emit(
-                "recency_skipped",
-                {"reason": "zero_span"},
-                op_name=self.__class__.__name__,
-            )
-            raise ValueError(f"Time span is zero or negative: {scale_seconds} seconds")
 
         # Emit time span details
         await context.emitter.emit(
