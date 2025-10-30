@@ -103,9 +103,15 @@ class SearchOperation(ABC):
             except Exception as e:
                 last_error = e
                 if BaseProvider.is_retryable_error(e) and i < len(providers) - 1:
-                    ctx.logger.warning(
+                    ctx.logger.error(
                         f"[{operation_name}] Provider {provider.__class__.__name__} failed "
-                        f"with retryable error: {e}. Trying next provider..."
+                        f"with retryable error: {e}. Trying next provider...",
+                        extra={
+                            "operation": operation_name,
+                            "provider": provider.__class__.__name__,
+                            "error_type": type(e).__name__,
+                            "fallback_available": True,
+                        },
                     )
                     continue
                 else:
