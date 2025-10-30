@@ -61,6 +61,7 @@ Thumbs.db
 htmlcov/
 .env.local
 local_storage/
+local_scripts/
 
 .DS_Store
 __pycache__
