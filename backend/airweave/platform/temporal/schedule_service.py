@@ -74,7 +74,6 @@ class TemporalScheduleService:
         sync_dict: dict,
         collection_dict: dict,
         connection_dict: dict,
-        user_dict: dict,
         db: AsyncSession,
         ctx,
         access_token: Optional[str] = None,
@@ -89,7 +88,6 @@ class TemporalScheduleService:
             sync_dict: The sync configuration as dict
             collection_dict: The collection as dict
             connection_dict: The connection as dict (Connection schema, NOT SourceConnection)
-            user_dict: The current user as dict
             db: Database session
             ctx: Authentication context
             access_token: Optional access token
@@ -206,7 +204,6 @@ class TemporalScheduleService:
         sync_dict: dict,
         collection_dict: dict,
         connection_dict: dict,
-        user_dict: dict,
         db: AsyncSession,
         ctx,
         access_token: Optional[str] = None,
@@ -218,7 +215,6 @@ class TemporalScheduleService:
             sync_dict=sync_dict,
             collection_dict=collection_dict,
             connection_dict=connection_dict,
-            user_dict=user_dict,
             db=db,
             ctx=ctx,
             access_token=access_token,
@@ -232,7 +228,6 @@ class TemporalScheduleService:
         sync_dict: dict,
         collection_dict: dict,
         connection_dict: dict,
-        user_dict: dict,
         db: AsyncSession,
         ctx,
         access_token: Optional[str] = None,
@@ -244,7 +239,6 @@ class TemporalScheduleService:
             sync_dict=sync_dict,
             collection_dict=collection_dict,
             connection_dict=connection_dict,
-            user_dict=user_dict,
             db=db,
             ctx=ctx,
             access_token=access_token,
@@ -258,7 +252,6 @@ class TemporalScheduleService:
         sync_dict: dict,
         collection_dict: dict,
         connection_dict: dict,
-        user_dict: dict,
         db: AsyncSession,
         ctx,
         access_token: Optional[str] = None,
@@ -271,7 +264,6 @@ class TemporalScheduleService:
             sync_dict: The sync configuration as dict
             collection_dict: The collection as dict
             connection_dict: The connection as dict (Connection schema, NOT SourceConnection)
-            user_dict: The current user as dict
             db: Database session
             ctx: Authentication context
             access_token: Optional access token
@@ -319,7 +311,7 @@ class TemporalScheduleService:
                         None,  # No pre-created sync job for scheduled runs
                         collection_dict,
                         connection_dict,
-                        user_dict,
+                        ctx.to_serializable_dict(),  # Use full context dict, not just user_dict
                         access_token,
                         True,  # force_full_sync=True for cleanup
                     ],
@@ -342,7 +334,6 @@ class TemporalScheduleService:
         schedule_id: str,
         cron_expression: str,
         sync_id: UUID,
-        user_dict: dict,
         db: AsyncSession,
         uow: UnitOfWork,
         ctx,
@@ -353,7 +344,6 @@ class TemporalScheduleService:
             schedule_id: The schedule ID to update
             cron_expression: New cron expression
             sync_id: The sync ID
-            user_dict: The current user as dict
             db: Database session
             uow: Unit of work
             ctx: Authentication context
@@ -422,15 +412,12 @@ class TemporalScheduleService:
             f"Updated {field_type} schedule {schedule_id} with cron expression {cron_expression}"
         )
 
-    async def pause_schedule(
-        self, schedule_id: str, sync_id: UUID, user_dict: dict, db: AsyncSession, ctx
-    ) -> None:
+    async def pause_schedule(self, schedule_id: str, sync_id: UUID, db: AsyncSession, ctx) -> None:
         """Pause a schedule.
 
         Args:
             schedule_id: The schedule ID to pause
             sync_id: The sync ID
-            user_dict: The current user as dict
             db: Database session
             ctx: Authentication context
         """
@@ -450,15 +437,12 @@ class TemporalScheduleService:
 
         logger.info(f"Paused schedule {schedule_id}")
 
-    async def resume_schedule(
-        self, schedule_id: str, sync_id: UUID, user_dict: dict, db: AsyncSession, ctx
-    ) -> None:
+    async def resume_schedule(self, schedule_id: str, sync_id: UUID, db: AsyncSession, ctx) -> None:
         """Resume a paused schedule.
 
         Args:
             schedule_id: The schedule ID to resume
             sync_id: The sync ID
-            user_dict: The current user as dict
             db: Database session
             ctx: Authentication context
         """
@@ -479,14 +463,13 @@ class TemporalScheduleService:
         logger.info(f"Resumed schedule {schedule_id}")
 
     async def delete_schedule_by_id(
-        self, schedule_id: str, sync_id: UUID, user_dict: dict, db: AsyncSession, ctx
+        self, schedule_id: str, sync_id: UUID, db: AsyncSession, ctx
     ) -> None:
         """Delete a schedule by schedule ID.
 
         Args:
             schedule_id: The schedule ID to delete
             sync_id: The sync ID
-            user_dict: The current user as dict
             db: Database session
             ctx: Authentication context
         """
@@ -516,19 +499,17 @@ class TemporalScheduleService:
         This attempts to delete all three types of schedules based on naming conventions.
         It ignores missing schedules and continues.
         """
-        user_dict: dict = {}
-
         # Regular schedule
         regular_schedule_id = f"sync-{sync_id}"
         try:
-            await self.delete_schedule_by_id(regular_schedule_id, sync_id, user_dict, db, ctx)
+            await self.delete_schedule_by_id(regular_schedule_id, sync_id, db, ctx)
         except Exception as e:
             logger.info(f"Regular schedule {regular_schedule_id} not deleted (may not exist): {e}")
 
         # Minute-level schedule
         minute_schedule_id = f"minute-sync-{sync_id}"
         try:
-            await self.delete_schedule_by_id(minute_schedule_id, sync_id, user_dict, db, ctx)
+            await self.delete_schedule_by_id(minute_schedule_id, sync_id, db, ctx)
         except Exception as e:
             logger.info(
                 f"Minute-level schedule {minute_schedule_id} not deleted (may not exist): {e}"
@@ -537,7 +518,7 @@ class TemporalScheduleService:
         # Daily cleanup schedule
         daily_schedule_id = f"daily-cleanup-{sync_id}"
         try:
-            await self.delete_schedule_by_id(daily_schedule_id, sync_id, user_dict, db, ctx)
+            await self.delete_schedule_by_id(daily_schedule_id, sync_id, db, ctx)
         except Exception as e:
             logger.info(
                 f"Daily cleanup schedule {daily_schedule_id} not deleted (may not exist): {e}"
@@ -641,8 +622,6 @@ class TemporalScheduleService:
         if not sync:
             raise ValueError(f"Sync {sync_id} not found")
 
-        user_dict = ctx.to_serializable_dict()
-
         # Check if a schedule already exists and is valid in Temporal
         if sync.temporal_schedule_id:
             schedule_id = sync.temporal_schedule_id
@@ -654,10 +633,9 @@ class TemporalScheduleService:
                     schedule_id=schedule_id,
                     cron_expression=cron_schedule,
                     sync_id=sync_id,
-                    user_dict=user_dict,
                     db=db,
-                    ctx=ctx,
                     uow=uow,
+                    ctx=ctx,
                 )
                 logger.info(f"Updated existing schedule {schedule_id} for sync {sync_id}")
                 return schedule_id
@@ -723,7 +701,6 @@ class TemporalScheduleService:
                 sync_dict=sync_dict,
                 collection_dict=collection_dict,
                 connection_dict=connection_dict,
-                user_dict=user_dict,
                 db=db,
                 ctx=ctx,
                 access_token=None,  # Access token will be handled by the workflow
@@ -735,7 +712,6 @@ class TemporalScheduleService:
                 sync_dict=sync_dict,
                 collection_dict=collection_dict,
                 connection_dict=connection_dict,
-                user_dict=user_dict,
                 db=db,
                 ctx=ctx,
                 access_token=None,  # Access token will be handled by the workflow
@@ -770,7 +746,6 @@ class TemporalScheduleService:
         await self.delete_schedule_by_id(
             schedule_id=sync.temporal_schedule_id,
             sync_id=sync_id,
-            user_dict=ctx.to_serializable_dict(),
             db=db,
             ctx=ctx,
         )
