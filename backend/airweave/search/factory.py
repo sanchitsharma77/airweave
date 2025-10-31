@@ -8,12 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud
 from airweave.api.context import ApiContext
-from airweave.core import credentials
 from airweave.core.config import settings
 from airweave.platform.destinations.collection_strategy import get_default_vector_size
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
 from airweave.platform.sync.token_manager import TokenManager
+from airweave.platform.utils.source_factory_utils import (
+    get_auth_configuration,
+    process_credentials_for_source,
+)
 from airweave.schemas.search import SearchDefaults, SearchRequest
 from airweave.search.context import SearchContext
 from airweave.search.emitter import EventEmitter
@@ -791,7 +794,7 @@ class SearchFactory:
 
             federated_sources = []
             for source_connection in source_connections:
-                source_instance = await self._try_instantiate_federated_source(
+                source_instance = await self._instantiate_federated_source(
                     db, source_connection, ctx
                 )
                 if source_instance:
@@ -802,45 +805,101 @@ class SearchFactory:
         except Exception as e:
             raise ValueError(f"Error getting federated sources: {e}")
 
-    async def _try_instantiate_federated_source(
+    async def _instantiate_federated_source(
         self, db: AsyncSession, source_connection, ctx: ApiContext
     ) -> Optional[BaseSource]:
-        """Try to instantiate a federated source from a source connection."""
+        """Instantiate federated source - mirrors sync factory pattern.
+
+        Follows the same clean architecture as sync factory's _create_source_instance_with_data
+        for consistent auth provider, proxy, and token manager support.
+
+        Returns:
+            BaseSource instance if source supports federated search, None if not federated
+
+        Raises:
+            ValueError: If source is federated but instantiation fails
+        """
+        # Step 1: Get source model and validate federated search capability
+        source_model = await crud.source.get_by_short_name(db, source_connection.short_name)
+        if not source_model:
+            ctx.logger.warning(f"Source model not found for {source_connection.short_name}")
+            return None
+
+        source_class = resource_locator.get_source(source_model)
+        if not getattr(source_class, "_federated_search", False):
+            return None
+
+        # From here, source IS federated - any error should fail the search
+        ctx.logger.info(
+            f"Found federated source: {source_connection.short_name} (id: {source_connection.id})"
+        )
+
         try:
-            # Check if source supports federated search
-            source_model = await crud.source.get_by_short_name(db, source_connection.short_name)
-            if not source_model:
-                ctx.logger.warning(f"Source model not found for {source_connection.short_name}")
-                return None
+            # Step 2: Build source_connection_data dict
+            source_connection_data = {
+                "source_model": source_model,
+                "source_class": source_class,
+                "short_name": source_connection.short_name,
+                "config_fields": source_connection.config_fields,
+                "readable_auth_provider_id": getattr(
+                    source_connection, "readable_auth_provider_id", None
+                ),
+                "auth_provider_config": getattr(source_connection, "auth_provider_config", None),
+                "connection_id": getattr(source_connection, "connection_id", None),
+                "integration_credential_id": None,  # Loaded below
+                "auth_config_class": None,  # Not used for federated search
+            }
 
-            source_class = resource_locator.get_source(source_model)
-            if not getattr(source_class, "_federated_search", False):
-                return None
+            # Load integration_credential_id from connection if exists
+            if source_connection_data["connection_id"]:
+                connection = await crud.connection.get(
+                    db, source_connection_data["connection_id"], ctx
+                )
+                if connection:
+                    source_connection_data["integration_credential_id"] = (
+                        connection.integration_credential_id
+                    )
 
-            ctx.logger.info(
-                f"Found federated source: {source_connection.short_name} "
-                f"(id: {source_connection.id})"
+            # Step 3: Get complete auth configuration (shared utility)
+            auth_config = await get_auth_configuration(
+                db=db,
+                source_connection_data=source_connection_data,
+                ctx=ctx,
+                logger=ctx.logger,
+                access_token=None,  # Search never uses direct injection
             )
 
-            # Get credentials and create source instance
-            credentials_data = await self._get_source_credentials(db, source_connection, ctx)
+            # Step 4: Process credentials for source consumption (shared utility)
+            source_credentials = await process_credentials_for_source(
+                raw_credentials=auth_config["credentials"],
+                source_connection_data=source_connection_data,
+                logger=ctx.logger,
+            )
+
+            # Step 5: Create source instance
             source_instance = await source_class.create(
-                credentials_data["access_token"], config=source_connection.config_fields
+                source_credentials, config=source_connection_data["config_fields"]
             )
 
-            # Configure source instance
+            # Step 6: Set logger
             if hasattr(source_instance, "set_logger"):
                 source_instance.set_logger(ctx.logger)
 
-            # Setup token manager if needed
-            if source_model.oauth_type and isinstance(credentials_data["decrypted"], dict):
+            # Step 7: Set HTTP client factory for proxy mode
+            if auth_config.get("http_client_factory"):
+                ctx.logger.info(f"Proxy mode active for {source_connection.short_name}")
+                source_instance.set_http_client_factory(auth_config["http_client_factory"])
+
+            # Step 8: Setup token manager for OAuth sources
+            if source_model.oauth_type and isinstance(auth_config["credentials"], dict):
                 self._setup_token_manager(
                     source_instance,
                     db,
                     source_connection,
-                    credentials_data["connection"],
-                    credentials_data["decrypted"],
+                    source_connection_data.get("integration_credential_id"),
+                    auth_config["credentials"],
                     ctx,
+                    auth_provider_instance=auth_config.get("auth_provider_instance"),
                 )
 
             ctx.logger.info(
@@ -849,58 +908,34 @@ class SearchFactory:
             return source_instance
 
         except Exception as e:
-            raise ValueError(
-                f"Error instantiating federated source {source_connection.short_name}: {e}"
+            ctx.logger.error(
+                f"Failed to instantiate federated source {source_connection.short_name}: {e}",
+                exc_info=True,
             )
-
-    async def _get_source_credentials(
-        self, db: AsyncSession, source_connection, ctx: ApiContext
-    ) -> Dict[str, Any]:
-        """Get and decrypt credentials for a source connection."""
-        connection = await crud.connection.get(db, source_connection.connection_id, ctx)
-        if not connection or not connection.integration_credential_id:
-            raise ValueError(f"No credentials found for source connection {source_connection.id}")
-
-        credential = await crud.integration_credential.get(
-            db, connection.integration_credential_id, ctx
-        )
-        if not credential:
-            raise ValueError(f"No credentials found for source connection {source_connection.id}")
-
-        decrypted_credential = credentials.decrypt(credential.encrypted_credentials)
-
-        # Extract access token
-        access_token = None
-        if isinstance(decrypted_credential, dict):
-            access_token = decrypted_credential.get("access_token")
-        elif isinstance(decrypted_credential, str):
-            access_token = decrypted_credential
-
-        if not access_token:
-            raise ValueError(f"No access token found for source {source_connection.short_name}")
-
-        return {
-            "access_token": access_token,
-            "decrypted": decrypted_credential,
-            "connection": connection,
-        }
+            # Re-raise to fail the search - federated sources must work or search should fail
+            raise ValueError(
+                f"Failed to instantiate federated source '{source_connection.short_name}'. "
+                f"This source is configured for your collection but cannot be searched. "
+                f"Error: {str(e)}"
+            ) from e
 
     def _setup_token_manager(
         self,
         source_instance: BaseSource,
         db: AsyncSession,
         source_connection,
-        connection,
+        integration_credential_id: Optional[UUID],
         decrypted_credential: dict,
         ctx: ApiContext,
+        auth_provider_instance=None,
     ):
-        """Setup token manager for OAuth sources."""
+        """Setup token manager for OAuth sources with auth provider support."""
         minimal_connection = type(
             "MinimalConnection",
             (),
             {
-                "id": connection.id,
-                "integration_credential_id": connection.integration_credential_id,
+                "id": source_connection.id,
+                "integration_credential_id": integration_credential_id,
                 "config_fields": source_connection.config_fields,
             },
         )()
@@ -913,6 +948,7 @@ class SearchFactory:
             initial_credentials=decrypted_credential,
             is_direct_injection=False,
             logger_instance=ctx.logger,
+            auth_provider_instance=auth_provider_instance,
         )
         source_instance.set_token_manager(token_manager)
 
