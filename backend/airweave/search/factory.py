@@ -934,7 +934,7 @@ class SearchFactory:
             "MinimalConnection",
             (),
             {
-                "id": source_connection.id,
+                "id": source_connection.connection_id,
                 "integration_credential_id": integration_credential_id,
                 "config_fields": source_connection.config_fields,
             },
