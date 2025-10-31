@@ -1,4 +1,4 @@
-"""Code chunker using AST-based parsing with SentenceChunker safety net."""
+"""Code chunker using AST-based parsing with TokenChunker safety net."""
 
 from typing import Any, Dict, List, Optional
 
@@ -13,19 +13,18 @@ class CodeChunker(BaseChunker):
 
     Two-stage approach (internal implementation detail):
     1. CodeChunker: Chunks at logical code boundaries (functions, classes, methods)
-    2. SentenceChunker: Safety net to split any chunks exceeding token limit
+    2. TokenChunker fallback: Force-splits any oversized chunks at token boundaries
 
     The chunker is shared across all syncs in the pod to avoid reloading
     the Magika language detection model for every sync job.
 
     Note: Even with AST-based splitting, single large AST nodes (massive functions
-    without children) can exceed chunk_size, so we use SentenceChunker as safety net.
+    without children) can exceed chunk_size, so we use TokenChunker as safety net.
     """
 
     # Configuration constants
     MAX_TOKENS_PER_CHUNK = 8192  # OpenAI hard limit (safety net)
     CHUNK_SIZE = 2048  # Target chunk size (can be exceeded by large AST nodes)
-    OVERLAP_TOKENS = 128  # Token overlap for safety net
     TOKENIZER = "cl100k_base"  # For accurate OpenAI token counting
 
     # Singleton instance
@@ -44,7 +43,7 @@ class CodeChunker(BaseChunker):
             return
 
         self._code_chunker = None  # Lazy init
-        self._sentence_chunker = None  # Lazy init (safety net)
+        self._token_chunker = None  # Lazy init (emergency fallback)
         self._tiktoken_tokenizer = None  # Lazy init
         self._initialized = True
 
@@ -56,7 +55,7 @@ class CodeChunker(BaseChunker):
     def _ensure_chunkers(self):
         """Lazy initialization of chunker models.
 
-        Initializes CodeChunker (AST parsing) + SentenceChunker (safety net).
+        Initializes CodeChunker (AST parsing) + TokenChunker (safety net).
 
         Raises:
             SyncFailureError: If model loading fails (infrastructure error)
@@ -67,7 +66,7 @@ class CodeChunker(BaseChunker):
         try:
             import tiktoken
             from chonkie import CodeChunker as ChonkieCodeChunker
-            from chonkie import SentenceChunker
+            from chonkie import TokenChunker
 
             # Initialize tiktoken tokenizer for accurate OpenAI token counting
             self._tiktoken_tokenizer = tiktoken.get_encoding(self.TOKENIZER)
@@ -81,18 +80,18 @@ class CodeChunker(BaseChunker):
                 include_nodes=False,
             )
 
-            # Initialize SentenceChunker for safety net
-            # Needed because large functions/classes without children can exceed CHUNK_SIZE
-            self._sentence_chunker = SentenceChunker(
+            # Initialize TokenChunker for fallback
+            # Splits at exact token boundaries when code chunking produces oversized chunks
+            # GUARANTEES chunks ≤ MAX_TOKENS_PER_CHUNK (uses same tokenizer for encode/decode)
+            self._token_chunker = TokenChunker(
                 tokenizer=self._tiktoken_tokenizer,
                 chunk_size=self.MAX_TOKENS_PER_CHUNK,
-                chunk_overlap=self.OVERLAP_TOKENS,
-                min_sentences_per_chunk=1,
+                chunk_overlap=0,
             )
 
             logger.info(
                 f"Loaded CodeChunker (auto-detect, target: {self.CHUNK_SIZE}) + "
-                f"SentenceChunker safety net (hard_limit: {self.MAX_TOKENS_PER_CHUNK})"
+                f"TokenChunker fallback (hard_limit: {self.MAX_TOKENS_PER_CHUNK})"
             )
 
         except Exception as e:
@@ -102,7 +101,7 @@ class CodeChunker(BaseChunker):
         """Chunk a batch of code texts with two-stage approach.
 
         Stage 1: CodeChunker chunks at AST boundaries (functions, classes)
-        Stage 2: SentenceChunker splits any chunks exceeding MAX_TOKENS_PER_CHUNK
+        Stage 2: TokenChunker force-splits any chunks exceeding MAX_TOKENS_PER_CHUNK (hard limit)
 
         Uses run_in_thread_pool because Chonkie is synchronous (avoids blocking event loop).
 
@@ -146,7 +145,7 @@ class CodeChunker(BaseChunker):
     def _apply_safety_net_batched(
         self, code_results: List[List[Any]]
     ) -> List[List[Dict[str, Any]]]:
-        """Split oversized chunks using batched sentence chunking.
+        """Split oversized chunks using TokenChunker fallback.
 
         Same implementation as SemanticChunker - collects oversized chunks,
         batch processes them, then reconstructs results.
@@ -168,14 +167,18 @@ class CodeChunker(BaseChunker):
                     oversized_texts.append(chunk.text)
                     oversized_map[pos] = (doc_idx, chunk_idx)
 
-        # Batch process all oversized chunks with SentenceChunker
+        # Batch process all oversized chunks with TokenChunker fallback
+        # TokenChunker enforces hard limit in one pass (no recursion needed)
         split_results_by_position = {}
         if oversized_texts:
             logger.debug(
                 f"Safety net: splitting {len(oversized_texts)} oversized code chunks "
-                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens"
+                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens with TokenChunker"
             )
-            split_results = self._sentence_chunker.chunk_batch(oversized_texts)
+
+            # Use TokenChunker to split at exact token boundaries
+            # GUARANTEED to produce chunks ≤ MAX_TOKENS_PER_CHUNK in one pass
+            split_results = self._token_chunker.chunk_batch(oversized_texts)
             split_results_by_position = dict(enumerate(split_results))
 
         # Reconstruct final results
@@ -206,8 +209,8 @@ class CodeChunker(BaseChunker):
 
         if oversized_texts:
             logger.debug(
-                f"Safety net split {len(oversized_texts)} code chunks "
-                f"exceeding {self.MAX_TOKENS_PER_CHUNK} tokens"
+                f"TokenChunker fallback split {len(oversized_texts)} code chunks "
+                f"that exceeded {self.MAX_TOKENS_PER_CHUNK} tokens"
             )
 
         return final_results
