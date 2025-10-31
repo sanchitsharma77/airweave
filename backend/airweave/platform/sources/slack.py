@@ -22,8 +22,8 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
         AuthenticationMethod.OAUTH_TOKEN,
         AuthenticationMethod.AUTH_PROVIDER,
     ],
-    oauth_type=OAuthType.WITH_REFRESH,
-    auth_config_class=None,
+    oauth_type=OAuthType.ACCESS_ONLY,
+    auth_config_class="SlackAuthConfig",
     config_class="SlackConfig",
     labels=["Communication", "Messaging"],
     supports_continuous=False,
@@ -200,7 +200,20 @@ class SlackSource(BaseSource):
         if not response_data.get("ok"):
             error = response_data.get("error", "unknown_error")
             self.logger.error(f"Slack search API error: {error}")
-            return None
+
+            # Provide helpful error messages for common issues
+            if error == "missing_scope":
+                raise ValueError(
+                    "Slack search failed: missing 'search:read' scope. "
+                    "Please ensure your Slack OAuth connection includes the 'search:read' scope "
+                    "to enable message search."
+                )
+            elif error == "not_authed":
+                raise ValueError("Slack search failed: authentication token is invalid or expired")
+            elif error == "account_inactive":
+                raise ValueError("Slack search failed: account is inactive")
+            else:
+                raise ValueError(f"Slack search failed: {error}")
 
         return response_data
 

@@ -178,7 +178,6 @@ class FederatedSearch(SearchOperation):
                 )
 
             except Exception as e:
-                ctx.logger.error(f"[FederatedSearch] Error searching {source_name}: {e}")
                 # Emit error event but continue with other sources
                 await context.emitter.emit(
                     "federated_source_error",
@@ -373,7 +372,7 @@ class FederatedSearch(SearchOperation):
         for idx, keyword_results in enumerate(keyword_results_lists):
             # Handle exceptions from individual keywords
             if isinstance(keyword_results, Exception):
-                raise ValueError(f"Error searching {source_name} at query time: {keyword_results}")
+                raise keyword_results
 
             # Add unique results
             keyword_unique_count = 0

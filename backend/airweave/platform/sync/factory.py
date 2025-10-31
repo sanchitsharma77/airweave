@@ -2,7 +2,7 @@
 
 import importlib
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,13 +16,10 @@ from airweave.core.exceptions import NotFoundException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
 from airweave.core.sync_cursor_service import sync_cursor_service
-from airweave.platform.auth.oauth2_service import oauth2_service
 from airweave.platform.auth_providers._base import BaseAuthProvider
 from airweave.platform.auth_providers.auth_result import AuthProviderMode
-from airweave.platform.auth_providers.pipedream import PipedreamAuthProvider
 from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
-from airweave.platform.http_client import PipedreamProxyClient
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
 from airweave.platform.sync.context import SyncContext
@@ -33,6 +30,10 @@ from airweave.platform.sync.pubsub import SyncEntityStateTracker, SyncProgress
 from airweave.platform.sync.stream import AsyncSourceStream
 from airweave.platform.sync.token_manager import TokenManager
 from airweave.platform.sync.worker_pool import AsyncWorkerPool
+from airweave.platform.utils.source_factory_utils import (
+    get_auth_configuration,
+    process_credentials_for_source,
+)
 
 
 class SyncFactory:
@@ -269,23 +270,6 @@ class SyncFactory:
         return sync_context
 
     @classmethod
-    async def _create_source_instance(
-        cls,
-        db: AsyncSession,
-        sync: schemas.Sync,
-        logger: ContextualLogger,
-        ctx: ApiContext,
-        access_token: Optional[str] = None,
-    ) -> BaseSource:
-        """Create and configure the source instance based on authentication type."""
-        # Get source connection and model
-        source_connection_data = await cls._get_source_connection_data(db, sync, ctx)
-
-        return await cls._create_source_instance_with_data(
-            db, source_connection_data, ctx, access_token, logger
-        )
-
-    @classmethod
     async def _create_source_instance_with_data(
         cls,
         db: AsyncSession,
@@ -297,7 +281,7 @@ class SyncFactory:
     ) -> BaseSource:
         """Create and configure the source instance using pre-fetched connection data."""
         # Get auth configuration (credentials + proxy setup if needed)
-        auth_config = await cls._get_auth_configuration(
+        auth_config = await get_auth_configuration(
             db=db,
             source_connection_data=source_connection_data,
             ctx=ctx,
@@ -306,7 +290,7 @@ class SyncFactory:
         )
 
         # Process credentials for source consumption
-        source_credentials = await cls._process_credentials_for_source(
+        source_credentials = await process_credentials_for_source(
             raw_credentials=auth_config["credentials"],
             source_connection_data=source_connection_data,
             logger=logger,
@@ -369,247 +353,6 @@ class SyncFactory:
         cls._setup_file_downloader(source, sync_job, logger)
 
         return source
-
-    @classmethod
-    async def _get_auth_configuration(
-        cls,
-        db: AsyncSession,
-        source_connection_data: dict,
-        ctx: ApiContext,
-        logger: ContextualLogger,
-        access_token: Optional[str] = None,
-    ) -> dict:
-        """Get complete auth configuration including credentials and proxy setup.
-
-        Returns a dict with:
-        - credentials: The actual credentials or placeholder for proxy mode
-        - http_client_factory: Optional factory for creating proxy clients
-        - auth_provider_instance: Optional auth provider instance
-        - auth_mode: Explicit mode (DIRECT or PROXY)
-        """
-        # Case 1: Direct token injection (highest priority)
-        if access_token:
-            logger.debug("Using directly injected access token")
-            return {
-                "credentials": access_token,
-                "http_client_factory": None,
-                "auth_provider_instance": None,
-                "auth_mode": AuthProviderMode.DIRECT,
-            }
-
-        # Case 2: Auth provider connection
-        readable_auth_provider_id = source_connection_data.get("readable_auth_provider_id")
-        auth_provider_config = source_connection_data.get("auth_provider_config")
-
-        if readable_auth_provider_id and auth_provider_config:
-            logger.info("Using auth provider for authentication")
-
-            # Create auth provider instance
-            auth_provider_instance = await cls._create_auth_provider_instance(
-                db=db,
-                readable_auth_provider_id=readable_auth_provider_id,
-                auth_provider_config=auth_provider_config,
-                ctx=ctx,
-                logger=logger,
-            )
-
-            # Get auth result with explicit mode
-            from airweave.core.auth_provider_service import auth_provider_service
-            from airweave.db.session import get_db_context
-
-            async with get_db_context() as db:
-                source_auth_config_fields = (
-                    await auth_provider_service.get_runtime_auth_fields_for_source(
-                        db, source_connection_data["short_name"]
-                    )
-                )
-
-            auth_result = await auth_provider_instance.get_auth_result(
-                source_short_name=source_connection_data["short_name"],
-                source_auth_config_fields=source_auth_config_fields,
-            )
-
-            if auth_result.requires_proxy:
-                logger.info(f"Auth provider requires proxy mode: {auth_result.proxy_config}")
-
-                # Create proxy client factory if it's Pipedream
-                http_client_factory = None
-                if isinstance(auth_provider_instance, PipedreamAuthProvider):
-                    http_client_factory = await cls._create_pipedream_proxy_factory(
-                        auth_provider_instance=auth_provider_instance,
-                        source_connection_data=source_connection_data,
-                        ctx=ctx,
-                        logger=logger,
-                    )
-
-                return {
-                    "credentials": "PROXY_MODE",  # Placeholder
-                    "http_client_factory": http_client_factory,
-                    "auth_provider_instance": auth_provider_instance,
-                    "auth_mode": AuthProviderMode.PROXY,
-                }
-            else:
-                # Direct mode with credentials
-                return {
-                    "credentials": auth_result.credentials,
-                    "http_client_factory": None,
-                    "auth_provider_instance": auth_provider_instance,
-                    "auth_mode": AuthProviderMode.DIRECT,
-                }
-
-        # Case 3: Database credentials (regular flow)
-        integration_credential_id = source_connection_data["integration_credential_id"]
-        if not integration_credential_id:
-            raise NotFoundException("Source connection has no integration credential")
-
-        credential = await cls._get_integration_credential(db, integration_credential_id, ctx)
-        decrypted_credential = credentials.decrypt(credential.encrypted_credentials)
-
-        # Check if we need to handle auth config (e.g., OAuth refresh)
-        auth_config_class = source_connection_data["auth_config_class"]
-        if auth_config_class:
-            processed = await cls._handle_auth_config_credentials(
-                db=db,
-                source_connection_data=source_connection_data,
-                decrypted_credential=decrypted_credential,
-                ctx=ctx,
-                connection_id=source_connection_data["connection_id"],
-            )
-            return {
-                "credentials": processed,
-                "http_client_factory": None,
-                "auth_provider_instance": None,
-                "auth_mode": AuthProviderMode.DIRECT,
-            }
-
-        return {
-            "credentials": decrypted_credential,
-            "http_client_factory": None,
-            "auth_provider_instance": None,
-            "auth_mode": AuthProviderMode.DIRECT,
-        }
-
-    @classmethod
-    async def _create_pipedream_proxy_factory(
-        cls,
-        auth_provider_instance: PipedreamAuthProvider,
-        source_connection_data: dict,
-        ctx: ApiContext,
-        logger: ContextualLogger,
-    ) -> Optional[callable]:
-        """Create a factory function for Pipedream proxy clients."""
-        try:
-            # Get app info from Pipedream API
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                access_token = await auth_provider_instance._ensure_valid_token()
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "x-pd-environment": auth_provider_instance.environment,
-                }
-
-                # Map source name to Pipedream app slug if needed
-                pipedream_app_slug = auth_provider_instance._get_pipedream_app_slug(
-                    source_connection_data["short_name"]
-                )
-
-                # Get app info
-                response = await client.get(
-                    f"https://api.pipedream.com/v1/apps/{pipedream_app_slug}", headers=headers
-                )
-
-                if response.status_code == 404:
-                    logger.warning(f"App {pipedream_app_slug} not found in Pipedream")
-                    return None
-
-                response.raise_for_status()
-                app_info = response.json()
-
-        except Exception as e:
-            logger.error(f"Failed to get app info from Pipedream: {e}")
-            return None
-
-        # Return factory function
-        def create_proxy_client(**httpx_kwargs) -> PipedreamProxyClient:
-            """Creates a Pipedream proxy client with httpx-compatible interface.
-
-            The client will call _ensure_valid_token() on each request, which:
-            - Returns cached token if still valid (with 5-minute buffer)
-            - Only refreshes when approaching expiry (not on every request)
-            - Handles the 3600-second token lifetime automatically
-            """
-            return PipedreamProxyClient(
-                project_id=auth_provider_instance.project_id,
-                account_id=auth_provider_instance.account_id,
-                external_user_id=auth_provider_instance.external_user_id,
-                environment=auth_provider_instance.environment,
-                pipedream_token=None,  # No static token
-                token_provider=auth_provider_instance._ensure_valid_token,  # Smart refresh method
-                app_info=app_info,
-                **httpx_kwargs,
-            )
-
-        logger.info(f"Configured Pipedream proxy for {source_connection_data['short_name']}")
-        return create_proxy_client
-
-    @classmethod
-    async def _process_credentials_for_source(
-        cls,
-        raw_credentials: any,
-        source_connection_data: dict,
-        logger: Any,
-    ) -> any:
-        """Process raw credentials into the format expected by the source.
-
-        This method handles three cases:
-        1. OAuth sources without auth_config_class: Extract just the access_token string
-        2. Sources with auth_config_class and dict credentials: Convert to auth config object
-        3. Other sources: Pass through as-is
-        """
-        auth_config_class_name = source_connection_data.get("auth_config_class")
-        source_model = source_connection_data.get("source_model")
-        short_name = source_connection_data["short_name"]
-
-        # Case 1: OAuth sources without auth_config_class need just the access_token string
-        # This applies to sources like Asana, Google Calendar, etc.
-        if (
-            not auth_config_class_name
-            and source_model
-            and hasattr(source_model, "oauth_type")
-            and source_model.oauth_type
-        ):
-            # Extract access token from dict if present
-            if isinstance(raw_credentials, dict) and "access_token" in raw_credentials:
-                logger.debug(f"Extracting access_token for OAuth source {short_name}")
-                return raw_credentials["access_token"]
-            elif isinstance(raw_credentials, str):
-                # Already a string token, pass through
-                logger.debug(f"OAuth source {short_name} credentials already a string token")
-                return raw_credentials
-            else:
-                logger.warning(
-                    f"OAuth source {short_name} credentials not in expected format: "
-                    f"{type(raw_credentials)}"
-                )
-                return raw_credentials
-
-        # Case 2: Sources with auth_config_class and dict credentials
-        # Convert dict to auth config object (e.g., Stripe expects StripeAuthConfig)
-        if auth_config_class_name and isinstance(raw_credentials, dict):
-            try:
-                auth_config_class = resource_locator.get_auth_config(auth_config_class_name)
-                processed_credentials = auth_config_class.model_validate(raw_credentials)
-                logger.debug(
-                    f"Converted credentials dict to {auth_config_class_name} for {short_name}"
-                )
-                return processed_credentials
-            except Exception as e:
-                logger.error(f"Failed to convert credentials to auth config object: {e}")
-                raise
-
-        # Case 3: Pass through as-is (already in correct format)
-        return raw_credentials
 
     @classmethod
     async def _get_source_connection_data(
@@ -680,147 +423,6 @@ class SyncFactory:
             ),
             "auth_provider_config": getattr(source_connection_obj, "auth_provider_config", None),
         }
-
-    @classmethod
-    async def _create_auth_provider_instance(
-        cls,
-        db: AsyncSession,
-        readable_auth_provider_id: str,
-        auth_provider_config: Dict[str, Any],
-        ctx: ApiContext,
-        logger: ContextualLogger,
-    ) -> Any:
-        """Create an auth provider instance from readable_id.
-
-        Args:
-            db: Database session
-            readable_auth_provider_id: The readable ID of the auth provider connection
-            auth_provider_config: Configuration for the auth provider
-            ctx: The API context
-            logger: Optional logger to set on the auth provider
-
-        Returns:
-            An instance of the auth provider
-
-        Raises:
-            NotFoundException: If auth provider connection not found
-        """
-        # 1. Get the auth provider connection by readable_id
-        auth_provider_connection = await crud.connection.get_by_readable_id(
-            db, readable_id=readable_auth_provider_id, ctx=ctx
-        )
-        if not auth_provider_connection:
-            raise NotFoundException(
-                f"Auth provider connection with readable_id '{readable_auth_provider_id}' not found"
-            )
-
-        # 2. Get the integration credential
-        if not auth_provider_connection.integration_credential_id:
-            raise NotFoundException(
-                f"Auth provider connection '{readable_auth_provider_id}' "
-                f"has no integration credential"
-            )
-
-        credential = await crud.integration_credential.get(
-            db, auth_provider_connection.integration_credential_id, ctx
-        )
-        if not credential:
-            raise NotFoundException("Auth provider integration credential not found")
-
-        # 3. Decrypt the credentials
-        decrypted_credentials = credentials.decrypt(credential.encrypted_credentials)
-
-        # 4. Get the auth provider model
-        auth_provider_model = await crud.auth_provider.get_by_short_name(
-            db, short_name=auth_provider_connection.short_name
-        )
-        if not auth_provider_model:
-            raise NotFoundException(
-                f"Auth provider model not found for '{auth_provider_connection.short_name}'"
-            )
-
-        # 5. Create the auth provider instance
-        auth_provider_class = resource_locator.get_auth_provider(auth_provider_model)
-        auth_provider_instance = await auth_provider_class.create(
-            credentials=decrypted_credentials,
-            config=auth_provider_config,
-        )
-
-        # 6. Set logger if provided
-        if hasattr(auth_provider_instance, "set_logger"):
-            auth_provider_instance.set_logger(logger)
-
-            logger.info(
-                f"Created auth provider instance: {auth_provider_instance.__class__.__name__} "
-                f"for readable_id: {readable_auth_provider_id}"
-            )
-
-        return auth_provider_instance
-
-    @classmethod
-    async def _handle_auth_config_credentials(
-        cls,
-        db: AsyncSession,
-        source_connection_data: dict,
-        decrypted_credential: dict,
-        ctx: ApiContext,
-        connection_id: UUID,
-    ) -> any:
-        """Handle credentials that require auth configuration."""
-        # Use pre-fetched auth_config_class to avoid SQLAlchemy lazy loading issues
-        auth_config_class = source_connection_data["auth_config_class"]
-        short_name = source_connection_data["short_name"]
-
-        auth_config = resource_locator.get_auth_config(auth_config_class)
-        source_credentials = auth_config.model_validate(decrypted_credential)
-
-        # Original OAuth refresh logic for non-auth-provider sources
-        # If the source_credential has a refresh token, exchange it for an access token
-        if hasattr(source_credentials, "refresh_token") and source_credentials.refresh_token:
-            oauth2_response = await oauth2_service.refresh_access_token(
-                db,
-                short_name,
-                ctx,
-                connection_id,
-                decrypted_credential,
-                source_connection_data["config_fields"],
-            )
-            # Update the access_token in the credentials while preserving other fields
-            # This is critical for sources like Salesforce that need instance_url
-            updated_credentials = decrypted_credential.copy()
-            updated_credentials["access_token"] = oauth2_response.access_token
-
-            # Return the updated credentials dict (NOT just the access token)
-            # This preserves fields like instance_url, client_id, etc.
-            return updated_credentials
-
-        return source_credentials
-
-    @classmethod
-    async def _configure_source_instance(
-        cls,
-        db: AsyncSession,
-        source: BaseSource,
-        source_connection_data: dict,
-        ctx: ApiContext,
-        final_access_token: Optional[str],
-        logger: ContextualLogger,
-    ) -> None:
-        """Configure source instance with logger and token manager."""
-        # Set contextual logger
-        source.set_logger(logger)
-
-        # Create and set token manager for OAuth sources
-        if hasattr(source, "set_token_manager") and final_access_token:
-            await cls._setup_token_manager(
-                db,
-                source,
-                source_connection_data,
-                final_access_token,
-                ctx,
-                logger,
-                None,
-            )
 
     @classmethod
     def _setup_file_downloader(
@@ -936,19 +538,6 @@ class SyncFactory:
                 f"Skipping token manager for {short_name} - "
                 "not an OAuth source or no access_token in credentials"
             )
-
-    @classmethod
-    async def _get_integration_credential(
-        cls,
-        db: AsyncSession,
-        integration_credential_id: UUID,
-        ctx: ApiContext,
-    ) -> schemas.IntegrationCredential:
-        """Get integration credential."""
-        credential = await crud.integration_credential.get(db, integration_credential_id, ctx)
-        if not credential:
-            raise NotFoundException("Source integration credential not found")
-        return credential
 
     @classmethod
     async def _create_destination_instances(  # noqa: C901
