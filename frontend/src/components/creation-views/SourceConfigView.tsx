@@ -474,6 +474,41 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
               </p>
             </div>
 
+            {/* WARNING: Slack + Pipedream compatibility - Show at top */}
+            {authMode === 'external_provider' && selectedSource === 'slack' && selectedAuthProvider && (() => {
+              const selectedProviderConnection = authProviderConnections.find(
+                p => p.readable_id === selectedAuthProvider
+              );
+              return selectedProviderConnection?.short_name === 'pipedream' && (
+                <div className={cn(
+                  "flex items-start gap-2 p-3 rounded-lg border",
+                  isDark
+                    ? "bg-amber-900/20 border-amber-800/30 text-amber-400"
+                    : "bg-amber-50 border-amber-200 text-amber-700"
+                )}>
+                  <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm space-y-1">
+                    <p className="font-medium">Pipedream OAuth Limitation</p>
+                    <p className={cn(
+                      "text-xs leading-relaxed",
+                      isDark ? "text-amber-400/80" : "text-amber-600"
+                    )}>
+                      Slack federated search does not work with Pipedream's official OAuth client
+                      due to missing scopes. Please use:
+                    </p>
+                    <ul className={cn(
+                      "text-xs list-disc pl-4 space-y-0.5",
+                      isDark ? "text-amber-400/80" : "text-amber-600"
+                    )}>
+                      <li>Custom Pipedream OAuth client (with search:read scope)</li>
+                      <li>Composio auth provider</li>
+                      <li>Direct OAuth flow (without auth provider)</li>
+                    </ul>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Connection created state - Use shared component */}
             {connectionUrl ? (
               <SourceAuthenticationView
