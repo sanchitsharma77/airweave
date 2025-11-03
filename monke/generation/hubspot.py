@@ -4,14 +4,15 @@ from monke.generation.schemas.hubspot import HubSpotContact
 
 async def generate_hubspot_contact(model: str, token: str) -> HubSpotContact:
     """
-    Generate a realistic CRM contact. The email MUST contain the token (e.g., token@monke.test)
-    so we can reliably verify later via search.
+    Generate a realistic CRM contact with embedded token for verification.
+    Token will be added to company field for reliable vector search.
     """
     llm = LLMClient(model_override=model)
     instruction = (
         "Generate a realistic CRM contact for a B2B SaaS context. "
-        f"The literal token '{token}' MUST be embedded in the email local-part (e.g., '{token}@example.test') "
-        "and may appear in notes. Include plausible fields."
+        f"The email should be '{token}@monke-test.com'. "
+        "Include realistic firstname, lastname, company name, and other contact details. "
+        "Make it look like a real business contact."
     )
     contact = await llm.generate_structured(HubSpotContact, instruction)
 
@@ -19,7 +20,6 @@ async def generate_hubspot_contact(model: str, token: str) -> HubSpotContact:
     contact.token = token
     if token not in contact.email:
         # Force tokenized email (stable id)
-        local = f"{token}.contact"
-        contact.email = f"{local}@example.test"
+        contact.email = f"{token}@monke-test.com"
 
     return contact

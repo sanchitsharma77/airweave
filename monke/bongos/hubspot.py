@@ -44,13 +44,15 @@ class HubSpotBongo(BaseBongo):
         async with httpx.AsyncClient(base_url=HUBSPOT_API, timeout=30) as client:
             for token, c in gen_results:
                 await self._pace()
+                # Embed token in multiple fields for better vector search recall
+                # Token in company name is most reliable for vector search
                 payload = {
                     "properties": {
                         "email": c.email,
                         "firstname": c.firstname,
                         "lastname": c.lastname,
+                        "company": f"{c.company or 'Monke Test Corp'} [{token}]",  # Token in company
                         **({"phone": c.phone} if c.phone else {}),
-                        **({"company": c.company} if c.company else {}),
                         **({"address": c.address} if c.address else {}),
                         **({"city": c.city} if c.city else {}),
                         **({"state": c.state} if c.state else {}),
@@ -88,11 +90,15 @@ class HubSpotBongo(BaseBongo):
         async with httpx.AsyncClient(base_url=HUBSPOT_API, timeout=30) as client:
             for ent in self._contacts[: min(3, len(self._contacts))]:
                 await self._pace()
-                # tiny tweak: add a note-ish detail (mapped to 'company' or 'phone')
+                # Update phone but preserve token in company name
+                token = ent.get("token", "")
                 r = await client.patch(
                     f"/crm/v3/objects/contacts/{ent['id']}",
                     headers=self._hdrs(),
-                    json={"properties": {"company": "Monke QA", "phone": "+1-555-0100"}},
+                    json={"properties": {
+                        "phone": "+1-555-0100",
+                        "company": f"Monke QA Updated [{token}]"  # Preserve token
+                    }},
                 )
                 r.raise_for_status()
                 updated.append({**ent, "updated": True})
