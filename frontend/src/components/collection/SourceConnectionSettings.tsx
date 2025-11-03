@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { MoreVertical, Edit, Clock, Trash } from 'lucide-react';
 import { apiClient } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -76,6 +76,7 @@ interface SourceConnectionSettingsProps {
   onDelete?: () => void;
   isDark: boolean;
   resolvedTheme?: string;
+  onSyncStarted?: (jobId: string) => void;
 }
 
 export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> = ({
@@ -83,7 +84,8 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
   onUpdate,
   onDelete,
   isDark,
-  resolvedTheme
+  resolvedTheme,
+  onSyncStarted
 }) => {
   // Dialog states
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -252,11 +254,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
         scheduleConfig.frequency === "custom" &&
         scheduleConfig.cronExpression &&
         !isValidCronExpression(scheduleConfig.cronExpression)) {
-        toast({
-          title: "Validation Error",
-          description: "Invalid cron expression. Please check the format.",
-          variant: "destructive"
-        });
+        toast.error("Invalid cron expression. Please check the format.");
         return;
       }
 
@@ -277,17 +275,10 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       onUpdate(updatedConnection);
       setShowScheduleDialog(false);
 
-      toast({
-        title: "Success",
-        description: "Schedule updated successfully"
-      });
+      toast.success("Schedule updated successfully");
     } catch (error) {
       console.error("Error updating schedule:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update schedule",
-        variant: "destructive"
-      });
+      toast.error("Failed to update schedule");
     }
   };
 
@@ -365,10 +356,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       }
 
       if (Object.keys(updateData).length === 0) {
-        toast({
-          title: "No changes",
-          description: "No changes were made to the connection"
-        });
+        toast.info("No changes were made to the connection");
         setShowEditDetailsDialog(false);
         return;
       }
@@ -379,38 +367,82 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
         // Handle validation errors (422)
         if (response.status === 422) {
           const errorData = await response.json();
-          toast({
-            title: "Validation Error",
-            description: errorData.detail || "Please check the required fields",
-            variant: "destructive"
-          });
+          toast.error(errorData.detail || "Please check the required fields");
           return;
         }
         throw new Error("Failed to update source connection");
       }
 
       const updatedConnection = await response.json();
-      onUpdate(updatedConnection);
 
-      emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
-        id: updatedConnection.id,
-        collectionId: updatedConnection.readable_collection_id,
-        updatedConnection
-      });
+      // If config was changed, trigger a sync automatically
+      if (hasConfigChanges) {
+        try {
+          const syncResponse = await apiClient.post(`/source-connections/${updatedConnection.id}/run`, {});
 
-      toast({
-        title: "Success",
-        description: "Source connection updated successfully"
-      });
+          if (syncResponse.ok) {
+            const newJob = await syncResponse.json();
 
-      setShowEditDetailsDialog(false);
+            // Update the connection with the new job info
+            const connectionWithNewJob = {
+              ...updatedConnection,
+              last_sync_job_id: newJob.id,
+              last_sync_job_status: newJob.status,
+              last_sync_job_started_at: newJob.started_at,
+            };
+
+            onUpdate(connectionWithNewJob);
+
+            emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
+              id: connectionWithNewJob.id,
+              collectionId: connectionWithNewJob.readable_collection_id,
+              updatedConnection: connectionWithNewJob
+            });
+
+            // Trigger SSE subscription for real-time updates
+            if (onSyncStarted && newJob.id) {
+              onSyncStarted(newJob.id);
+            }
+
+            setShowEditDetailsDialog(false);
+            toast.success("Configuration updated and sync started");
+          } else {
+            onUpdate(updatedConnection);
+            emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
+              id: updatedConnection.id,
+              collectionId: updatedConnection.readable_collection_id,
+              updatedConnection
+            });
+
+            setShowEditDetailsDialog(false);
+            toast.error("Source connection updated successfully, but sync could not be started");
+          }
+        } catch (syncError) {
+          console.error("Error starting sync:", syncError);
+          onUpdate(updatedConnection);
+          emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
+            id: updatedConnection.id,
+            collectionId: updatedConnection.readable_collection_id,
+            updatedConnection
+          });
+
+          setShowEditDetailsDialog(false);
+          toast.error("Source connection updated successfully, but sync could not be started");
+        }
+      } else {
+        onUpdate(updatedConnection);
+        emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
+          id: updatedConnection.id,
+          collectionId: updatedConnection.readable_collection_id,
+          updatedConnection
+        });
+
+        setShowEditDetailsDialog(false);
+        toast.success("Source connection updated successfully");
+      }
     } catch (error) {
       console.error("Error updating source connection:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update source connection",
-        variant: "destructive"
-      });
+      toast.error("Failed to update source connection");
     } finally {
       setIsUpdating(false);
     }
@@ -432,10 +464,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       setShowDeleteDialog(false);
       setDeleteConfirmText('');
 
-      toast({
-        title: "Source connection deleted",
-        description: "The source connection and all synced data have been permanently deleted."
-      });
+      toast.success("Source connection deleted. All synced data has been permanently removed.");
 
       emitCollectionEvent(SOURCE_CONNECTION_UPDATED, {
         id: sourceConnection.id,
@@ -448,11 +477,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       }
     } catch (error) {
       console.error('Error deleting source connection:', error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete source connection",
-        variant: "destructive"
-      });
+      toast.error(error instanceof Error ? error.message : "Failed to delete source connection");
     } finally {
       setIsDeleting(false);
     }
