@@ -313,6 +313,7 @@ class OutlookMailSource(BaseSource):
         folder_entity = OutlookMailFolderEntity(
             entity_id=folder["id"],
             breadcrumbs=parent_breadcrumbs,
+            name=folder["displayName"],  # Required by BaseEntity
             display_name=folder["displayName"],
             parent_folder_id=folder.get("parentFolderId"),
             child_folder_count=folder.get("childFolderCount", 0),
@@ -982,6 +983,7 @@ class OutlookMailSource(BaseSource):
         folder_entity = OutlookMailFolderEntity(
             entity_id=folder_id,
             breadcrumbs=[],
+            name=display_name,  # Required by BaseEntity
             display_name=display_name,
             parent_folder_id=parent_folder_id,
             child_folder_count=child_folder_count,
