@@ -18,16 +18,16 @@ connector:
 
     # Timing: Allow Google Drive to index newly created documents
     # Google Docs needs time to propagate new files through Drive before they appear in listings
-    post_create_sleep_seconds: 10
+    post_create_sleep_seconds: 20
 
 test_flow:
   steps:
     - cleanup
     - create
-    - force_full_sync          # First sync: Full sync (no cursor yet)
+    - sync                     # First sync: Full sync (no cursor exists yet)
     - verify
     - update
-    - force_full_sync          # Second sync: Incremental with cursor
+    - sync                     # Second sync: Incremental with cursor
     - verify
     - partial_delete
     - force_full_sync          # Third sync: Force full sync to detect deletion

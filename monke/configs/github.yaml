@@ -19,10 +19,10 @@ test_flow:
   steps:
     - cleanup
     - create
-    - force_full_sync          # First sync: Full sync (no cursor yet)
+    - sync                     # First sync: Full sync (no cursor exists yet)
     - verify
     - update
-    - force_full_sync          # Second sync: Incremental with cursor
+    - sync                     # Second sync: Incremental with cursor
     - verify
     - partial_delete
     - force_full_sync          # Third sync: Force full sync to detect deletion
