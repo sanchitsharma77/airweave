@@ -17,7 +17,6 @@ from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.platform.auth_providers._base import BaseAuthProvider
-from airweave.platform.auth_providers.auth_result import AuthProviderMode
 from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.locator import resource_locator
@@ -473,34 +472,26 @@ class SyncFactory:
     ) -> None:
         """Set up token manager for OAuth sources."""
         short_name = source_connection_data["short_name"]
-        auth_config_class_name = source_connection_data.get("auth_config_class")
         source_model = source_connection_data.get("source_model")
 
-        # Determine if we should create a token manager
+        # Determine if we should create a token manager based on oauth_type
         should_create_token_manager = False
 
-        # Case 1: Sources with OAuth2AuthConfig or its subclasses
-        if auth_config_class_name:
-            try:
-                # Get the auth config class
-                auth_config_class = resource_locator.get_auth_config(auth_config_class_name)
+        if source_model and hasattr(source_model, "oauth_type") and source_model.oauth_type:
+            # Import OAuthType enum
+            from airweave.schemas.source_connection import OAuthType
 
-                # Check if it's a subclass of OAuth2AuthConfig
-                from airweave.platform.configs.auth import OAuth2AuthConfig
-
-                if issubclass(auth_config_class, OAuth2AuthConfig):
-                    should_create_token_manager = True
-            except Exception as e:
-                logger.warning(f"Could not check auth config class for {short_name}: {str(e)}")
-
-        # Case 2: OAuth sources without auth_config_class (e.g., Asana, Google Calendar)
-        # These sources still need token management for refresh
-        elif source_model and hasattr(source_model, "oauth_type") and source_model.oauth_type:
-            # Check if we have OAuth credentials (dict with access_token)
-            if isinstance(source_credentials, dict) and "access_token" in source_credentials:
+            # Only create token manager for sources that support token refresh
+            if source_model.oauth_type in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
                 should_create_token_manager = True
                 logger.debug(
-                    f"✅ OAuth source {short_name} without auth_config_class will use token manager"
+                    f"✅ OAuth source {short_name} with oauth_type={source_model.oauth_type.value} "
+                    f"will use token manager for refresh"
+                )
+            else:
+                logger.debug(
+                    f"⏭️ Skipping token manager for {short_name} - "
+                    f"oauth_type={source_model.oauth_type} does not support token refresh"
                 )
 
         if should_create_token_manager:

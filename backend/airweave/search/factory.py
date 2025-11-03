@@ -890,17 +890,29 @@ class SearchFactory:
                 ctx.logger.info(f"Proxy mode active for {source_connection.short_name}")
                 source_instance.set_http_client_factory(auth_config["http_client_factory"])
 
-            # Step 8: Setup token manager for OAuth sources
-            if source_model.oauth_type and isinstance(auth_config["credentials"], dict):
-                self._setup_token_manager(
-                    source_instance,
-                    db,
-                    source_connection,
-                    source_connection_data.get("integration_credential_id"),
-                    auth_config["credentials"],
-                    ctx,
-                    auth_provider_instance=auth_config.get("auth_provider_instance"),
-                )
+            # Step 8: Setup token manager for OAuth sources that support refresh
+            if source_model.oauth_type:
+                from airweave.schemas.source_connection import OAuthType
+
+                # Only create token manager for sources with refresh capability
+                if source_model.oauth_type in (
+                    OAuthType.WITH_REFRESH,
+                    OAuthType.WITH_ROTATING_REFRESH,
+                ):
+                    self._setup_token_manager(
+                        source_instance,
+                        db,
+                        source_connection,
+                        source_connection_data.get("integration_credential_id"),
+                        auth_config["credentials"],
+                        ctx,
+                        auth_provider_instance=auth_config.get("auth_provider_instance"),
+                    )
+                else:
+                    ctx.logger.debug(
+                        f"⏭️ Skipping token manager for {source_connection.short_name} - "
+                        f"oauth_type={source_model.oauth_type} does not support token refresh"
+                    )
 
             ctx.logger.info(
                 f"Successfully instantiated federated source: {source_connection.short_name}"
