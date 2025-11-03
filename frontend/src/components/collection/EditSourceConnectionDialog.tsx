@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { TagInput } from '@/components/ui/tag-input';
 import { cn } from '@/lib/utils';
 import { getAppIconUrl } from '@/lib/utils/icons';
 import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
@@ -18,6 +19,7 @@ interface EditSourceConnectionDialogProps {
     sourceDetails: any;
     authProviderDetails: any;
     isUpdating: boolean;
+    isFormValid: boolean;
     showPasswordFields: Record<string, boolean>;
     setShowPasswordFields: (fields: any) => void;
     handleEditSubmit: () => void;
@@ -36,6 +38,7 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
     sourceDetails,
     authProviderDetails,
     isUpdating,
+    isFormValid,
     showPasswordFields,
     setShowPasswordFields,
     handleEditSubmit,
@@ -202,29 +205,45 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                                                 <div key={field.name} className="space-y-1">
                                                     <Label className="text-xs text-muted-foreground font-normal">
                                                         {field.title || field.name}
+                                                        {field.required && <span className="text-red-500 ml-1">*</span>}
                                                     </Label>
                                                     {field.description && (
                                                         <p className="text-xs text-muted-foreground opacity-80">{field.description}</p>
                                                     )}
-                                                    <Input
-                                                        type={field.type === 'integer' ? 'number' : 'text'}
-                                                        className={cn(
-                                                            "w-full h-8 px-3 text-xs rounded-md border bg-transparent",
-                                                            isDark
-                                                                ? "border-gray-700 focus:border-blue-500"
-                                                                : "border-gray-300 focus:border-blue-500",
-                                                            "focus:outline-none"
-                                                        )}
-                                                        value={editFormData.config_fields[field.name] || ''}
-                                                        onChange={(e) => setEditFormData((prev: any) => ({
-                                                            ...prev,
-                                                            config_fields: {
-                                                                ...prev.config_fields,
-                                                                [field.name]: e.target.value
-                                                            }
-                                                        }))}
-                                                        placeholder={`Enter ${field.title || field.name}`}
-                                                    />
+                                                    {field.type === 'array' ? (
+                                                        <TagInput
+                                                            value={editFormData.config_fields[field.name] || []}
+                                                            onChange={(tags) => setEditFormData((prev: any) => ({
+                                                                ...prev,
+                                                                config_fields: {
+                                                                    ...prev.config_fields,
+                                                                    [field.name]: tags
+                                                                }
+                                                            }))}
+                                                            placeholder={`Enter ${field.title?.toLowerCase() || field.name} and press Enter...`}
+                                                            transformInput={sourceDetails?.short_name === 'jira' && field.name === 'project_keys' ? (v) => v.toUpperCase() : undefined}
+                                                        />
+                                                    ) : (
+                                                        <Input
+                                                            type={field.type === 'integer' ? 'number' : 'text'}
+                                                            className={cn(
+                                                                "w-full h-8 px-3 text-xs rounded-md border bg-transparent",
+                                                                isDark
+                                                                    ? "border-gray-700 focus:border-blue-500"
+                                                                    : "border-gray-300 focus:border-blue-500",
+                                                                "focus:outline-none"
+                                                            )}
+                                                            value={editFormData.config_fields[field.name] || ''}
+                                                            onChange={(e) => setEditFormData((prev: any) => ({
+                                                                ...prev,
+                                                                config_fields: {
+                                                                    ...prev.config_fields,
+                                                                    [field.name]: e.target.value
+                                                                }
+                                                            }))}
+                                                            placeholder={`Enter ${field.title || field.name}`}
+                                                        />
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -377,8 +396,13 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                             <Button
                                 type="button"
                                 onClick={handleEditSubmit}
-                                disabled={isUpdating}
-                                className="px-6 bg-blue-600 hover:bg-blue-700 text-white"
+                                disabled={isUpdating || !isFormValid}
+                                className={cn(
+                                    "px-6",
+                                    isFormValid
+                                        ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                        : "bg-gray-400 text-gray-200 cursor-not-allowed"
+                                )}
                             >
                                 {isUpdating ? (
                                     <>
