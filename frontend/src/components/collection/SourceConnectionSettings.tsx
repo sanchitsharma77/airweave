@@ -50,7 +50,7 @@ interface SourceConnection {
   description?: string;
   short_name: string;
   readable_collection_id: string;
-  config_fields?: Record<string, any>;
+  config?: Record<string, any>;  // Fixed: 'config' not 'config_fields'
   sync_id?: string;
   organization_id: string;
   created_at: string;
@@ -231,7 +231,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       setEditFormData({
         name: sourceConnection.name || '',
         description: sourceConnection.description || '',
-        config_fields: sourceConnection.config_fields || {},
+        config_fields: sourceConnection.config || {},
         auth_fields: {},
         auth_provider: sourceConnection.auth_provider || '',
         auth_provider_config: sourceConnection.auth_provider_config || {}
@@ -307,10 +307,14 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       }
 
       const hasConfigChanges = Object.keys(editFormData.config_fields).some(
-        key => editFormData.config_fields[key] !== sourceConnection?.config_fields?.[key]
+        key => editFormData.config_fields[key] !== sourceConnection?.config?.[key]
       );
       if (hasConfigChanges) {
-        updateData.config_fields = editFormData.config_fields;
+        // Merge existing config with changes to preserve all required fields
+        updateData.config = {
+          ...(sourceConnection?.config || {}),
+          ...editFormData.config_fields
+        };
       }
 
       const filledAuthFields = Object.entries(editFormData.auth_fields)
