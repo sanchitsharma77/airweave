@@ -24,17 +24,17 @@ test_flow:
   steps:
     - cleanup
     - create
-    - sync
+    - force_full_sync          # First sync: Full sync (no cursor yet)
     - verify
     - update
-    - sync
+    - force_full_sync          # Second sync: Incremental with cursor
     - verify
     - partial_delete
-    - sync
+    - force_full_sync          # Third sync: Force full sync to detect deletion
     - verify_partial_deletion
     - verify_remaining_entities
     - complete_delete
-    - sync
+    - force_full_sync          # Fourth sync: Force full sync to detect all deletions
     - verify_complete_deletion
     - cleanup
 
@@ -58,4 +58,3 @@ verification:
   score_threshold: 0.1
   max_retries: 5  # Google Docs sync might take a bit longer
   retry_delay_seconds: 10  # Give Google time to process
-
