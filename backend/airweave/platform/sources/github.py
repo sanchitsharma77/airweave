@@ -1,4 +1,4 @@
-"""GitHub source implementation for syncing repositories, directories, and code files."""
+r"""GitHub source implementation for syncing repositories, directories, and code files."""
 
 import base64
 import mimetypes
@@ -243,7 +243,7 @@ class GitHubSource(BaseSource):
         repo_data = await self._get_with_auth(client, url)
 
         # Check for cursor data and repository updates
-        cursor_data = self._get_cursor_data()
+        cursor_data = self.cursor.data if self.cursor else {}
         cursor_field = self.get_effective_cursor_field()
         if not cursor_field:
             cursor_field = self.get_default_cursor_field()
@@ -808,7 +808,7 @@ class GitHubSource(BaseSource):
             Tuple of (cursor_field, last_pushed_at)
         """
         # Get cursor data for incremental sync
-        cursor_data = self._get_cursor_data()
+        cursor_data = self.cursor.data if self.cursor else {}
         cursor_field = self.get_effective_cursor_field()
         if not cursor_field:
             cursor_field = self.get_default_cursor_field()
