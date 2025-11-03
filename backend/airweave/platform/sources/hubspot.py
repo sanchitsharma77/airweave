@@ -39,6 +39,10 @@ class HubspotSource(BaseSource):
     It provides comprehensive access to contacts, companies, deals, and support tickets.
     """
 
+    # HubSpot API limits
+    HUBSPOT_API_LIMIT = 100  # Maximum results per page for list endpoints
+    HUBSPOT_BATCH_SIZE = 100  # Maximum items per batch read request
+
     def __init__(self):
         """Initialize the HubSpot source."""
         super().__init__()
@@ -80,6 +84,49 @@ class HubspotSource(BaseSource):
             access_token = await self.get_access_token()
             headers = {"Authorization": f"Bearer {access_token}"}
             response = await client.get(url, headers=headers)
+
+        response.raise_for_status()
+        return response.json()
+
+    @retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+    )
+    async def _post_with_auth(
+        self, client: httpx.AsyncClient, url: str, json_data: Dict[str, Any]
+    ) -> Dict:
+        """Make authenticated POST request to HubSpot API.
+
+        Args:
+            client: HTTP client
+            url: API endpoint URL
+            json_data: JSON payload for POST body
+
+        Returns:
+            JSON response from API
+        """
+        # Get fresh token (will refresh if needed)
+        access_token = await self.get_access_token()
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+
+        response = await client.post(url, headers=headers, json=json_data)
+
+        # Handle 401 errors by refreshing token and retrying
+        if response.status_code == 401:
+            self.logger.warning(
+                f"Got 401 Unauthorized from HubSpot API at {url}, refreshing token..."
+            )
+            await self.refresh_on_unauthorized()
+
+            # Get new token and retry
+            access_token = await self.get_access_token()
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            }
+            response = await client.post(url, headers=headers, json=json_data)
 
         response.raise_for_status()
         return response.json()
@@ -209,11 +256,33 @@ class HubspotSource(BaseSource):
         """
         # Get all available properties for contacts
         all_properties = await self._get_all_properties(client, "contacts")
-        properties_param = ",".join(all_properties)
 
-        url = f"https://api.hubapi.com/crm/v3/objects/contacts?properties={properties_param}"
+        # Fetch all contact IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/contacts?limit={self.HUBSPOT_API_LIMIT}"
+        contact_ids = []
         while url:
             data = await self._get_with_auth(client, url)
+            for contact in data.get("results", []):
+                contact_ids.append(contact["id"])
+
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
+
+        # Batch read contacts with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read"
+        for i in range(0, len(contact_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = contact_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": contact_id} for contact_id in chunk],
+                    "properties": all_properties,
+                },
+            )
+
+            # Process results
             for contact in data.get("results", []):
                 raw_properties = contact.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -250,11 +319,6 @@ class HubspotSource(BaseSource):
                     archived=contact.get("archived", False),
                 )
 
-            # Handle pagination
-            paging = data.get("paging", {})
-            next_link = paging.get("next", {}).get("link")
-            url = next_link if next_link else None
-
     async def _generate_company_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
@@ -265,11 +329,33 @@ class HubspotSource(BaseSource):
         """
         # Get all available properties for companies
         all_properties = await self._get_all_properties(client, "companies")
-        properties_param = ",".join(all_properties)
 
-        url = f"https://api.hubapi.com/crm/v3/objects/companies?properties={properties_param}"
+        # Fetch all company IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/companies?limit={self.HUBSPOT_API_LIMIT}"
+        company_ids = []
         while url:
             data = await self._get_with_auth(client, url)
+            for company in data.get("results", []):
+                company_ids.append(company["id"])
+
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
+
+        # Batch read companies with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/companies/batch/read"
+        for i in range(0, len(company_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = company_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": company_id} for company_id in chunk],
+                    "properties": all_properties,
+                },
+            )
+
+            # Process results
             for company in data.get("results", []):
                 raw_properties = company.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -291,10 +377,6 @@ class HubspotSource(BaseSource):
                     archived=company.get("archived", False),
                 )
 
-            paging = data.get("paging", {})
-            next_link = paging.get("next", {}).get("link")
-            url = next_link if next_link else None
-
     async def _generate_deal_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
@@ -305,11 +387,33 @@ class HubspotSource(BaseSource):
         """
         # Get all available properties for deals
         all_properties = await self._get_all_properties(client, "deals")
-        properties_param = ",".join(all_properties)
 
-        url = f"https://api.hubapi.com/crm/v3/objects/deals?properties={properties_param}"
+        # Fetch all deal IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/deals?limit={self.HUBSPOT_API_LIMIT}"
+        deal_ids = []
         while url:
             data = await self._get_with_auth(client, url)
+            for deal in data.get("results", []):
+                deal_ids.append(deal["id"])
+
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
+
+        # Batch read deals with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/deals/batch/read"
+        for i in range(0, len(deal_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = deal_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": deal_id} for deal_id in chunk],
+                    "properties": all_properties,
+                },
+            )
+
+            # Process results
             for deal in data.get("results", []):
                 raw_properties = deal.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -332,10 +436,6 @@ class HubspotSource(BaseSource):
                     archived=deal.get("archived", False),
                 )
 
-            paging = data.get("paging", {})
-            next_link = paging.get("next", {}).get("link")
-            url = next_link if next_link else None
-
     async def _generate_ticket_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
@@ -346,11 +446,33 @@ class HubspotSource(BaseSource):
         """
         # Get all available properties for tickets
         all_properties = await self._get_all_properties(client, "tickets")
-        properties_param = ",".join(all_properties)
 
-        url = f"https://api.hubapi.com/crm/v3/objects/tickets?properties={properties_param}"
+        # Fetch all ticket IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/tickets?limit={self.HUBSPOT_API_LIMIT}"
+        ticket_ids = []
         while url:
             data = await self._get_with_auth(client, url)
+            for ticket in data.get("results", []):
+                ticket_ids.append(ticket["id"])
+
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
+
+        # Batch read tickets with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/tickets/batch/read"
+        for i in range(0, len(ticket_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = ticket_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": ticket_id} for ticket_id in chunk],
+                    "properties": all_properties,
+                },
+            )
+
+            # Process results
             for ticket in data.get("results", []):
                 raw_properties = ticket.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -372,10 +494,6 @@ class HubspotSource(BaseSource):
                     properties=cleaned_properties,
                     archived=ticket.get("archived", False),
                 )
-
-            paging = data.get("paging", {})
-            next_link = paging.get("next", {}).get("link")
-            url = next_link if next_link else None
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from HubSpot.
