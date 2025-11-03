@@ -19,8 +19,9 @@ def source(
     supports_continuous: bool = False,
     federated_search: bool = False,
     supports_temporal_relevance: bool = True,
+    cursor_class: Optional[Type[BaseModel]] = None,
 ) -> Callable[[type], type]:
-    """Enhanced source decorator with OAuth type tracking.
+    """Enhanced source decorator with OAuth type tracking and typed cursor support.
 
     Args:
         name: Display name for the source
@@ -34,6 +35,7 @@ def source(
         supports_continuous: Whether source supports cursor-based continuous syncing (default False)
         federated_search: Whether source uses federated search instead of syncing (default False)
         supports_temporal_relevance: Whether source entities have timestamps for (default True)
+        cursor_class: Optional Pydantic model class for typed cursor (e.g., GmailCursor)
 
     Example:
         # OAuth source (no auth config)
@@ -73,6 +75,7 @@ def source(
         cls._supports_continuous = supports_continuous
         cls._federated_search = federated_search
         cls._supports_temporal_relevance = supports_temporal_relevance
+        cls._cursor_class = cursor_class
 
         # Add validation method if not present
         if not hasattr(cls, "validate"):

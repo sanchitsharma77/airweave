@@ -19,6 +19,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.platform.cursors import GmailCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.gmail import (
@@ -57,6 +58,7 @@ def _should_retry_gmail_request(exception: Exception) -> bool:
     config_class="GmailConfig",
     labels=["Communication", "Email"],
     supports_continuous=True,
+    cursor_class=GmailCursor,
 )
 class GmailSource(BaseSource):
     """Gmail source connector integrates with the Gmail API to extract and synchronize email data.
@@ -275,45 +277,12 @@ class GmailSource(BaseSource):
         return data
 
     # -----------------------
-    # Cursor helpers
+    # Cursor helper
     # -----------------------
-    def get_default_cursor_field(self) -> Optional[str]:
-        """Default cursor field for Gmail incremental sync.
-
-        Gmail uses historyId for incremental changes. We'll store it under a named cursor field.
-        """
-        return "history_id"
-
-    def validate_cursor_field(self, cursor_field: str) -> None:
-        """Validate the cursor field for Gmail incremental sync."""
-        valid_field = self.get_default_cursor_field()
-        if cursor_field != valid_field:
-            raise ValueError(
-                f"Invalid cursor field '{cursor_field}' for Gmail. Use '{valid_field}'."
-            )
-
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        if self.cursor:
-            return self.cursor.cursor_data or {}
-        return {}
-
-    def _update_cursor_data(self, new_history_id: str) -> None:
-        if not self.cursor:
-            return
-        cursor_field = self.get_effective_cursor_field() or self.get_default_cursor_field()
-        if not cursor_field:
-            return
-        if not self.cursor.cursor_data:
-            self.cursor.cursor_data = {}
-        self.cursor.cursor_data[cursor_field] = new_history_id
-
-    async def _resolve_cursor_and_token(self) -> tuple[Optional[str], Optional[str]]:
-        cursor_field = self.get_effective_cursor_field() or self.get_default_cursor_field()
-        if cursor_field and cursor_field != self.get_default_cursor_field():
-            self.validate_cursor_field(cursor_field)
-        cursor_data = self._get_cursor_data()
-        last_history_id = cursor_data.get(cursor_field) if cursor_field else None
-        return cursor_field, last_history_id
+    async def _resolve_cursor(self) -> Optional[str]:
+        """Get last history ID from cursor if available."""
+        cursor_data = self.cursor.data if self.cursor else {}
+        return cursor_data.get("history_id")
 
     # -----------------------
     # Listing helpers
@@ -1011,8 +980,8 @@ class GmailSource(BaseSource):
             else:
                 break
 
-        if latest_history_id:
-            self._update_cursor_data(str(latest_history_id))
+        if latest_history_id and self.cursor:
+            self.cursor.update(history_id=str(latest_history_id))
             self.logger.info("Updated Gmail cursor with latest historyId for next run")
 
     async def _yield_history_deletions(
@@ -1145,7 +1114,7 @@ class GmailSource(BaseSource):
         """Generate Gmail entities with incremental History API support."""
         try:
             async with self.http_client() as client:
-                cursor_field, last_history_id = await self._resolve_cursor_and_token()
+                last_history_id = await self._resolve_cursor()
                 if last_history_id:
                     async for e in self._run_incremental_sync(client, last_history_id):
                         yield e
@@ -1167,8 +1136,8 @@ class GmailSource(BaseSource):
                                 f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msgs[0]['id']}",
                             )
                             history_id = detail.get("historyId")
-                            if history_id:
-                                self._update_cursor_data(str(history_id))
+                            if history_id and self.cursor:
+                                self.cursor.update(history_id=str(history_id))
                                 self.logger.info(
                                     "Stored Gmail historyId after full sync "
                                     "for next incremental run"

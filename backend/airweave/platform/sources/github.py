@@ -11,6 +11,7 @@ import tenacity
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from airweave.platform.configs.auth import GitHubAuthConfig
+from airweave.platform.cursors import GitHubCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.github import (
@@ -37,6 +38,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     labels=["Code"],
     supports_continuous=True,
     supports_temporal_relevance=False,
+    cursor_class=GitHubCursor,
 )
 class GitHubSource(BaseSource):
     """GitHub source connector integrates with the GitHub REST API to extract and synchronize data.
@@ -198,46 +200,6 @@ class GitHubSource(BaseSource):
         ext = Path(file_path).suffix.lower()
         return get_language_for_extension(ext)
 
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        """Get cursor data from cursor.
-
-        Returns:
-            Cursor data dictionary, empty dict if no cursor exists
-        """
-        if hasattr(self, "cursor") and self.cursor:
-            return getattr(self.cursor, "cursor_data", {})
-        return {}
-
-    def _update_cursor_data(self, pushed_at: str, repo_name: str):
-        """Update cursor data with repository pushed_at timestamp.
-
-        Args:
-            pushed_at: Repository pushed_at timestamp
-            repo_name: Repository name
-        """
-        # Check if cursor exists before updating
-        if not hasattr(self, "cursor") or self.cursor is None:
-            self.logger.debug("No cursor available, skipping cursor update")
-            return
-
-        # Get the cursor field to use
-        cursor_field = self.get_effective_cursor_field()
-        if not cursor_field:
-            # This shouldn't happen as GitHub has a default, but handle gracefully
-            self.logger.warning("No cursor field found, using default")
-            cursor_field = self.get_default_cursor_field()
-
-        self.cursor.cursor_data.update(
-            {
-                cursor_field: pushed_at,
-                "repo_name": repo_name,
-                "branch": getattr(self, "branch", None),
-            }
-        )
-        self.logger.debug(
-            f"Updated cursor data with field '{cursor_field}': {self.cursor.cursor_data}"
-        )
-
     def _check_repository_updates(
         self, repo_name: str, last_pushed_at: str, current_pushed_at: str
     ) -> bool:
@@ -300,7 +262,12 @@ class GitHubSource(BaseSource):
         self._check_repository_updates(repo_name, last_pushed_at, current_pushed_at)
 
         # Update cursor with current repository pushed_at
-        self._update_cursor_data(current_pushed_at, repo_name)
+        if self.cursor:
+            self.cursor.update(
+                last_repository_pushed_at=current_pushed_at,
+                repo_name=repo_name,
+                branch=getattr(self, "branch", None),
+            )
 
         return GitHubRepositoryEntity(
             # Base fields
