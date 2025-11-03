@@ -911,7 +911,7 @@ class SearchFactory:
                 else:
                     ctx.logger.debug(
                         f"⏭️ Skipping token manager for {source_connection.short_name} - "
-                        f"oauth_type={source_model.oauth_type.value} does not support token refresh"
+                        f"oauth_type={source_model.oauth_type} does not support token refresh"
                     )
 
             ctx.logger.info(

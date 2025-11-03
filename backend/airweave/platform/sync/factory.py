@@ -491,7 +491,7 @@ class SyncFactory:
             else:
                 logger.debug(
                     f"⏭️ Skipping token manager for {short_name} - "
-                    f"oauth_type={source_model.oauth_type.value} does not support token refresh"
+                    f"oauth_type={source_model.oauth_type} does not support token refresh"
                 )
 
         if should_create_token_manager:
