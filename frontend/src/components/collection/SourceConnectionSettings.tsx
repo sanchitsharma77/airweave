@@ -291,6 +291,32 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
     }
   };
 
+  // Validate form before submission
+  const validateForm = (): boolean => {
+    if (!sourceDetails?.config_fields?.fields) return true;
+
+    // Check required config fields
+    for (const field of sourceDetails.config_fields.fields) {
+      if (field.required) {
+        const value = editFormData.config_fields[field.name];
+
+        if (field.type === 'array') {
+          // For arrays, check if it has at least one item
+          if (!value || !Array.isArray(value) || value.length === 0) {
+            return false;
+          }
+        } else {
+          // For other types, check if value exists and is not empty
+          if (!value || String(value).trim() === '') {
+            return false;
+          }
+        }
+      }
+    }
+
+    return true;
+  };
+
   // Handle edit form submission
   const handleEditSubmit = async () => {
     setIsUpdating(true);
@@ -350,6 +376,16 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
       const response = await apiClient.patch(`/source-connections/${sourceConnection?.id}`, updateData);
 
       if (!response.ok) {
+        // Handle validation errors (422)
+        if (response.status === 422) {
+          const errorData = await response.json();
+          toast({
+            title: "Validation Error",
+            description: errorData.detail || "Please check the required fields",
+            variant: "destructive"
+          });
+          return;
+        }
         throw new Error("Failed to update source connection");
       }
 
@@ -526,6 +562,7 @@ export const SourceConnectionSettings: React.FC<SourceConnectionSettingsProps> =
         sourceDetails={sourceDetails}
         authProviderDetails={authProviderDetails}
         isUpdating={isUpdating}
+        isFormValid={validateForm()}
         showPasswordFields={showPasswordFields}
         setShowPasswordFields={setShowPasswordFields}
         handleEditSubmit={handleEditSubmit}

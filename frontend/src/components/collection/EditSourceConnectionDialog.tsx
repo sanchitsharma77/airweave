@@ -19,6 +19,7 @@ interface EditSourceConnectionDialogProps {
     sourceDetails: any;
     authProviderDetails: any;
     isUpdating: boolean;
+    isFormValid: boolean;
     showPasswordFields: Record<string, boolean>;
     setShowPasswordFields: (fields: any) => void;
     handleEditSubmit: () => void;
@@ -37,6 +38,7 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
     sourceDetails,
     authProviderDetails,
     isUpdating,
+    isFormValid,
     showPasswordFields,
     setShowPasswordFields,
     handleEditSubmit,
@@ -203,6 +205,7 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                                                 <div key={field.name} className="space-y-1">
                                                     <Label className="text-xs text-muted-foreground font-normal">
                                                         {field.title || field.name}
+                                                        {field.required && <span className="text-red-500 ml-1">*</span>}
                                                     </Label>
                                                     {field.description && (
                                                         <p className="text-xs text-muted-foreground opacity-80">{field.description}</p>
@@ -393,8 +396,13 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                             <Button
                                 type="button"
                                 onClick={handleEditSubmit}
-                                disabled={isUpdating}
-                                className="px-6 bg-blue-600 hover:bg-blue-700 text-white"
+                                disabled={isUpdating || !isFormValid}
+                                className={cn(
+                                    "px-6",
+                                    isFormValid
+                                        ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                        : "bg-gray-400 text-gray-200 cursor-not-allowed"
+                                )}
                             >
                                 {isUpdating ? (
                                     <>
