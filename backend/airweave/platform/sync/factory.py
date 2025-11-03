@@ -485,7 +485,7 @@ class SyncFactory:
             if source_model.oauth_type in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
                 should_create_token_manager = True
                 logger.debug(
-                    f"✅ OAuth source {short_name} with oauth_type={source_model.oauth_type.value} "
+                    f"✅ OAuth source {short_name} with oauth_type={source_model.oauth_type} "
                     f"will use token manager for refresh"
                 )
             else:
