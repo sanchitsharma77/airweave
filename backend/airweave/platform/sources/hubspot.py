@@ -84,49 +84,6 @@ class HubspotSource(BaseSource):
         response.raise_for_status()
         return response.json()
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
-    )
-    async def _post_with_auth(
-        self, client: httpx.AsyncClient, url: str, json_data: Dict[str, Any]
-    ) -> Dict:
-        """Make authenticated POST request to HubSpot API.
-
-        Args:
-            client: HTTP client
-            url: API endpoint URL
-            json_data: JSON payload for POST body
-
-        Returns:
-            JSON response from API
-        """
-        # Get fresh token (will refresh if needed)
-        access_token = await self.get_access_token()
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-
-        response = await client.post(url, headers=headers, json=json_data)
-
-        # Handle 401 errors by refreshing token and retrying
-        if response.status_code == 401:
-            self.logger.warning(
-                f"Got 401 Unauthorized from HubSpot API at {url}, refreshing token..."
-            )
-            await self.refresh_on_unauthorized()
-
-            # Get new token and retry
-            access_token = await self.get_access_token()
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-            response = await client.post(url, headers=headers, json=json_data)
-
-        response.raise_for_status()
-        return response.json()
-
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
         """Safely convert a value to float, handling empty strings and None."""
         if not value or value == "":
@@ -247,29 +204,16 @@ class HubspotSource(BaseSource):
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Contact entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/contacts/search
+        This uses the REST CRM API endpoint for contacts:
+          GET /crm/v3/objects/contacts
         """
         # Get all available properties for contacts
         all_properties = await self._get_all_properties(client, "contacts")
+        properties_param = ",".join(all_properties)
 
-        url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
-        after = None
-        limit = 100
-
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
-
-            if after:
-                search_body["after"] = after
-
-            data = await self._post_with_auth(client, url, search_body)
-
+        url = f"https://api.hubapi.com/crm/v3/objects/contacts?properties={properties_param}"
+        while url:
+            data = await self._get_with_auth(client, url)
             for contact in data.get("results", []):
                 raw_properties = contact.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -306,41 +250,26 @@ class HubspotSource(BaseSource):
                     archived=contact.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
+            # Handle pagination
             paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
     async def _generate_company_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Company entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/companies/search
+        This uses the REST CRM API endpoint for companies:
+          GET /crm/v3/objects/companies
         """
         # Get all available properties for companies
         all_properties = await self._get_all_properties(client, "companies")
+        properties_param = ",".join(all_properties)
 
-        url = "https://api.hubapi.com/crm/v3/objects/companies/search"
-        after = None
-        limit = 100
-
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
-
-            if after:
-                search_body["after"] = after
-
-            data = await self._post_with_auth(client, url, search_body)
-
+        url = f"https://api.hubapi.com/crm/v3/objects/companies?properties={properties_param}"
+        while url:
+            data = await self._get_with_auth(client, url)
             for company in data.get("results", []):
                 raw_properties = company.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -362,41 +291,25 @@ class HubspotSource(BaseSource):
                     archived=company.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
             paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
     async def _generate_deal_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Deal entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/deals/search
+        This uses the REST CRM API endpoint for deals:
+          GET /crm/v3/objects/deals
         """
         # Get all available properties for deals
         all_properties = await self._get_all_properties(client, "deals")
+        properties_param = ",".join(all_properties)
 
-        url = "https://api.hubapi.com/crm/v3/objects/deals/search"
-        after = None
-        limit = 100
-
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
-
-            if after:
-                search_body["after"] = after
-
-            data = await self._post_with_auth(client, url, search_body)
-
+        url = f"https://api.hubapi.com/crm/v3/objects/deals?properties={properties_param}"
+        while url:
+            data = await self._get_with_auth(client, url)
             for deal in data.get("results", []):
                 raw_properties = deal.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -419,41 +332,25 @@ class HubspotSource(BaseSource):
                     archived=deal.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
             paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
     async def _generate_ticket_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Ticket entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/tickets/search
+        This uses the REST CRM API endpoint for tickets:
+          GET /crm/v3/objects/tickets
         """
         # Get all available properties for tickets
         all_properties = await self._get_all_properties(client, "tickets")
+        properties_param = ",".join(all_properties)
 
-        url = "https://api.hubapi.com/crm/v3/objects/tickets/search"
-        after = None
-        limit = 100
-
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
-
-            if after:
-                search_body["after"] = after
-
-            data = await self._post_with_auth(client, url, search_body)
-
+        url = f"https://api.hubapi.com/crm/v3/objects/tickets?properties={properties_param}"
+        while url:
+            data = await self._get_with_auth(client, url)
             for ticket in data.get("results", []):
                 raw_properties = ticket.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -476,12 +373,9 @@ class HubspotSource(BaseSource):
                     archived=ticket.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
             paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from HubSpot.
