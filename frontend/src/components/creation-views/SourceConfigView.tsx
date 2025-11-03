@@ -11,6 +11,7 @@ import { AuthMethodSelector } from './AuthMethodSelector';
 import { AuthProviderSelector } from './AuthProviderSelector';
 import { useAuthProvidersStore } from '@/lib/stores/authProviders';
 import { ValidatedInput } from '@/components/ui/validated-input';
+import { TagInput } from '@/components/ui/tag-input';
 import { sourceConnectionNameValidation, getAuthFieldValidation, clientIdValidation, clientSecretValidation, redirectUrlValidation } from '@/lib/validation/rules';
 import ReactMarkdown from 'react-markdown';
 
@@ -81,7 +82,7 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
   const [isCreating, setIsCreating] = useState(false);
   const [sourceDetails, setSourceDetails] = useState<SourceDetails | null>(null);
   const [authFields, setAuthFields] = useState<Record<string, string>>({});
-  const [configData, setConfigData] = useState<Record<string, string>>({});
+  const [configData, setConfigData] = useState<Record<string, string | string[]>>({});
   const [useOwnCredentials, setUseOwnCredentials] = useState(false);
   // Initialize connection name from store or with source default
   const [connectionName, setConnectionName] = useState(
@@ -305,7 +306,13 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
     if (sourceDetails?.config_fields?.fields) {
       const requiredConfigFields = sourceDetails.config_fields.fields.filter(f => f.required);
       if (requiredConfigFields.length > 0) {
-        const allFilled = requiredConfigFields.every(field => configData[field.name]?.trim());
+        const allFilled = requiredConfigFields.every(field => {
+          const value = configData[field.name];
+          if (Array.isArray(value)) {
+            return value.length > 0;
+          }
+          return typeof value === 'string' && value.trim() !== '';
+        });
         if (!allFilled) return false;
       }
     }
@@ -394,6 +401,10 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
         const filteredConfig = Object.entries(configData).reduce((acc, [key, value]) => {
           // Only include non-empty values
           if (value !== '' && value !== null && value !== undefined) {
+            // Also check arrays aren't empty
+            if (Array.isArray(value) && value.length === 0) {
+              return acc;
+            }
             acc[key] = value;
           }
           return acc;
@@ -668,20 +679,29 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ humanReadabl
                               </ReactMarkdown>
                             </div>
                           )}
-                          <input
-                            type="text"
-                            placeholder=""
-                            value={configData[field.name] || ''}
-                            onChange={(e) => setConfigData({ ...configData, [field.name]: e.target.value })}
-                            className={cn(
-                              "w-full px-4 py-2 rounded-lg text-sm",
-                              "border bg-transparent",
-                              "focus:outline-none focus:border-gray-400 dark:focus:border-gray-600",
-                              isDark
-                                ? "border-gray-800 text-white placeholder:text-gray-600"
-                                : "border-gray-200 text-gray-900 placeholder:text-gray-400"
-                            )}
-                          />
+                          {field.type === 'array' ? (
+                            <TagInput
+                              value={(Array.isArray(configData[field.name]) ? configData[field.name] : []) as string[]}
+                              onChange={(tags) => setConfigData({ ...configData, [field.name]: tags })}
+                              placeholder={`Enter ${field.title?.toLowerCase() || field.name} and press Enter...`}
+                              transformInput={sourceDetails?.short_name === 'jira' && field.name === 'project_keys' ? (v) => v.toUpperCase() : undefined}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              placeholder=""
+                              value={configData[field.name] || ''}
+                              onChange={(e) => setConfigData({ ...configData, [field.name]: e.target.value })}
+                              className={cn(
+                                "w-full px-4 py-2 rounded-lg text-sm",
+                                "border bg-transparent",
+                                "focus:outline-none focus:border-gray-400 dark:focus:border-gray-600",
+                                isDark
+                                  ? "border-gray-800 text-white placeholder:text-gray-600"
+                                  : "border-gray-200 text-gray-900 placeholder:text-gray-400"
+                              )}
+                            />
+                          )}
                         </div>
                       ))}
                     </div>

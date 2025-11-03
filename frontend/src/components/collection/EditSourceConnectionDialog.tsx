@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { TagInput } from '@/components/ui/tag-input';
 import { cn } from '@/lib/utils';
 import { getAppIconUrl } from '@/lib/utils/icons';
 import { Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
@@ -206,25 +207,40 @@ export const EditSourceConnectionDialog: React.FC<EditSourceConnectionDialogProp
                                                     {field.description && (
                                                         <p className="text-xs text-muted-foreground opacity-80">{field.description}</p>
                                                     )}
-                                                    <Input
-                                                        type={field.type === 'integer' ? 'number' : 'text'}
-                                                        className={cn(
-                                                            "w-full h-8 px-3 text-xs rounded-md border bg-transparent",
-                                                            isDark
-                                                                ? "border-gray-700 focus:border-blue-500"
-                                                                : "border-gray-300 focus:border-blue-500",
-                                                            "focus:outline-none"
-                                                        )}
-                                                        value={editFormData.config_fields[field.name] || ''}
-                                                        onChange={(e) => setEditFormData((prev: any) => ({
-                                                            ...prev,
-                                                            config_fields: {
-                                                                ...prev.config_fields,
-                                                                [field.name]: e.target.value
-                                                            }
-                                                        }))}
-                                                        placeholder={`Enter ${field.title || field.name}`}
-                                                    />
+                                                    {field.type === 'array' ? (
+                                                        <TagInput
+                                                            value={editFormData.config_fields[field.name] || []}
+                                                            onChange={(tags) => setEditFormData((prev: any) => ({
+                                                                ...prev,
+                                                                config_fields: {
+                                                                    ...prev.config_fields,
+                                                                    [field.name]: tags
+                                                                }
+                                                            }))}
+                                                            placeholder={`Enter ${field.title?.toLowerCase() || field.name} and press Enter...`}
+                                                            transformInput={sourceDetails?.short_name === 'jira' && field.name === 'project_keys' ? (v) => v.toUpperCase() : undefined}
+                                                        />
+                                                    ) : (
+                                                        <Input
+                                                            type={field.type === 'integer' ? 'number' : 'text'}
+                                                            className={cn(
+                                                                "w-full h-8 px-3 text-xs rounded-md border bg-transparent",
+                                                                isDark
+                                                                    ? "border-gray-700 focus:border-blue-500"
+                                                                    : "border-gray-300 focus:border-blue-500",
+                                                                "focus:outline-none"
+                                                            )}
+                                                            value={editFormData.config_fields[field.name] || ''}
+                                                            onChange={(e) => setEditFormData((prev: any) => ({
+                                                                ...prev,
+                                                                config_fields: {
+                                                                    ...prev.config_fields,
+                                                                    [field.name]: e.target.value
+                                                                }
+                                                            }))}
+                                                            placeholder={`Enter ${field.title || field.name}`}
+                                                        />
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
