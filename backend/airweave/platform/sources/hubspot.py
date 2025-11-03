@@ -81,6 +81,29 @@ class HubspotSource(BaseSource):
             headers = {"Authorization": f"Bearer {access_token}"}
             response = await client.get(url, headers=headers)
 
+        # Log detailed error information for 4xx/5xx responses before raising
+        if not response.is_success:
+            try:
+                error_body = response.json()
+                correlation_id = error_body.get("correlationId", "N/A")
+                error_message = error_body.get("message", "No message provided")
+                error_category = error_body.get("category", "Unknown")
+                self.logger.error(
+                    f"❌ HubSpot API error at {url} - "
+                    f"Status: {response.status_code}, "
+                    f"Message: {error_message}, "
+                    f"Category: {error_category}, "
+                    f"CorrelationId: {correlation_id}, "
+                    f"Full response: {error_body}"
+                )
+            except Exception:
+                # If we can't parse JSON, log the raw response
+                self.logger.error(
+                    f"❌ HubSpot API error at {url} - "
+                    f"Status: {response.status_code}, "
+                    f"Response: {response.text}"
+                )
+
         response.raise_for_status()
         return response.json()
 
@@ -123,6 +146,31 @@ class HubspotSource(BaseSource):
                 "Content-Type": "application/json",
             }
             response = await client.post(url, headers=headers, json=json_data)
+
+        # Log detailed error information for 4xx/5xx responses before raising
+        if not response.is_success:
+            try:
+                error_body = response.json()
+                correlation_id = error_body.get("correlationId", "N/A")
+                error_message = error_body.get("message", "No message provided")
+                error_category = error_body.get("category", "Unknown")
+                self.logger.error(
+                    f"❌ HubSpot API error at {url} - "
+                    f"Status: {response.status_code}, "
+                    f"Message: {error_message}, "
+                    f"Category: {error_category}, "
+                    f"CorrelationId: {correlation_id}, "
+                    f"Request body: {json_data}, "
+                    f"Full response: {error_body}"
+                )
+            except Exception:
+                # If we can't parse JSON, log the raw response
+                self.logger.error(
+                    f"❌ HubSpot API error at {url} - "
+                    f"Status: {response.status_code}, "
+                    f"Request body: {json_data}, "
+                    f"Response: {response.text}"
+                )
 
         response.raise_for_status()
         return response.json()
