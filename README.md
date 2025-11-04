@@ -6,7 +6,7 @@
   <img width="837" alt="airweave-lettermark" style="padding-bottom: 12px;" src="frontend/public/logo-airweave-darkbg.svg"/>
 </picture>
 
-# Make Any App Searchable for AI Agents
+# Context Retrieval for AI Agents across Apps & Databases
 
 [![Ruff](https://github.com/airweave-ai/airweave/actions/workflows/ruff.yml/badge.svg)](https://github.com/airweave-ai/airweave/actions/workflows/ruff.yml)
 [![ESLint](https://github.com/airweave-ai/airweave/actions/workflows/eslint.yml/badge.svg)](https://github.com/airweave-ai/airweave/actions/workflows/eslint.yml)
@@ -26,7 +26,7 @@
 
 ## What is Airweave?
 
-[Airweave](https://app.airweave.ai/) is a fully open-source tool that lets agents search any app. It connects to apps, productivity tools, databases, or document stores and transforms their contents into searchable knowledge bases, accessible through a standardized interface for agents.
+[Airweave](https://app.airweave.ai/) is a fully open-source context retrieval layer for AI agents across apps and databases. It connects to apps, productivity tools, databases, or document stores and transforms their contents into searchable knowledge bases, accessible through a standardized interface for agents.
 
 The search interface is exposed via REST API or MCP. When using MCP, Airweave essentially builds a semantically searchable MCP server. The platform handles everything from auth and extraction to embedding and serving. You can find our documentation [here](https://docs.airweave.ai/welcome).
 
