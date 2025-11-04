@@ -15,7 +15,7 @@ connector:
     # Timing: Allow Gmail API to index newly created emails
     # They exist immediately but don't appear in threads.list queries until fully indexed.
     # This is a Gmail API limitation, not a Monke issue. External emails don't have this problem.
-    post_create_sleep_seconds: 30
+    post_create_sleep_seconds: 20
 
     # Label Filters: Use permissive filtering for test environment
     # Include both INBOX and SENT to catch self-sent test emails
