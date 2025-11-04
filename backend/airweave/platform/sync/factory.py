@@ -322,16 +322,19 @@ class SyncFactory:
             pass
 
         # Setup token manager for OAuth sources (if applicable)
-        # Skip only for direct token injection (when access_token parameter was explicitly passed)
-        # Don't confuse this with credentials being processed to a string for the source
+        # Skip for:
+        # 1. Direct token injection (when access_token parameter was explicitly passed)
+        # 2. Proxy mode (PipedreamProxyClient or other proxies manage tokens internally)
+        from airweave.platform.auth_providers.auth_result import AuthProviderMode
+
         auth_mode = auth_config.get("auth_mode")
         auth_provider_instance = auth_config.get("auth_provider_instance")
 
-        # Only skip token manager if access_token was directly injected via parameter
-        # (not when credentials are just processed to string format for source consumption)
+        # Check if we should skip TokenManager
         is_direct_token_injection = access_token is not None
+        is_proxy_mode = auth_mode == AuthProviderMode.PROXY
 
-        if not is_direct_token_injection:
+        if not is_direct_token_injection and not is_proxy_mode:
             try:
                 await cls._setup_token_manager(
                     db=db,
@@ -348,6 +351,16 @@ class SyncFactory:
                     f"'{source_connection_data['short_name']}': {e}"
                 )
                 # Don't fail source creation if token manager setup fails
+        elif is_proxy_mode:
+            logger.info(
+                f"⏭️ Skipping token manager for {source_connection_data['short_name']} - "
+                f"proxy mode (PipedreamProxyClient manages tokens internally)"
+            )
+        else:
+            logger.debug(
+                f"⏭️ Skipping token manager for {source_connection_data['short_name']} - "
+                f"direct token injection"
+            )
 
         # Setup file downloader for file-based sources
         cls._setup_file_downloader(source, sync_job, logger)

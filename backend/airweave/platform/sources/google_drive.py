@@ -17,7 +17,7 @@ References:
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt
 
 from airweave.core.exceptions import TokenRefreshError
 from airweave.core.shared_models import RateLimitLevel
@@ -28,6 +28,10 @@ from airweave.platform.entities.google_drive import (
     GoogleDriveFileEntity,
 )
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sources.retry_helpers import (
+    retry_if_rate_limit_or_timeout,
+    wait_rate_limit_with_backoff,
+)
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
@@ -122,9 +126,9 @@ class GoogleDriveSource(BaseSource):
         self.cursor.cursor_data[cursor_field] = new_token
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.ConnectTimeout, httpx.ReadTimeout)),
+        stop=stop_after_attempt(10),  # Increased for aggressive rate limits
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
         reraise=True,
     )
     async def _get_with_auth(  # noqa: C901
@@ -132,8 +136,11 @@ class GoogleDriveSource(BaseSource):
     ) -> Dict:
         """Make an authenticated GET request to the Google Drive API with retry logic.
 
-        This method now uses the token manager for authentication and handles
-        401 errors by refreshing the token and retrying.
+        Retries on:
+        - 429 rate limits (respects Retry-After header from both real API and AirweaveHttpClient)
+        - Timeout errors (exponential backoff)
+
+        Max 5 attempts with intelligent wait strategy.
         """
         # Get a valid token (will refresh if needed)
         access_token = await self.get_access_token()
@@ -187,6 +194,14 @@ class GoogleDriveSource(BaseSource):
             self.logger.error(f"Read timeout accessing Google Drive API: {url}")
             raise
         except httpx.HTTPStatusError as e:
+            # Log differently for rate limits (which will be retried)
+            if e.response.status_code == 429:
+                retry_after = e.response.headers.get("Retry-After", "unknown")
+                self.logger.warning(
+                    f"Rate limit hit (429) for Google Drive API: {url} "
+                    f"(will retry after {retry_after}s)"
+                )
+            else:
             self.logger.error(
                 f"HTTP status error {e.response.status_code} from Google Drive API: {url}"
             )

@@ -15,7 +15,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.configs.auth import AttioAuthConfig
@@ -28,6 +28,10 @@ from airweave.platform.entities.attio import (
     AttioRecordEntity,
 )
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sources.retry_helpers import (
+    retry_if_rate_limit_or_timeout,
+    wait_rate_limit_with_backoff,
+)
 from airweave.schemas.source_connection import AuthenticationMethod
 
 
@@ -138,7 +142,10 @@ class AttioSource(BaseSource):
                 raise
 
     @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+        stop=stop_after_attempt(5),
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
+        reraise=True,
     )
     async def _post_with_auth(
         self, client: httpx.AsyncClient, url: str, json_data: Optional[Dict[str, Any]] = None

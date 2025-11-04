@@ -905,9 +905,14 @@ class SearchFactory:
             )
 
             # Step 9: Setup token manager for OAuth sources that support refresh
-            if source_model.oauth_type:
+            # Skip for proxy mode (proxy client manages tokens internally)
+            from airweave.platform.auth_providers.auth_result import AuthProviderMode
                 from airweave.schemas.source_connection import OAuthType
 
+            auth_mode = auth_config.get("auth_mode")
+            is_proxy_mode = auth_mode == AuthProviderMode.PROXY
+
+            if source_model.oauth_type and not is_proxy_mode:
                 # Only create token manager for sources with refresh capability
                 if source_model.oauth_type in (
                     OAuthType.WITH_REFRESH,
@@ -926,6 +931,11 @@ class SearchFactory:
                     ctx.logger.debug(
                         f"⏭️ Skipping token manager for {source_connection.short_name} - "
                         f"oauth_type={source_model.oauth_type} does not support token refresh"
+                    )
+            elif is_proxy_mode:
+                ctx.logger.info(
+                    f"⏭️ Skipping token manager for {source_connection.short_name} - "
+                    f"proxy mode (proxy client manages tokens internally)"
                     )
 
             ctx.logger.info(

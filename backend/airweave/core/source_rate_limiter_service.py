@@ -20,12 +20,58 @@ class SourceRateLimiter:
 
     Enforces rate limits on external source API calls across horizontally scaled instances.
     Counts stored in Redis sorted sets, configurations cached from database.
+
+    Uses Lua scripts for atomic check-and-increment operations to prevent race conditions
+    when concurrent requests check limits simultaneously.
     """
 
     # Redis key prefixes
     KEY_PREFIX = "source_rate_limit"
     CONFIG_CACHE_PREFIX = "source_rate_limit_config"
     CONFIG_CACHE_TTL = 300  # 5 minutes
+
+    # Lua script for atomic check-and-increment
+    # Returns: current_count if allowed, -1 if over limit
+    # If over limit, also returns retry_after as second return value
+    LUA_CHECK_AND_INCREMENT = """
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local window_start = tonumber(ARGV[2])
+local current_time = tonumber(ARGV[3])
+local window_seconds = tonumber(ARGV[4])
+local expire_seconds = tonumber(ARGV[5])
+local unique_id = ARGV[6]  -- UUID to make each entry unique
+
+-- Remove old entries outside sliding window
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+
+-- Count current requests in window
+local current_count = redis.call('ZCOUNT', key, window_start, current_time)
+
+-- Check if over limit
+if current_count >= limit then
+    -- Get oldest entry to calculate retry_after
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local retry_after = window_seconds  -- Default
+
+    if oldest and oldest[2] then
+        local oldest_timestamp = tonumber(oldest[2])
+        retry_after = math.max(0.1, (oldest_timestamp + window_seconds) - current_time)
+    end
+
+    return {-1, retry_after}  -- Over limit, return retry_after
+end
+
+-- Add current request to sliding window with unique member
+-- Score = current_time (for range queries)
+-- Member = unique_id (ensures uniqueness for concurrent requests at same time)
+redis.call('ZADD', key, current_time, unique_id)
+
+-- Set expiration for auto-cleanup
+redis.call('EXPIRE', key, expire_seconds)
+
+return {current_count + 1, 0}  -- Success, return new count
+"""
 
     @staticmethod
     async def _get_source_rate_limit_level(source_short_name: str) -> Optional[str]:
@@ -255,40 +301,37 @@ class SourceRateLimiter:
 
         current_time = time.time()
         window_start = current_time - window_seconds
+        expire_seconds = window_seconds * 2
 
-        # Use Redis pipeline for atomic operations
-        pipe = redis_client.client.pipeline()
+        # Generate unique ID for this request (prevents ZADD collision at same timestamp)
+        from uuid import uuid4
 
-        # Remove old entries outside the sliding window
-        pipe.zremrangebyscore(redis_key, 0, window_start)
+        unique_id = str(uuid4())
 
-        # Count current requests in window
-        pipe.zcount(redis_key, window_start, current_time)
-
-        # Execute pipeline
-        results = await pipe.execute()
-        current_count = results[1]  # Result from zcount
-
-        logger.debug(
-            f"[SourceRateLimit] Current count: {current_count}/{limit} for org={org_id}, "
-            f"source={source_short_name}, connection={source_connection_id}, "
-            f"window={window_seconds}s"
+        # Execute atomic Lua script for check-and-increment
+        # This prevents race conditions when concurrent requests check simultaneously
+        result = await redis_client.client.eval(
+            SourceRateLimiter.LUA_CHECK_AND_INCREMENT,
+            1,  # Number of keys
+            redis_key,  # KEYS[1]
+            limit,  # ARGV[1]
+            window_start,  # ARGV[2]
+            current_time,  # ARGV[3]
+            window_seconds,  # ARGV[4]
+            expire_seconds,  # ARGV[5]
+            unique_id,  # ARGV[6]
         )
 
-        # Check if we're over the limit
-        if current_count >= limit:
-            # Calculate when the oldest request will expire
-            oldest_entries = await redis_client.client.zrange(redis_key, 0, 0, withscores=True)
+        # result = [count, retry_after]
+        # If count == -1, we're over the limit
+        count_or_error = int(result[0])
+        retry_after = float(result[1])
 
-            if oldest_entries:
-                oldest_timestamp = float(oldest_entries[0][1])
-                retry_after = max(0.1, (oldest_timestamp + window_seconds) - current_time)
-            else:
-                retry_after = window_seconds
-
+        if count_or_error == -1:
+            # Over limit - Lua script calculated retry_after for us
             logger.warning(
                 f"Source rate limit exceeded for {source_short_name}. "
-                f"{current_count}/{limit} requests in {window_seconds}s window, "
+                f"{limit}/{limit} requests in {window_seconds}s window, "
                 f"retry after {retry_after:.2f}s"
             )
 
@@ -297,14 +340,10 @@ class SourceRateLimiter:
                 source_short_name=source_short_name,
             )
 
-        # Add current request to the sliding window
-        await redis_client.client.zadd(redis_key, {str(current_time): current_time})
-
-        # Set expiration on the key to auto-cleanup
-        await redis_client.client.expire(redis_key, window_seconds * 2)
-
+        # Under limit - request was atomically incremented
+        new_count = count_or_error
         logger.debug(
-            f"[SourceRateLimit] ✅ Request allowed - {current_count + 1}/{limit} "
+            f"[SourceRateLimit] ✅ Request allowed - {new_count}/{limit} "
             f"requests in window. org={org_id}, source={source_short_name}, "
             f"connection={source_connection_id}, rate_limit_level={rate_limit_level}, "
             f"window={window_seconds}s"
@@ -355,31 +394,35 @@ class SourceRateLimiter:
 
         current_time = time.time()
         window_start = current_time - window_seconds
+        expire_seconds = window_seconds * 2
 
-        # Sliding window check (same pattern as source limits)
-        pipe = redis_client.client.pipeline()
-        pipe.zremrangebyscore(redis_key, 0, window_start)
-        pipe.zcount(redis_key, window_start, current_time)
-        results = await pipe.execute()
-        current_count = results[1]
+        # Generate unique ID for this request
+        from uuid import uuid4
 
-        logger.debug(
-            f"[PipedreamProxy] Current count: {current_count}/{limit} "
-            f"for org={org_id}, window={window_seconds}s"
+        unique_id = str(uuid4())
+
+        # Execute atomic Lua script for check-and-increment
+        result = await redis_client.client.eval(
+            SourceRateLimiter.LUA_CHECK_AND_INCREMENT,
+            1,  # Number of keys
+            redis_key,  # KEYS[1]
+            limit,  # ARGV[1]
+            window_start,  # ARGV[2]
+            current_time,  # ARGV[3]
+            window_seconds,  # ARGV[4]
+            expire_seconds,  # ARGV[5]
+            unique_id,  # ARGV[6]
         )
 
-        if current_count >= limit:
-            # Calculate retry_after
-            oldest = await redis_client.client.zrange(redis_key, 0, 0, withscores=True)
-            if oldest:
-                oldest_timestamp = float(oldest[0][1])
-                retry_after = max(0.1, (oldest_timestamp + window_seconds) - current_time)
-            else:
-                retry_after = window_seconds
+        # result = [count, retry_after]
+        count_or_error = int(result[0])
+        retry_after = float(result[1])
 
+        if count_or_error == -1:
+            # Over limit
             logger.warning(
                 f"Pipedream proxy rate limit exceeded for org {org_id}. "
-                f"{current_count}/{limit} requests in {window_seconds}s window, "
+                f"{limit}/{limit} requests in {window_seconds}s window, "
                 f"retry after {retry_after:.2f}s"
             )
 
@@ -387,14 +430,10 @@ class SourceRateLimiter:
                 retry_after=retry_after, source_short_name="pipedream_proxy"
             )
 
-        # Add current request to the sliding window
-        await redis_client.client.zadd(redis_key, {str(current_time): current_time})
-
-        # Set expiration on the key to auto-cleanup
-        await redis_client.client.expire(redis_key, window_seconds * 2)
-
+        # Under limit - request was atomically incremented
+        new_count = count_or_error
         logger.debug(
-            f"[PipedreamProxy] ✅ Request allowed - {current_count + 1}/{limit} "
+            f"[PipedreamProxy] ✅ Request allowed - {new_count}/{limit} "
             f"requests in window. org={org_id}, window={window_seconds}s"
         )
 
