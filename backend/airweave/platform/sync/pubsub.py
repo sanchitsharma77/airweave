@@ -72,8 +72,22 @@ class SyncProgress:
                 self._last_status_update = total_ops
 
     async def _publish(self) -> None:
-        """Publish current progress."""
-        await core_pubsub.publish("sync_job", self.job_id, self.stats.model_dump())
+        """Publish current progress to pubsub and store snapshot for cleanup job."""
+        from datetime import datetime, timezone
+        from airweave.core.redis_client import redis_client
+        import json
+
+        self.stats.last_update_timestamp = datetime.now(timezone.utc).isoformat()
+        data = self.stats.model_dump()
+
+        await core_pubsub.publish("sync_job", self.job_id, data)
+
+        snapshot_key = f"sync_progress_snapshot:{self.job_id}"
+        await redis_client.client.setex(
+            snapshot_key,
+            1800,  # 30 min TTL
+            json.dumps(data),
+        )
 
     async def finalize(self, status: SyncJobStatus) -> None:
         """Publish final progress with the sync job status.

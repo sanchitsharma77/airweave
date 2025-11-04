@@ -92,6 +92,7 @@ class JiraSource(BaseSource):
         """Create a new Jira source instance."""
         instance = cls()
         instance.access_token = access_token
+        instance.config = config or {}
         return instance
 
     @tenacity.retry(
@@ -280,11 +281,28 @@ class JiraSource(BaseSource):
     ) -> AsyncGenerator[JiraProjectEntity, None]:
         """Generate JiraProjectEntity objects."""
         self.logger.info("Starting project entity generation")
+
+        # Get project filter from config (required field)
+        project_keys_filter = self.config.get("project_keys", []) if hasattr(self, "config") else []
+
+        if not project_keys_filter:
+            raise ValueError(
+                "Project keys configuration is required. Please specify which Jira projects to sync by editing the source connection details."
+            )
+
+        # Convert to uppercase for case-insensitive matching (Jira keys are uppercase)
+        project_keys_filter = [key.upper() for key in project_keys_filter]
+        project_keys_filter_set = set(project_keys_filter)
+
+        self.logger.info(f"Project filter: will sync only projects with keys {project_keys_filter}")
+
         search_api_path = "/rest/api/3/project/search"
         max_results = 50
         start_at = 0
         page = 1
         total_projects = 0
+        filtered_projects = 0
+        found_project_keys = set()
 
         while True:
             # Construct URL with pagination parameters
@@ -301,14 +319,43 @@ class JiraSource(BaseSource):
             # Process each project
             for project in projects:
                 total_projects += 1
+                project_key = project.get("key")
+
+                # Apply filter if configured
+                if project_keys_filter and project_key not in project_keys_filter_set:
+                    filtered_projects += 1
+                    self.logger.debug(f"Skipping project {project_key} - not in filter list")
+                    continue
+
+                # Track which projects we actually found
+                found_project_keys.add(project_key)
+
                 project_entity = self._create_project_entity(project)
                 yield project_entity
 
             # Handle pagination
             if data.get("isLast", True):
-                self.logger.info(
-                    f"Reached last page of projects, total projects found: {total_projects}"
-                )
+                matched_count = total_projects - filtered_projects
+
+                # Check for projects that were requested but not found
+                missing_keys = project_keys_filter_set - found_project_keys
+                if missing_keys:
+                    self.logger.warning(
+                        f"⚠️ Some requested projects were not found or not accessible: {sorted(missing_keys)}"
+                    )
+
+                if matched_count == 0:
+                    self.logger.error(
+                        f"❌ No projects matched the filter! Requested: {project_keys_filter}, "
+                        f"but none were found. Please check that the project keys are correct and accessible."
+                    )
+                    # Don't raise - let sync continue with 0 projects (user can see in logs/UI)
+                else:
+                    self.logger.info(
+                        f"✅ Completed project sync: {matched_count} project(s) included "
+                        f"({filtered_projects} filtered out). "
+                        f"Found: {sorted(found_project_keys)}"
+                    )
                 break
 
             start_at = data.get("startAt", 0) + max_results
@@ -442,7 +489,7 @@ class JiraSource(BaseSource):
                 self.logger.error("Jira validation failed: no accessible resources found")
                 return False
 
-            self.logger.info("✅ Jira validation successful")
+            self.logger.info("✅ Jira OAuth validation successful")
             return True
 
         except Exception as e:

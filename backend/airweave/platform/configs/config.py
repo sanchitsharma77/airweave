@@ -292,7 +292,16 @@ class IntercomConfig(SourceConfig):
 class JiraConfig(SourceConfig):
     """Jira configuration schema."""
 
-    pass
+    project_keys: list[str] = Field(
+        ...,
+        title="Project Keys",
+        description=(
+            "List of Jira project keys to sync (e.g., 'PROJ', 'DEV', 'MARKET'). "
+            "Only the specified projects will be synced. Hit enter to add new project. "
+            " You can find project keys in your Jira project settings."
+        ),
+        min_length=1,
+    )
 
 
 class LinearConfig(SourceConfig):

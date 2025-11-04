@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { getAppIconUrl } from "@/lib/utils/icons";
 import { Switch } from "@/components/ui/switch";
+import { TagInput } from "@/components/ui/tag-input";
 import { useAuthProvidersStore } from "@/lib/stores/authProviders";
 import { getAuthProviderIconUrl } from "@/lib/utils/icons";
 import { ExternalLink, Loader2 } from "lucide-react";
@@ -200,12 +201,24 @@ export const SourceConfigView: React.FC<SourceConfigViewProps> = ({ context }) =
                             <div key={field.name}>
                                 <label className="text-sm font-medium">{field.title || field.name}</label>
                                 {field.description && <p className="text-xs text-muted-foreground">{field.description}</p>}
-                                <input
-                                    type="text"
-                                    value={configValues[field.name] || ''}
-                                    onChange={(e) => handleFieldChange(setConfigValues)(field.name, e.target.value)}
-                                    className={cn("w-full p-2 mt-1 rounded border", isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-300")}
-                                />
+                                {field.type === 'array' ? (
+                                    <TagInput
+                                        value={(Array.isArray(configValues[field.name]) ? configValues[field.name] : []) as string[]}
+                                        onChange={(tags) => {
+                                            const newValues = { ...configValues, [field.name]: tags };
+                                            setConfigValues(newValues);
+                                        }}
+                                        placeholder={`Enter ${field.title?.toLowerCase() || field.name} and press Enter...`}
+                                        transformInput={sourceDetails?.short_name === 'jira' && field.name === 'project_keys' ? (v) => v.toUpperCase() : undefined}
+                                    />
+                                ) : (
+                                    <input
+                                        type="text"
+                                        value={configValues[field.name] || ''}
+                                        onChange={(e) => handleFieldChange(setConfigValues)(field.name, e.target.value)}
+                                        className={cn("w-full p-2 mt-1 rounded border", isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-300")}
+                                    />
+                                )}
                             </div>
                         ))}
                     </div>

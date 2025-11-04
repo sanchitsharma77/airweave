@@ -122,6 +122,7 @@ class ConfigField(BaseModel):
     description: Optional[str] = None
     type: str
     required: bool = True  # Default to True for backward compatibility
+    items_type: Optional[str] = None  # For array types, the type of items
 
 
 _type_map = {str: "string", int: "number", float: "number", bool: "boolean"}
@@ -144,12 +145,20 @@ class Fields(BaseModel):
                 annotation = get_args(annotation)[0]
                 is_optional = True
 
-            # Get the base type if it's a Field
-            if hasattr(annotation, "__origin__"):
-                annotation = annotation.__origin__
-
-            # Map the type to string representation
-            type_str = _type_map.get(annotation, "string")  # Default to string if type not found
+            # Check if it's a list type
+            items_type = None
+            origin = get_origin(annotation)
+            if origin is list:
+                # Get the type of list items
+                list_args = get_args(annotation)
+                if list_args:
+                    items_type = _type_map.get(list_args[0], "string")
+                type_str = "array"
+            else:
+                # Map the type to string representation
+                type_str = _type_map.get(
+                    annotation, "string"
+                )  # Default to string if type not found
 
             # Determine if field is required
             # A field is required if it has no default and is not Optional
@@ -163,6 +172,7 @@ class Fields(BaseModel):
                     description=field_info.description,
                     type=type_str,
                     required=is_required,
+                    items_type=items_type,
                 )
             )
         return Fields(fields=fields)

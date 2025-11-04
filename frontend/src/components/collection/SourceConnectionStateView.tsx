@@ -868,6 +868,11 @@ const SourceConnectionStateView: React.FC<Props> = ({
                     onDelete={onConnectionDeleted}
                     isDark={isDark}
                     resolvedTheme={resolvedTheme}
+                    onSyncStarted={(jobId) => {
+                      if (mediator.current) {
+                        mediator.current.subscribeToJobUpdates(jobId);
+                      }
+                    }}
                   />
                 </button>
               </div>
