@@ -1,6 +1,7 @@
 """Module for data synchronization with TRUE batching + toggleable batching."""
 
 import asyncio
+import time
 from typing import Optional
 
 from airweave import schemas
@@ -62,10 +63,30 @@ class SyncOrchestrator:
         final_status = SyncJobStatus.FAILED  # Default to failed, will be updated based on outcome
         error_message: Optional[str] = None  # Track error message for finalization
         try:
+            # Phase 1: Start sync
+            phase_start = time.time()
+            self.sync_context.logger.info("🚀 PHASE 1: Starting sync initialization...")
             await self._start_sync()
+            self.sync_context.logger.info(f"✅ PHASE 1 complete ({time.time() - phase_start:.2f}s)")
+
+            # Phase 2: Process entities
+            phase_start = time.time()
+            self.sync_context.logger.info("🚀 PHASE 2: Processing entities from source...")
             await self._process_entities()
+            self.sync_context.logger.info(f"✅ PHASE 2 complete ({time.time() - phase_start:.2f}s)")
+
+            # Phase 3: Cleanup orphaned entities
+            phase_start = time.time()
+            self.sync_context.logger.info("🚀 PHASE 3: Cleanup orphaned entities (if needed)...")
             await self._cleanup_orphaned_entities_if_needed()
+            self.sync_context.logger.info(f"✅ PHASE 3 complete ({time.time() - phase_start:.2f}s)")
+
+            # Phase 4: Complete sync
+            phase_start = time.time()
+            self.sync_context.logger.info("🚀 PHASE 4: Finalizing sync...")
             await self._complete_sync()
+            self.sync_context.logger.info(f"✅ PHASE 4 complete ({time.time() - phase_start:.2f}s)")
+
             final_status = SyncJobStatus.COMPLETED
             return self.sync_context.sync
         except asyncio.CancelledError:

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -55,14 +56,37 @@ class EntityPipeline:
 
     async def _identify_orphaned_entities(self, sync_context: SyncContext) -> List[models.Entity]:
         """Fetch stored entities and filter to those not encountered during sync."""
+        # Log start of DB query
+        query_start = time.time()
+        sync_context.logger.info(
+            "🔍 [ORPHAN CLEANUP] Fetching all stored entities from database..."
+        )
+
         async with get_db_context() as db:
             stored_entities = await crud.entity.get_by_sync_id(db=db, sync_id=sync_context.sync.id)
+
+        query_duration = time.time() - query_start
+        sync_context.logger.info(
+            f"✅ [ORPHAN CLEANUP] Retrieved {len(stored_entities)} stored entities "
+            f"in {query_duration:.2f}s"
+        )
 
         if not stored_entities:
             return []
 
+        # Log comparison phase
+        compare_start = time.time()
         encountered_ids = set().union(*self._entity_ids_encountered_by_type.values())
-        return [e for e in stored_entities if e.entity_id not in encountered_ids]
+        orphaned = [e for e in stored_entities if e.entity_id not in encountered_ids]
+        compare_duration = time.time() - compare_start
+
+        sync_context.logger.info(
+            f"📊 [ORPHAN CLEANUP] Analysis complete in {compare_duration:.2f}s: "
+            f"{len(encountered_ids)} encountered, {len(orphaned)} orphaned "
+            f"out of {len(stored_entities)} total"
+        )
+
+        return orphaned
 
     async def _remove_orphaned_entities(
         self, orphaned_entities: List[models.Entity], sync_context: SyncContext
@@ -475,12 +499,25 @@ class EntityPipeline:
         existing_map: Dict[tuple[str, UUID], models.Entity] = {}
         if entity_requests:
             try:
+                lookup_start = time.time()
+                num_chunks = (len(entity_requests) + 999) // 1000
+                sync_context.logger.info(
+                    f"🔍 [BULK LOOKUP] Starting bulk entity lookup for {len(entity_requests)} "
+                    f"entities ({num_chunks} chunks of ~1000)..."
+                )
+
                 async with get_db_context() as db:
                     existing_map = await crud.entity.bulk_get_by_entity_sync_and_definition(
                         db,
                         sync_id=sync_context.sync.id,
                         entity_requests=entity_requests,
                     )
+
+                lookup_duration = time.time() - lookup_start
+                sync_context.logger.info(
+                    f"✅ [BULK LOOKUP] Complete in {lookup_duration:.2f}s - "
+                    f"found {len(existing_map)}/{len(entity_requests)} existing entities"
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
