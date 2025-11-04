@@ -62,6 +62,13 @@ def source(
     """
 
     def decorator(cls: type) -> type:
+        # Validate continuous sync configuration
+        if supports_continuous and cursor_class is None:
+            raise ValueError(
+                f"Source '{short_name}' has supports_continuous=True but no cursor_class defined. "
+                f"Continuous syncs require a typed cursor class (e.g., cursor_class=GmailCursor)"
+            )
+
         # Set metadata as class attributes
         cls._is_source = True
         cls._name = name
