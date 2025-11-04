@@ -146,6 +146,9 @@ class CRUDEntity(CRUDBaseOrganization[Entity, EntityCreate, EntityUpdate]):
         in the lookup. For example, GoogleCalendarList and GoogleCalendarCalendar can both
         use "daan@airweave.ai" as entity_id, but they'll have different entity_definition_ids.
 
+        For large datasets (>1000 entities), this method chunks requests to avoid
+        database timeouts from massive OR conditions.
+
         Args:
             db: Database session
             sync_id: The sync ID to filter by
@@ -157,21 +160,31 @@ class CRUDEntity(CRUDBaseOrganization[Entity, EntityCreate, EntityUpdate]):
         if not entity_requests:
             return {}
 
-        # Build OR conditions for each (entity_id, entity_definition_id) pair
         from sqlalchemy import and_, or_
 
-        conditions = [
-            and_(Entity.entity_id == eid, Entity.entity_definition_id == def_id)
-            for eid, def_id in entity_requests
-        ]
+        # Chunk requests to avoid timeouts with large datasets
+        CHUNK_SIZE = 1000
+        result_map: dict[tuple[str, UUID], Entity] = {}
 
-        stmt = select(Entity).where(Entity.sync_id == sync_id, or_(*conditions))
+        for i in range(0, len(entity_requests), CHUNK_SIZE):
+            chunk = entity_requests[i : i + CHUNK_SIZE]
 
-        result = await db.execute(stmt)
-        rows = list(result.unique().scalars().all())
+            # Build OR conditions for this chunk
+            conditions = [
+                and_(Entity.entity_id == eid, Entity.entity_definition_id == def_id)
+                for eid, def_id in chunk
+            ]
 
-        # Return with composite key to avoid collisions
-        return {(row.entity_id, row.entity_definition_id): row for row in rows}
+            stmt = select(Entity).where(Entity.sync_id == sync_id, or_(*conditions))
+
+            result = await db.execute(stmt)
+            rows = list(result.unique().scalars().all())
+
+            # Merge into result map with composite key to avoid collisions
+            for row in rows:
+                result_map[(row.entity_id, row.entity_definition_id)] = row
+
+        return result_map
 
     def _get_org_id_from_context(self, ctx: ApiContext) -> UUID | None:
         """Attempt to extract organization ID from the API context."""
