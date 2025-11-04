@@ -39,6 +39,10 @@ class HubspotSource(BaseSource):
     It provides comprehensive access to contacts, companies, deals, and support tickets.
     """
 
+    # HubSpot API limits
+    HUBSPOT_API_LIMIT = 100  # Maximum results per page for list endpoints
+    HUBSPOT_BATCH_SIZE = 100  # Maximum items per batch read request
+
     def __init__(self):
         """Initialize the HubSpot source."""
         super().__init__()
@@ -295,29 +299,38 @@ class HubspotSource(BaseSource):
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Contact entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/contacts/search
+        This uses the REST CRM API endpoint for contacts:
+          GET /crm/v3/objects/contacts
         """
         # Get all available properties for contacts
         all_properties = await self._get_all_properties(client, "contacts")
 
-        url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
-        after = None
-        limit = 100
+        # Fetch all contact IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/contacts?limit={self.HUBSPOT_API_LIMIT}"
+        contact_ids = []
+        while url:
+            data = await self._get_with_auth(client, url)
+            for contact in data.get("results", []):
+                contact_ids.append(contact["id"])
 
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
-            if after:
-                search_body["after"] = after
+        # Batch read contacts with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read"
+        for i in range(0, len(contact_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = contact_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": contact_id} for contact_id in chunk],
+                    "properties": all_properties,
+                },
+            )
 
-            data = await self._post_with_auth(client, url, search_body)
-
+            # Process results
             for contact in data.get("results", []):
                 raw_properties = contact.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -354,41 +367,43 @@ class HubspotSource(BaseSource):
                     archived=contact.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
-            paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
-
     async def _generate_company_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Company entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/companies/search
+        This uses the REST CRM API endpoint for companies:
+          GET /crm/v3/objects/companies
         """
         # Get all available properties for companies
         all_properties = await self._get_all_properties(client, "companies")
 
-        url = "https://api.hubapi.com/crm/v3/objects/companies/search"
-        after = None
-        limit = 100
+        # Fetch all company IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/companies?limit={self.HUBSPOT_API_LIMIT}"
+        company_ids = []
+        while url:
+            data = await self._get_with_auth(client, url)
+            for company in data.get("results", []):
+                company_ids.append(company["id"])
 
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
-            if after:
-                search_body["after"] = after
+        # Batch read companies with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/companies/batch/read"
+        for i in range(0, len(company_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = company_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": company_id} for company_id in chunk],
+                    "properties": all_properties,
+                },
+            )
 
-            data = await self._post_with_auth(client, url, search_body)
-
+            # Process results
             for company in data.get("results", []):
                 raw_properties = company.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -410,41 +425,43 @@ class HubspotSource(BaseSource):
                     archived=company.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
-            paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
-
     async def _generate_deal_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Deal entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/deals/search
+        This uses the REST CRM API endpoint for deals:
+          GET /crm/v3/objects/deals
         """
         # Get all available properties for deals
         all_properties = await self._get_all_properties(client, "deals")
 
-        url = "https://api.hubapi.com/crm/v3/objects/deals/search"
-        after = None
-        limit = 100
+        # Fetch all deal IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/deals?limit={self.HUBSPOT_API_LIMIT}"
+        deal_ids = []
+        while url:
+            data = await self._get_with_auth(client, url)
+            for deal in data.get("results", []):
+                deal_ids.append(deal["id"])
 
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
-            if after:
-                search_body["after"] = after
+        # Batch read deals with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/deals/batch/read"
+        for i in range(0, len(deal_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = deal_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": deal_id} for deal_id in chunk],
+                    "properties": all_properties,
+                },
+            )
 
-            data = await self._post_with_auth(client, url, search_body)
-
+            # Process results
             for deal in data.get("results", []):
                 raw_properties = deal.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -467,41 +484,43 @@ class HubspotSource(BaseSource):
                     archived=deal.get("archived", False),
                 )
 
-            # Handle pagination using 'after' cursor
-            paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
-
     async def _generate_ticket_entities(
         self, client: httpx.AsyncClient
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate Ticket entities from HubSpot.
 
-        This uses the POST-based search API to avoid URL length limitations
-        when there are many custom properties:
-          POST /crm/v3/objects/tickets/search
+        This uses the REST CRM API endpoint for tickets:
+          GET /crm/v3/objects/tickets
         """
         # Get all available properties for tickets
         all_properties = await self._get_all_properties(client, "tickets")
 
-        url = "https://api.hubapi.com/crm/v3/objects/tickets/search"
-        after = None
-        limit = 100
+        # Fetch all ticket IDs first (without properties to avoid URI length issues)
+        url = f"https://api.hubapi.com/crm/v3/objects/tickets?limit={self.HUBSPOT_API_LIMIT}"
+        ticket_ids = []
+        while url:
+            data = await self._get_with_auth(client, url)
+            for ticket in data.get("results", []):
+                ticket_ids.append(ticket["id"])
 
-        while True:
-            # Build the search request body with properties in the payload
-            search_body = {
-                "properties": all_properties,
-                "limit": limit,
-            }
+            paging = data.get("paging", {})
+            next_link = paging.get("next", {}).get("link")
+            url = next_link if next_link else None
 
-            if after:
-                search_body["after"] = after
+        # Batch read tickets with all properties
+        batch_url = "https://api.hubapi.com/crm/v3/objects/tickets/batch/read"
+        for i in range(0, len(ticket_ids), self.HUBSPOT_BATCH_SIZE):
+            chunk = ticket_ids[i : i + self.HUBSPOT_BATCH_SIZE]
+            data = await self._post_with_auth(
+                client,
+                batch_url,
+                {
+                    "inputs": [{"id": ticket_id} for ticket_id in chunk],
+                    "properties": all_properties,
+                },
+            )
 
-            data = await self._post_with_auth(client, url, search_body)
-
+            # Process results
             for ticket in data.get("results", []):
                 raw_properties = ticket.get("properties", {})
                 # Clean properties to remove null/empty values
@@ -523,13 +542,6 @@ class HubspotSource(BaseSource):
                     properties=cleaned_properties,
                     archived=ticket.get("archived", False),
                 )
-
-            # Handle pagination using 'after' cursor
-            paging = data.get("paging", {})
-            after = paging.get("next", {}).get("after") if paging else None
-
-            if not after:
-                break
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate all entities from HubSpot.
