@@ -121,7 +121,9 @@ from .source_connection import (
 from .source_rate_limit import (
     SourceRateLimit,
     SourceRateLimitCreate,
+    SourceRateLimitResponse,
     SourceRateLimitUpdate,
+    SourceRateLimitUpdateRequest,
 )
 from .sync import (
     MinuteLevelScheduleConfig,

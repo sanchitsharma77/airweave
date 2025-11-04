@@ -892,7 +892,9 @@ class SearchFactory:
 
             # Step 8: Wrap HTTP client with AirweaveHttpClient for rate limiting
             # This ensures federated sources respect rate limits just like sync sources
-            from airweave.platform.utils.source_factory_utils import wrap_source_with_airweave_client
+            from airweave.platform.utils.source_factory_utils import (
+                wrap_source_with_airweave_client,
+            )
 
             wrap_source_with_airweave_client(
                 source=source_instance,

@@ -51,3 +51,24 @@ class SourceRateLimit(SourceRateLimitBase):
         """Pydantic config."""
 
         from_attributes = True
+
+
+class SourceRateLimitUpdateRequest(BaseModel):
+    """Request schema for updating rate limits via API."""
+
+    limit: int = Field(gt=0, description="Maximum requests allowed per window")
+    window_seconds: int = Field(gt=0, description="Time window in seconds")
+
+
+class SourceRateLimitResponse(BaseModel):
+    """Response schema with source metadata merged for UI display."""
+
+    source_short_name: str
+    source_name: str
+    rate_limit_level: Optional[str] = Field(
+        None,
+        description=("'org' (organization-wide), 'connection' (per-user), or None (not supported)"),
+    )
+    limit: Optional[int] = Field(None, description="Configured limit, None if not set")
+    window_seconds: Optional[int] = Field(None, description="Configured window, None if not set")
+    id: Optional[UUID] = Field(None, description="DB record ID, None if not configured")
