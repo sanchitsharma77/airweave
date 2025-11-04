@@ -14,6 +14,7 @@ import asyncpg
 
 from airweave.core.pg_field_catalog_service import overwrite_catalog
 from airweave.db.session import get_db_context
+from airweave.platform.cursors.postgresql import PostgreSQLCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, PolymorphicEntity
 from airweave.platform.sources._base import BaseSource
@@ -50,6 +51,7 @@ PG_TYPE_MAP = {
     config_class="PostgreSQLConfig",
     labels=["Database"],
     supports_continuous=True,
+    cursor_class=PostgreSQLCursor,
 )
 class PostgreSQLSource(BaseSource):
     """PostgreSQL source connector integrates with PostgreSQL databases to extract structured data.
