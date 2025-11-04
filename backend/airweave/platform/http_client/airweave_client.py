@@ -74,10 +74,11 @@ class AirweaveHttpClient:
         """
         # Skip if feature flag is disabled
         if not self._feature_flag_enabled:
-            self._logger.debug(
-                f"[AirweaveHttpClient] Rate limiting disabled (feature flag off) for "
-                f"org={self._org_id}, source={self._source_short_name}"
-            )
+            if self._logger:
+                self._logger.debug(
+                    f"[AirweaveHttpClient] Rate limiting disabled (feature flag off) for "
+                    f"org={self._org_id}, source={self._source_short_name}"
+                )
             return
 
         try:
@@ -85,14 +86,16 @@ class AirweaveHttpClient:
             from airweave.platform.http_client.pipedream_proxy import PipedreamProxyClient
 
             if isinstance(self._client, PipedreamProxyClient):
-                self._logger.debug(
-                    "[AirweaveHttpClient] Using Pipedream proxy - checking proxy limit first"
-                )
+                if self._logger:
+                    self._logger.debug(
+                        "[AirweaveHttpClient] Using Pipedream proxy - checking proxy limit first"
+                    )
                 await source_rate_limiter.check_pipedream_proxy_limit(self._org_id)
             else:
-                self._logger.debug(
-                    "[AirweaveHttpClient] Using regular HTTP client (not Pipedream proxy)"
-                )
+                if self._logger:
+                    self._logger.debug(
+                        "[AirweaveHttpClient] Using regular HTTP client (not Pipedream proxy)"
+                    )
 
             # Step 2: Check source-specific limit
             await source_rate_limiter.check_and_increment(

@@ -41,9 +41,6 @@ class SourceRateLimit(SourceRateLimitBase):
 
     id: UUID
     organization_id: UUID
-    source_short_name: str  # Inherited from Base, but explicit for clarity
-    limit: int  # Inherited from Base
-    window_seconds: int  # Inherited from Base
     created_at: datetime
     modified_at: datetime
 
