@@ -113,7 +113,6 @@ class ConfluenceSource(BaseSource):
     @tenacity.retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=tenacity.retry_if_exception_type(httpx.HTTPStatusError),
         reraise=True,
     )
     async def _get_with_auth(self, client: httpx.AsyncClient, url: str) -> Any:
