@@ -907,7 +907,7 @@ class SearchFactory:
             # Step 9: Setup token manager for OAuth sources that support refresh
             # Skip for proxy mode (proxy client manages tokens internally)
             from airweave.platform.auth_providers.auth_result import AuthProviderMode
-                from airweave.schemas.source_connection import OAuthType
+            from airweave.schemas.source_connection import OAuthType
 
             auth_mode = auth_config.get("auth_mode")
             is_proxy_mode = auth_mode == AuthProviderMode.PROXY
@@ -936,7 +936,7 @@ class SearchFactory:
                 ctx.logger.info(
                     f"⏭️ Skipping token manager for {source_connection.short_name} - "
                     f"proxy mode (proxy client manages tokens internally)"
-                    )
+                )
 
             ctx.logger.info(
                 f"Successfully instantiated federated source: {source_connection.short_name}"
