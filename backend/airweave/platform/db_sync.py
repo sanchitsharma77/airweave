@@ -456,6 +456,7 @@ async def _sync_sources(
             supports_continuous=getattr(source_class, "_supports_continuous", False),
             federated_search=getattr(source_class, "_federated_search", False),
             supports_temporal_relevance=getattr(source_class, "_supports_temporal_relevance", True),
+            rate_limit_level=getattr(source_class, "_rate_limit_level", None),
         )
         source_definitions.append(source_def)
 

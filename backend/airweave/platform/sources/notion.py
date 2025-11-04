@@ -40,6 +40,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="NotionConfig",
     labels=["Knowledge Base", "Productivity"],
     supports_continuous=False,
+    rate_limit_level="connection",
 )
 class NotionSource(BaseSource):
     """Notion source connector integrates with the Notion API to extract and synchronize content.

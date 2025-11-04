@@ -75,6 +75,7 @@ class FeatureFlag(str, Enum):
 
     S3_DESTINATION = "s3_destination"
     PRIORITY_SUPPORT = "priority_support"
+    SOURCE_RATE_LIMITING = "source_rate_limiting"
 
 
 class AuthMethod(str, Enum):

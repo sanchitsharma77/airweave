@@ -21,6 +21,7 @@ from .redirect_session import RedirectSession
 from .search_query import SearchQuery
 from .source import Source
 from .source_connection import SourceConnection
+from .source_rate_limit import SourceRateLimit
 from .sync import Sync
 from .sync_connection import SyncConnection
 from .sync_cursor import SyncCursor
@@ -53,6 +54,7 @@ __all__ = [
     "SearchQuery",
     "Source",
     "SourceConnection",
+    "SourceRateLimit",
     "Sync",
     "SyncConnection",
     "SyncCursor",

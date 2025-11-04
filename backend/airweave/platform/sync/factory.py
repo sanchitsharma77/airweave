@@ -352,6 +352,18 @@ class SyncFactory:
         # Setup file downloader for file-based sources
         cls._setup_file_downloader(source, sync_job, logger)
 
+        # Wrap HTTP client with AirweaveHttpClient for rate limiting
+        # This wraps whatever client is currently set (httpx or Pipedream proxy)
+        from airweave.platform.utils.source_factory_utils import wrap_source_with_airweave_client
+
+        wrap_source_with_airweave_client(
+            source=source,
+            source_short_name=source_connection_data["short_name"],
+            source_connection_id=source_connection_data["source_connection_obj"].id,
+            ctx=ctx,
+            logger=logger,
+        )
+
         return source
 
     @classmethod

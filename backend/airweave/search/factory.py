@@ -890,7 +890,19 @@ class SearchFactory:
                 ctx.logger.info(f"Proxy mode active for {source_connection.short_name}")
                 source_instance.set_http_client_factory(auth_config["http_client_factory"])
 
-            # Step 8: Setup token manager for OAuth sources that support refresh
+            # Step 8: Wrap HTTP client with AirweaveHttpClient for rate limiting
+            # This ensures federated sources respect rate limits just like sync sources
+            from airweave.platform.utils.source_factory_utils import wrap_source_with_airweave_client
+
+            wrap_source_with_airweave_client(
+                source=source_instance,
+                source_short_name=source_connection.short_name,
+                source_connection_id=source_connection.id,
+                ctx=ctx,
+                logger=ctx.logger,
+            )
+
+            # Step 9: Setup token manager for OAuth sources that support refresh
             if source_model.oauth_type:
                 from airweave.schemas.source_connection import OAuthType
 

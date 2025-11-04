@@ -118,6 +118,11 @@ from .source_connection import (
     SyncDetails,
     SyncJobDetails,
 )
+from .source_rate_limit import (
+    SourceRateLimit,
+    SourceRateLimitCreate,
+    SourceRateLimitUpdate,
+)
 from .sync import (
     MinuteLevelScheduleConfig,
     ScheduleResponse,
