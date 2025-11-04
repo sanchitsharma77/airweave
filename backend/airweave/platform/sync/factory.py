@@ -144,7 +144,7 @@ class SyncFactory:
         Returns:
             SyncContext object with all required components
         """
-        # Get source connection data first to access safely
+        # Get source connection data first (includes source class with cursor schema)
         source_connection_data = await cls._get_source_connection_data(db, sync, ctx)
 
         # Create a contextualized logger with all job metadata
@@ -207,15 +207,19 @@ class SyncFactory:
             logger=logger.with_context(component="guardrail"),
         )
 
-        # Load existing cursor data and field from database
+        # Load existing cursor data from database
         # IMPORTANT: When force_full_sync is True (daily cleanup), we intentionally
-        # skip loading cursor DATA (but keep the field) to force a full sync.
+        # skip loading cursor DATA to force a full sync.
         # This ensures we see ALL entities in the source, not just changed ones,
         # for accurate orphaned entity detection. We still track and save cursor
         # values during the sync for the next incremental sync.
 
-        # Always load the cursor field (needed for tracking)
-        cursor_field = await sync_cursor_service.get_cursor_field(db=db, sync_id=sync.id, ctx=ctx)
+        # Get cursor schema from source class (direct reference, no string lookup!)
+        cursor_schema = None
+        source_class = source_connection_data["source_class"]
+        if hasattr(source_class, "_cursor_class") and source_class._cursor_class:
+            cursor_schema = source_class._cursor_class  # Direct class reference
+            logger.debug(f"Source has typed cursor: {cursor_schema.__name__}")
 
         if force_full_sync:
             logger.info(
@@ -227,9 +231,14 @@ class SyncFactory:
             # Normal incremental sync - load cursor data
             cursor_data = await sync_cursor_service.get_cursor_data(db=db, sync_id=sync.id, ctx=ctx)
             if cursor_data:
-                logger.info(f"📊 Incremental sync: Using cursor data for {len(cursor_data)} tables")
+                logger.info(f"📊 Incremental sync: Using cursor data with {len(cursor_data)} keys")
 
-        cursor = SyncCursor(sync_id=sync.id, cursor_data=cursor_data, cursor_field=cursor_field)
+        # Create typed cursor (no locator needed - direct class reference!)
+        cursor = SyncCursor(
+            sync_id=sync.id,
+            cursor_schema=cursor_schema,
+            cursor_data=cursor_data,
+        )
 
         # Precompute destination keyword-index capability once
         has_keyword_index = False
@@ -324,7 +333,6 @@ class SyncFactory:
         # Setup token manager for OAuth sources (if applicable)
         # Skip only for direct token injection (when access_token parameter was explicitly passed)
         # Don't confuse this with credentials being processed to a string for the source
-        auth_mode = auth_config.get("auth_mode")
         auth_provider_instance = auth_config.get("auth_provider_instance")
 
         # Only skip token manager if access_token was directly injected via parameter

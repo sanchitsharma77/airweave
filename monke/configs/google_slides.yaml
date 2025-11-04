@@ -21,28 +21,26 @@ connector:
 
     # Timing: Allow Google Drive to index newly created presentations
     # Google Slides needs time to propagate new files through Drive before they appear in listings
-    post_create_sleep_seconds: 10
+    post_create_sleep_seconds: 20
 
 test_flow:
   steps:
     - cleanup
     - create
-    - sync
+    - sync                     # First sync: Full sync (no cursor exists yet)
     - verify
     - update
-    - sync
+    - sync                     # Second sync: Incremental with cursor
     - verify
     - partial_delete
-    - sync
+    - force_full_sync          # Third sync: Force full sync to detect deletion
     - verify_partial_deletion
     - verify_remaining_entities
     - complete_delete
-    - sync
+    - force_full_sync          # Fourth sync: Force full sync to detect all deletions
     - verify_complete_deletion
     - cleanup
 
-# Entity configuration
-entity_count: 1  # Number of presentations to create for testing
 
 deletion:
   # Phase 1: Partial deletion

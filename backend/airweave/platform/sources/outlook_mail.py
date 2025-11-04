@@ -16,6 +16,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.platform.cursors import OutlookMailCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_mail import (
@@ -54,6 +55,7 @@ def _should_retry_outlook_request(exception: Exception) -> bool:
     config_class="OutlookMailConfig",
     labels=["Communication", "Email"],
     supports_continuous=True,
+    cursor_class=OutlookMailCursor,
 )
 class OutlookMailSource(BaseSource):
     """Outlook Mail source connector integrates with the Microsoft Graph API to extract email data.
@@ -66,147 +68,37 @@ class OutlookMailSource(BaseSource):
 
     GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 
-    def get_default_cursor_field(self) -> Optional[str]:
-        """Get the default cursor field for Outlook Mail source.
-
-        Outlook Mail uses 'deltaToken' to track changes since last sync.
-
-        Returns:
-            The default cursor field name
-        """
-        return "deltaToken"
-
-    def validate_cursor_field(self, cursor_field: str) -> None:
-        """Validate if the given cursor field is valid for Outlook Mail.
+    def _update_folder_cursor(self, delta_link: str, folder_id: str, folder_name: str) -> None:
+        """Update cursor with delta link for a specific folder.
 
         Args:
-            cursor_field: The cursor field to validate
-
-        Raises:
-            ValueError: If the cursor field is invalid
-        """
-        # Outlook Mail only supports its specific cursor field
-        valid_field = self.get_default_cursor_field()
-
-        if cursor_field != valid_field:
-            error_msg = (
-                f"Invalid cursor field '{cursor_field}' for Outlook Mail source. "
-                f"Outlook Mail requires '{valid_field}' as the cursor field. "
-                f"Outlook Mail tracks changes using delta tokens, not entity fields. "
-                f"Please use the default cursor field or omit it entirely."
-            )
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        """Get cursor data from cursor.
-
-        Returns:
-            Cursor data dictionary, empty dict if no cursor exists
-        """
-        if hasattr(self, "cursor") and self.cursor:
-            return getattr(self.cursor, "cursor_data", {})
-        return {}
-
-    def _update_cursor_data(self, delta_token: str, folder_id: str, folder_name: str):
-        """Update cursor data with delta token and folder information.
-
-        Args:
-            delta_token: Delta token for next sync
+            delta_link: Delta link URL for next sync
             folder_id: Folder ID being synced
             folder_name: Folder name being synced
         """
-        # Check if cursor exists before updating
-        if not hasattr(self, "cursor") or self.cursor is None:
-            self.logger.debug("No cursor available, skipping cursor update")
+        if not self.cursor:
             return
 
-        # Ensure cursor field is set to our default
-        cursor_field = self._ensure_cursor_field_set()
+        cursor_data = self.cursor.data
+        folder_links = cursor_data.get("folder_delta_links", {})
+        folder_names = cursor_data.get("folder_names", {})
+        folder_last_sync = cursor_data.get("folder_last_sync", {})
 
-        # Maintain legacy single-token fields for backward compatibility
-        self.cursor.cursor_data.update(
-            {
-                cursor_field: delta_token,
-                "folder_id": folder_id,
-                "folder_name": folder_name,
-                "last_sync": datetime.utcnow().isoformat(),
-            }
-        )
-
-        # Preferred: store per-folder delta links and names
-        folder_links = self.cursor.cursor_data.setdefault("folder_delta_links", {})
-        folder_names = self.cursor.cursor_data.setdefault("folder_names", {})
-        per_folder_last_sync = self.cursor.cursor_data.setdefault("folder_last_sync", {})
-
-        folder_links[folder_id] = delta_token
+        # Update per-folder tracking
+        folder_links[folder_id] = delta_link
         folder_names[folder_id] = folder_name
-        per_folder_last_sync[folder_id] = datetime.utcnow().isoformat()
-        self.logger.debug(
-            f"Updated cursor data with field '{cursor_field}': {self.cursor.cursor_data}"
+        folder_last_sync[folder_id] = datetime.utcnow().isoformat()
+
+        # Update cursor (also maintains legacy fields for backward compatibility)
+        self.cursor.update(
+            delta_link=delta_link,
+            folder_id=folder_id,
+            folder_name=folder_name,
+            last_sync=datetime.utcnow().isoformat(),
+            folder_delta_links=folder_links,
+            folder_names=folder_names,
+            folder_last_sync=folder_last_sync,
         )
-
-    def _ensure_cursor_field_set(self) -> str:
-        """Ensure the cursor field is set to our default value.
-
-        This method ensures that if we have a cursor but no cursor_field set,
-        we set it to our default value.
-
-        Returns:
-            The cursor field name to use
-        """
-        cursor_field = self.get_default_cursor_field()
-
-        # Debug logging to understand cursor state
-        if hasattr(self, "cursor") and self.cursor:
-            current_cursor_field = getattr(self.cursor, "cursor_field", None)
-            self.logger.debug(
-                f"Cursor exists: cursor_field={current_cursor_field}, "
-                f"default={cursor_field}, cursor_data={getattr(self.cursor, 'cursor_data', {})}"
-            )
-
-            # If we have a cursor but no cursor_field set, set it to our default
-            if not current_cursor_field:
-                self.logger.info(f"Setting cursor field to default: {cursor_field}")
-                self.cursor.cursor_field = cursor_field
-        else:
-            self.logger.debug("No cursor available yet")
-
-        return cursor_field
-
-    def _prepare_sync_context(self) -> tuple[str, Optional[str]]:
-        """Prepare sync context and return cursor field and delta token.
-
-        Returns:
-            Tuple of (cursor_field, delta_token)
-        """
-        # Ensure cursor field is set to our default
-        cursor_field = self._ensure_cursor_field_set()
-
-        # Get cursor data for incremental sync
-        cursor_data = self._get_cursor_data()
-
-        # Validate the cursor field - will raise ValueError if invalid
-        if cursor_field != self.get_default_cursor_field():
-            self.validate_cursor_field(cursor_field)
-
-        # IMPORTANT: This determines incremental vs full sync
-        # - If cursor_data[cursor_field] is None/missing: FULL SYNC (first time)
-        # - If cursor_field has a value: INCREMENTAL SYNC (subsequent syncs)
-        delta_token = cursor_data.get(cursor_field)
-
-        if delta_token:
-            self.logger.info(
-                f"Found cursor data for field '{cursor_field}': {delta_token[:100]}... "
-                f"Will perform INCREMENTAL sync."
-            )
-        else:
-            self.logger.info(
-                f"No cursor data found for field '{cursor_field}'. "
-                f"Will perform FULL sync (first sync or cursor reset)."
-            )
-
-        return cursor_field, delta_token
 
     @classmethod
     async def create(
@@ -381,7 +273,7 @@ class OutlookMailSource(BaseSource):
                 if isinstance(delta_data, dict) and "@odata.deltaLink" in delta_data:
                     delta_link = delta_data["@odata.deltaLink"]
                     self.logger.info(f"Storing delta link for folder: {folder_entity.display_name}")
-                    self._update_cursor_data(
+                    self._update_folder_cursor(
                         delta_link, folder_entity.entity_id, folder_entity.display_name
                     )
                     break
@@ -421,6 +313,7 @@ class OutlookMailSource(BaseSource):
         folder_entity = OutlookMailFolderEntity(
             entity_id=folder["id"],
             breadcrumbs=parent_breadcrumbs,
+            name=folder["displayName"],  # Required by BaseEntity
             display_name=folder["displayName"],
             parent_folder_id=folder.get("parentFolderId"),
             child_folder_count=folder.get("childFolderCount", 0),
@@ -920,7 +813,7 @@ class OutlookMailSource(BaseSource):
                 new_delta_token = data.get("@odata.deltaLink")
                 if new_delta_token:
                     self.logger.debug("Updating cursor with new delta token")
-                    self._update_cursor_data(new_delta_token, folder_id, folder_name)
+                    self._update_folder_cursor(new_delta_token, folder_id, folder_name)
                 else:
                     self.logger.warning("No new delta token received - this may indicate an issue")
 
@@ -948,6 +841,10 @@ class OutlookMailSource(BaseSource):
             message_id = change.get("id")
             if message_id:
                 deletion_entity = OutlookMessageDeletionEntity(
+                    name=f"Deleted message {message_id}",
+                    created_at=None,
+                    updated_at=None,
+                    breadcrumbs=[],
                     entity_id=message_id,
                     message_id=message_id,
                     deletion_status="removed",
@@ -978,8 +875,8 @@ class OutlookMailSource(BaseSource):
                 safety_counter += 1
                 delta_link = data.get("@odata.deltaLink")
                 if delta_link:
-                    if hasattr(self, "cursor") and self.cursor:
-                        self.cursor.cursor_data["folders_delta_link"] = delta_link
+                    if self.cursor:
+                        self.cursor.update(folders_delta_link=delta_link)
                     self.logger.info("Stored folders_delta_link for future incremental syncs")
                     break
 
@@ -1002,7 +899,7 @@ class OutlookMailSource(BaseSource):
         Also ensures per-folder message delta links are initialized for new folders
         and removes stored links for deleted folders.
         """
-        cursor_data = self._get_cursor_data()
+        cursor_data = self.cursor.data if self.cursor else {}
         delta_url = cursor_data.get("folders_delta_link")
         if not delta_url:
             self.logger.debug("No folders_delta_link stored; skipping folders delta processing")
@@ -1017,8 +914,8 @@ class OutlookMailSource(BaseSource):
                     yield entity
 
                 new_delta_link = data.get("@odata.deltaLink")
-                if new_delta_link and hasattr(self, "cursor") and self.cursor:
-                    self.cursor.cursor_data["folders_delta_link"] = new_delta_link
+                if new_delta_link and self.cursor:
+                    self.cursor.update(folders_delta_link=new_delta_link)
                     self.logger.debug("Updated folders_delta_link for next incremental run")
 
         except Exception as e:
@@ -1056,15 +953,19 @@ class OutlookMailSource(BaseSource):
         """Emit a folder deletion entity and clean up stored links/names."""
         self.logger.info(f"Folder removed: {folder_id}")
         deletion_entity = OutlookMailFolderDeletionEntity(
-            entity_id=folder_id, folder_id=folder_id, deletion_status="removed"
+            entity_id=folder_id,
+            breadcrumbs=[],
+            name=f"Deleted folder {folder_id}",
+            created_at=None,
+            updated_at=None,
         )
-        if hasattr(self, "cursor") and self.cursor:
-            folder_links = self.cursor.cursor_data.get("folder_delta_links", {})
-            folder_names = self.cursor.cursor_data.get("folder_names", {})
+        if self.cursor:
+            cursor_data = self.cursor.data
+            folder_links = cursor_data.get("folder_delta_links", {})
+            folder_names = cursor_data.get("folder_names", {})
             folder_links.pop(folder_id, None)
             folder_names.pop(folder_id, None)
-            self.cursor.cursor_data["folder_delta_links"] = folder_links
-            self.cursor.cursor_data["folder_names"] = folder_names
+            self.cursor.update(folder_delta_links=folder_links, folder_names=folder_names)
         yield deletion_entity
 
     async def _emit_folder_add_or_update(  # noqa: C901
@@ -1090,6 +991,7 @@ class OutlookMailSource(BaseSource):
         folder_entity = OutlookMailFolderEntity(
             entity_id=folder_id,
             breadcrumbs=[],
+            name=display_name,  # Required by BaseEntity
             display_name=display_name,
             parent_folder_id=parent_folder_id,
             child_folder_count=child_folder_count,
@@ -1120,6 +1022,10 @@ class OutlookMailSource(BaseSource):
                         if message_id:
                             deletion_entity = OutlookMessageDeletionEntity(
                                 entity_id=message_id,
+                                breadcrumbs=[],
+                                name=f"Deleted message {message_id}",
+                                created_at=None,
+                                updated_at=None,
                                 message_id=message_id,
                                 deletion_status="removed",
                             )
@@ -1140,12 +1046,13 @@ class OutlookMailSource(BaseSource):
                         yield entity
 
                 delta_link = msg_delta_data.get("@odata.deltaLink")
-                if delta_link:
-                    if hasattr(self, "cursor") and self.cursor:
-                        folder_links = self.cursor.cursor_data.setdefault("folder_delta_links", {})
-                        folder_names = self.cursor.cursor_data.setdefault("folder_names", {})
-                        folder_links[folder_id] = delta_link
-                        folder_names[folder_id] = display_name or folder_id
+                if delta_link and self.cursor:
+                    cursor_data = self.cursor.data
+                    folder_links = cursor_data.get("folder_delta_links", {})
+                    folder_names = cursor_data.get("folder_names", {})
+                    folder_links[folder_id] = delta_link
+                    folder_names[folder_id] = display_name or folder_id
+                    self.cursor.update(folder_delta_links=folder_links, folder_names=folder_names)
                     break
 
                 next_link = msg_delta_data.get("@odata.nextLink")
@@ -1188,6 +1095,10 @@ class OutlookMailSource(BaseSource):
                         if message_id:
                             deletion_entity = OutlookMessageDeletionEntity(
                                 entity_id=message_id,
+                                breadcrumbs=[],
+                                name=f"Deleted message {message_id}",
+                                created_at=None,
+                                updated_at=None,
                                 message_id=message_id,
                                 deletion_status="removed",
                             )
@@ -1221,7 +1132,7 @@ class OutlookMailSource(BaseSource):
                 delta_link = data.get("@odata.deltaLink")
                 if delta_link:
                     self.logger.debug("Updating cursor with new delta link")
-                    self._update_cursor_data(delta_link, folder_id, folder_name)
+                    self._update_folder_cursor(delta_link, folder_id, folder_name)
                 else:
                     self.logger.warning(
                         "No nextLink or deltaLink in delta response; ending this delta cycle"
@@ -1251,7 +1162,7 @@ class OutlookMailSource(BaseSource):
         self.logger.info("Starting incremental sync")
 
         # Prefer per-folder delta links (opaque URLs) if available
-        cursor_data = self._get_cursor_data()
+        cursor_data = self.cursor.data if self.cursor else {}
         folder_links = cursor_data.get("folder_delta_links", {}) or {}
         folder_names = cursor_data.get("folder_names", {}) or {}
 
@@ -1285,13 +1196,18 @@ class OutlookMailSource(BaseSource):
         entity_count = 0
 
         try:
-            # Determine sync type and get delta token if available
-            cursor_field, delta_token = self._prepare_sync_context()
+            # Get cursor data for incremental sync
+            cursor_data = self.cursor.data if self.cursor else {}
+            delta_token = cursor_data.get("delta_link")
+
+            if delta_token:
+                self.logger.info("📊 Incremental sync from cursor")
+            else:
+                self.logger.info("🔄 Full sync (no cursor)")
 
             async with self.http_client() as client:
                 self.logger.info("HTTP client created, starting entity generation")
 
-                cursor_data = self._get_cursor_data()
                 has_folder_links = bool(cursor_data.get("folder_delta_links"))
 
                 if has_folder_links or delta_token:

@@ -83,6 +83,7 @@ def _build_connection_payload(config: TestConfig, context: TestContext) -> Dict[
         "short_name": config.connector.type,
         "readable_collection_id": context.collection_readable_id,
         "config": config.connector.config_fields,
+        "schedule": {"cron": None},  # Disable automatic schedules for tests
     }
 
     # Handle authentication based on mode

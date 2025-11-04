@@ -1,13 +1,10 @@
 """Gmail source implementation for syncing email threads, messages, and attachments.
 
-Now supports two flows:
-  - Non-batching / sequential (default): preserves original behavior.
-  - Batching / concurrent (opt-in): gated by `batch_generation` config and uses the
-    bounded-concurrency driver in BaseSource across all major I/O points:
-      * Thread detail fetch + per-thread processing
-      * Per-thread message processing
-      * Per-message attachment fetch & processing
-      * Incremental history message-detail fetch
+Uses concurrent/batching processing for optimal performance:
+  * Thread detail fetch + per-thread processing
+  * Per-thread message processing
+  * Per-message attachment fetch & processing
+  * Incremental history message-detail fetch
 """
 
 import asyncio
@@ -19,6 +16,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.platform.cursors import GmailCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.gmail import (
@@ -57,6 +55,7 @@ def _should_retry_gmail_request(exception: Exception) -> bool:
     config_class="GmailConfig",
     labels=["Communication", "Email"],
     supports_continuous=True,
+    cursor_class=GmailCursor,
 )
 class GmailSource(BaseSource):
     """Gmail source connector integrates with the Gmail API to extract and synchronize email data.
@@ -80,7 +79,6 @@ class GmailSource(BaseSource):
 
         # Concurrency configuration (matches pattern used by other connectors)
         config = config or {}
-        instance.batch_generation = bool(config.get("batch_generation", False))
         instance.batch_size = int(config.get("batch_size", 30))
         instance.max_queue_size = int(config.get("max_queue_size", 200))
         instance.preserve_order = bool(config.get("preserve_order", False))
@@ -275,45 +273,12 @@ class GmailSource(BaseSource):
         return data
 
     # -----------------------
-    # Cursor helpers
+    # Cursor helper
     # -----------------------
-    def get_default_cursor_field(self) -> Optional[str]:
-        """Default cursor field for Gmail incremental sync.
-
-        Gmail uses historyId for incremental changes. We'll store it under a named cursor field.
-        """
-        return "history_id"
-
-    def validate_cursor_field(self, cursor_field: str) -> None:
-        """Validate the cursor field for Gmail incremental sync."""
-        valid_field = self.get_default_cursor_field()
-        if cursor_field != valid_field:
-            raise ValueError(
-                f"Invalid cursor field '{cursor_field}' for Gmail. Use '{valid_field}'."
-            )
-
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        if self.cursor:
-            return self.cursor.cursor_data or {}
-        return {}
-
-    def _update_cursor_data(self, new_history_id: str) -> None:
-        if not self.cursor:
-            return
-        cursor_field = self.get_effective_cursor_field() or self.get_default_cursor_field()
-        if not cursor_field:
-            return
-        if not self.cursor.cursor_data:
-            self.cursor.cursor_data = {}
-        self.cursor.cursor_data[cursor_field] = new_history_id
-
-    async def _resolve_cursor_and_token(self) -> tuple[Optional[str], Optional[str]]:
-        cursor_field = self.get_effective_cursor_field() or self.get_default_cursor_field()
-        if cursor_field and cursor_field != self.get_default_cursor_field():
-            self.validate_cursor_field(cursor_field)
-        cursor_data = self._get_cursor_data()
-        last_history_id = cursor_data.get(cursor_field) if cursor_field else None
-        return cursor_field, last_history_id
+    async def _resolve_cursor(self) -> Optional[str]:
+        """Get last history ID from cursor if available."""
+        cursor_data = self.cursor.data if self.cursor else {}
+        return cursor_data.get("history_id")
 
     # -----------------------
     # Listing helpers
@@ -369,27 +334,9 @@ class GmailSource(BaseSource):
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate GmailThreadEntity objects and associated message entities.
 
-        Two modes:
-          - Sequential: iterate threads, fetch details, process messages in-order.
-          - Concurrent: run per-thread workers (and within each, per-message workers).
+        Processes threads concurrently with per-thread message processing.
+        Uses a shared lock to dedupe message IDs safely under concurrency.
         """
-        if not getattr(self, "batch_generation", False):
-            # --- Non-batching / sequential path (original behavior) ---
-            async for thread_info in self._list_threads(client):
-                thread_id = thread_info["id"]
-                thread_data = await self._fetch_thread_detail(client, thread_id)
-                if not thread_data:
-                    continue
-                # Yield thread entity, then process messages sequentially
-                async for e in self._emit_thread_and_messages(
-                    client, thread_id, thread_data, processed_message_ids
-                ):
-                    yield e
-            return
-
-        # --- Batching / concurrent path ---
-        # We'll process threads concurrently. Inside each thread, messages can also be
-        # processed concurrently. We still use a shared set to dedupe message IDs.
         lock = asyncio.Lock()
 
         async def _thread_worker(thread_info: Dict):
@@ -463,19 +410,8 @@ class GmailSource(BaseSource):
         processed_message_ids: Set[str],
         lock: Optional[asyncio.Lock],
     ) -> AsyncGenerator[BaseEntity, None]:
-        """Process messages in a thread, either sequentially or concurrently."""
-        if not getattr(self, "batch_generation", False):
-            for message_data in message_list:
-                msg_id = message_data.get("id", "unknown")
-                if await self._should_skip_message(msg_id, processed_message_ids, lock=None):
-                    continue
-                async for entity in self._process_message(
-                    client, message_data, thread_id, thread_breadcrumb
-                ):
-                    yield entity
-            return
+        """Process messages in a thread concurrently."""
 
-        # Concurrent per-message workers
         async def _message_worker(message_data: Dict):
             msg_id = message_data.get("id", "unknown")
             if await self._should_skip_message(msg_id, processed_message_ids, lock=lock):
@@ -750,11 +686,7 @@ class GmailSource(BaseSource):
         thread_id: str,
         breadcrumbs: List[Breadcrumb],
     ) -> AsyncGenerator[GmailAttachmentEntity, None]:
-        """Process message attachments using the standard file processing pipeline.
-
-        In concurrent mode, we first discover attachment descriptors, then process them
-        via the bounded concurrency driver. In sequential mode, we stream them one-by-one.
-        """
+        """Process message attachments concurrently using bounded concurrency driver."""
 
         # Helper: recursively collect candidate attachment descriptors (no network yet)
         def collect_attachment_descriptors(part, out: List[Dict], depth=0):
@@ -790,187 +722,96 @@ class GmailSource(BaseSource):
         if not descriptors:
             return
 
-        # --- Concurrent path ---
-        if getattr(self, "batch_generation", False):
+        async def _attachment_worker(descriptor: Dict):
+            mime_type = descriptor["mime_type"]
+            filename = descriptor["filename"]
+            attachment_id = descriptor["attachment_id"]
 
-            async def _attachment_worker(descriptor: Dict):
-                mime_type = descriptor["mime_type"]
-                filename = descriptor["filename"]
-                attachment_id = descriptor["attachment_id"]
-
-                attachment_url = (
-                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/"
-                    f"{message_id}/attachments/{attachment_id}"
-                )
+            attachment_url = (
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/"
+                f"{message_id}/attachments/{attachment_id}"
+            )
+            try:
                 try:
-                    try:
-                        attachment_data = await self._get_with_auth(client, attachment_url)
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 404:
-                            self.logger.warning(
-                                f"Attachment {attachment_id} not found (404) - skipping"
-                            )
-                            return
-                        raise
-                    size = attachment_data.get("size", 0)
-
-                    # Determine file type from mime_type
-                    file_type = mime_type.split("/")[0] if "/" in mime_type else "file"
-
-                    # Create stable entity_id using message_id + filename
-                    # Note: attachment_id is ephemeral and changes between API calls
-                    # Using filename ensures same attachment has same entity_id across syncs
-                    safe_filename = self._safe_filename(filename)
-                    stable_entity_id = f"attach_{message_id}_{safe_filename}"
-
-                    # Create FileEntity wrapper
-                    file_entity = GmailAttachmentEntity(
-                        # Base fields
-                        entity_id=stable_entity_id,
-                        breadcrumbs=breadcrumbs,
-                        name=filename,
-                        created_at=None,  # Attachments don't have timestamps
-                        updated_at=None,  # Attachments don't have timestamps
-                        # File fields
-                        url=f"gmail://attachment/{message_id}/{attachment_id}",  # dummy URL
-                        size=size,
-                        file_type=file_type,
-                        mime_type=mime_type,
-                        local_path=None,
-                        # API fields
-                        message_id=message_id,
-                        attachment_id=attachment_id,
-                        thread_id=thread_id,
-                    )
-
-                    base64_data = attachment_data.get("data", "")
-                    if not base64_data:
-                        self.logger.warning(f"No data found for attachment {filename}")
-                        return
-
-                    binary_data = base64.urlsafe_b64decode(base64_data)
-
-                    # Save bytes using downloader
-                    try:
-                        await self.file_downloader.save_bytes(
-                            entity=file_entity,
-                            content=binary_data,
-                            filename_with_extension=filename,  # Attachment name from API
-                            logger=self.logger,
+                    attachment_data = await self._get_with_auth(client, attachment_url)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self.logger.warning(
+                            f"Attachment {attachment_id} not found (404) - skipping"
                         )
-
-                        # Verify save succeeded
-                        if not file_entity.local_path:
-                            raise ValueError(
-                                f"Save failed - no local path set for {file_entity.name}"
-                            )
-
-                        yield file_entity
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to save attachment {filename}: {e}")
                         return
-                except Exception as e:
-                    self.logger.error(
-                        f"Error processing attachment {attachment_id} on message {message_id}: {e}"
-                    )
+                    raise
+                size = attachment_data.get("size", 0)
 
-            async for ent in self.process_entities_concurrent(
-                items=descriptors,
-                worker=_attachment_worker,
-                batch_size=getattr(self, "batch_size", 30),
-                preserve_order=getattr(self, "preserve_order", False),
-                stop_on_error=getattr(self, "stop_on_error", False),
-                max_queue_size=getattr(self, "max_queue_size", 200),
-            ):
-                if ent is not None:
-                    yield ent
-            return
+                # Determine file type from mime_type
+                file_type = mime_type.split("/")[0] if "/" in mime_type else "file"
 
-        # --- Sequential path (original logic) ---
-        async def _sequential_iter():
-            # Implement the previous behavior: fetch, decode, process, yield
-            for descriptor in descriptors:
-                mime_type = descriptor["mime_type"]
-                filename = descriptor["filename"]
-                attachment_id = descriptor["attachment_id"]
+                # Create stable entity_id using message_id + filename
+                # Note: attachment_id is ephemeral and changes between API calls
+                # Using filename ensures same attachment has same entity_id across syncs
+                safe_filename = self._safe_filename(filename)
+                stable_entity_id = f"attach_{message_id}_{safe_filename}"
 
-                attachment_url = (
-                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/"
-                    f"{message_id}/attachments/{attachment_id}"
+                # Create FileEntity wrapper
+                file_entity = GmailAttachmentEntity(
+                    # Base fields
+                    entity_id=stable_entity_id,
+                    breadcrumbs=breadcrumbs,
+                    name=filename,
+                    created_at=None,  # Attachments don't have timestamps
+                    updated_at=None,  # Attachments don't have timestamps
+                    # File fields
+                    url=f"gmail://attachment/{message_id}/{attachment_id}",  # dummy URL
+                    size=size,
+                    file_type=file_type,
+                    mime_type=mime_type,
+                    local_path=None,
+                    # API fields
+                    message_id=message_id,
+                    attachment_id=attachment_id,
+                    thread_id=thread_id,
                 )
+
+                base64_data = attachment_data.get("data", "")
+                if not base64_data:
+                    self.logger.warning(f"No data found for attachment {filename}")
+                    return
+
+                binary_data = base64.urlsafe_b64decode(base64_data)
+
+                # Save bytes using downloader
                 try:
-                    try:
-                        attachment_data = await self._get_with_auth(client, attachment_url)
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 404:
-                            self.logger.warning(
-                                f"Attachment {attachment_id} not found (404) - skipping"
-                            )
-                            continue
-                        raise
-                    size = attachment_data.get("size", 0)
-
-                    # Determine file type from mime_type
-                    file_type = mime_type.split("/")[0] if "/" in mime_type else "file"
-
-                    # Create stable entity_id using message_id + filename
-                    # Note: attachment_id is ephemeral and changes between API calls
-                    # Using filename ensures same attachment has same entity_id across syncs
-                    safe_filename = self._safe_filename(filename)
-                    stable_entity_id = f"attach_{message_id}_{safe_filename}"
-
-                    file_entity = GmailAttachmentEntity(
-                        # Base fields
-                        entity_id=stable_entity_id,
-                        breadcrumbs=breadcrumbs,
-                        name=filename,
-                        created_at=None,  # Attachments don't have timestamps
-                        updated_at=None,  # Attachments don't have timestamps
-                        # File fields
-                        url=f"gmail://attachment/{message_id}/{attachment_id}",  # dummy URL
-                        size=size,
-                        file_type=file_type,
-                        mime_type=mime_type,
-                        local_path=None,
-                        # API fields
-                        message_id=message_id,
-                        attachment_id=attachment_id,
-                        thread_id=thread_id,
+                    await self.file_downloader.save_bytes(
+                        entity=file_entity,
+                        content=binary_data,
+                        filename_with_extension=filename,  # Attachment name from API
+                        logger=self.logger,
                     )
 
-                    base64_data = attachment_data.get("data", "")
-                    if not base64_data:
-                        self.logger.warning(f"No data found for attachment {filename}")
-                        continue
+                    # Verify save succeeded
+                    if not file_entity.local_path:
+                        raise ValueError(f"Save failed - no local path set for {file_entity.name}")
 
-                    binary_data = base64.urlsafe_b64decode(base64_data)
+                    yield file_entity
 
-                    # Save bytes using downloader
-                    try:
-                        await self.file_downloader.save_bytes(
-                            entity=file_entity,
-                            content=binary_data,
-                            filename_with_extension=filename,  # Attachment name from API
-                            logger=self.logger,
-                        )
-
-                        # Verify save succeeded
-                        if not file_entity.local_path:
-                            raise ValueError(
-                                f"Save failed - no local path set for {file_entity.name}"
-                            )
-
-                        yield file_entity
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to save attachment {filename}: {e}")
-                        continue
                 except Exception as e:
-                    self.logger.error(f"Error processing attachment {attachment_id}: {str(e)}")
+                    self.logger.error(f"Failed to save attachment {filename}: {e}")
+                    return
+            except Exception as e:
+                self.logger.error(
+                    f"Error processing attachment {attachment_id} on message {message_id}: {e}"
+                )
 
-        async for a in _sequential_iter():
-            yield a
+        async for ent in self.process_entities_concurrent(
+            items=descriptors,
+            worker=_attachment_worker,
+            batch_size=getattr(self, "batch_size", 30),
+            preserve_order=getattr(self, "preserve_order", False),
+            stop_on_error=getattr(self, "stop_on_error", False),
+            max_queue_size=getattr(self, "max_queue_size", 200),
+        ):
+            if ent is not None:
+                yield ent
 
     def _safe_filename(self, filename: str) -> str:
         """Create a safe version of a filename."""
@@ -1011,8 +852,8 @@ class GmailSource(BaseSource):
             else:
                 break
 
-        if latest_history_id:
-            self._update_cursor_data(str(latest_history_id))
+        if latest_history_id and self.cursor:
+            self.cursor.update(history_id=str(latest_history_id))
             self.logger.info("Updated Gmail cursor with latest historyId for next run")
 
     async def _yield_history_deletions(
@@ -1039,40 +880,25 @@ class GmailSource(BaseSource):
                     deletion_status="removed",
                 )
 
-    async def _process_history_additions_sequential(
-        self, client: httpx.AsyncClient, items: List[Dict[str, str]]
+    async def _yield_history_additions(  # noqa: C901
+        self, client: httpx.AsyncClient, data: Dict[str, Any]
     ) -> AsyncGenerator[BaseEntity, None]:
-        """Process history additions sequentially."""
-        for it in items:
-            msg_id = it["msg_id"]
-            thread_id = it.get("thread_id") or "unknown"
-            try:
-                detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
-                try:
-                    message_data = await self._get_with_auth(client, detail_url)
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        self.logger.warning(f"Message {msg_id} not found (404) - skipping")
-                        continue
-                    raise
+        """Yield entities for added/changed messages from a history page.
 
-                # Apply filters for incremental sync
-                if not self._message_matches_filters(message_data):
-                    self.logger.debug(f"Skipping message {msg_id} - doesn't match filters")
-                    continue
+        Fetches message details concurrently for optimal performance.
+        """
+        # Flatten all message IDs from this page
+        items: List[Dict[str, str]] = []
+        for h in data.get("history", []) or []:
+            for added in h.get("messagesAdded", []) or []:
+                msg = added.get("message") or {}
+                msg_id = msg.get("id")
+                thread_id = msg.get("threadId")
+                if msg_id:
+                    items.append({"msg_id": msg_id, "thread_id": thread_id})
 
-                thread_breadcrumb = Breadcrumb(entity_id=f"thread_{thread_id}")
-                async for entity in self._process_message(
-                    client, message_data, thread_id, thread_breadcrumb
-                ):
-                    yield entity
-            except Exception as e:
-                self.logger.error(f"Failed to fetch/process message {msg_id}: {e}")
-
-    async def _process_history_additions_concurrent(
-        self, client: httpx.AsyncClient, items: List[Dict[str, str]]
-    ) -> AsyncGenerator[BaseEntity, None]:
-        """Process history additions concurrently."""
+        if not items:
+            return
 
         async def _added_worker(item: Dict[str, str]):
             msg_id = item["msg_id"]
@@ -1111,33 +937,6 @@ class GmailSource(BaseSource):
             if ent is not None:
                 yield ent
 
-    async def _yield_history_additions(
-        self, client: httpx.AsyncClient, data: Dict[str, Any]
-    ) -> AsyncGenerator[BaseEntity, None]:
-        """Yield entities for added/changed messages from a history page.
-
-        If batch_generation is enabled, fetch message details concurrently.
-        """
-        # Flatten all message IDs from this page
-        items: List[Dict[str, str]] = []
-        for h in data.get("history", []) or []:
-            for added in h.get("messagesAdded", []) or []:
-                msg = added.get("message") or {}
-                msg_id = msg.get("id")
-                thread_id = msg.get("threadId")
-                if msg_id:
-                    items.append({"msg_id": msg_id, "thread_id": thread_id})
-
-        if not items:
-            return
-
-        if not getattr(self, "batch_generation", False):
-            async for entity in self._process_history_additions_sequential(client, items):
-                yield entity
-        else:
-            async for entity in self._process_history_additions_concurrent(client, items):
-                yield entity
-
     # -----------------------
     # Top-level orchestration
     # -----------------------
@@ -1145,7 +944,7 @@ class GmailSource(BaseSource):
         """Generate Gmail entities with incremental History API support."""
         try:
             async with self.http_client() as client:
-                cursor_field, last_history_id = await self._resolve_cursor_and_token()
+                last_history_id = await self._resolve_cursor()
                 if last_history_id:
                     async for e in self._run_incremental_sync(client, last_history_id):
                         yield e
@@ -1167,8 +966,8 @@ class GmailSource(BaseSource):
                                 f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msgs[0]['id']}",
                             )
                             history_id = detail.get("historyId")
-                            if history_id:
-                                self._update_cursor_data(str(history_id))
+                            if history_id and self.cursor:
+                                self.cursor.update(history_id=str(history_id))
                                 self.logger.info(
                                     "Stored Gmail historyId after full sync "
                                     "for next incremental run"
@@ -1187,6 +986,3 @@ class GmailSource(BaseSource):
             headers={"Accept": "application/json"},
             timeout=10.0,
         )
-
-
-# Test change
