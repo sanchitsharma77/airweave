@@ -841,6 +841,10 @@ class OutlookMailSource(BaseSource):
             message_id = change.get("id")
             if message_id:
                 deletion_entity = OutlookMessageDeletionEntity(
+                    name=f"Deleted message {message_id}",
+                    created_at=None,
+                    updated_at=None,
+                    breadcrumbs=[],
                     entity_id=message_id,
                     message_id=message_id,
                     deletion_status="removed",
@@ -949,7 +953,11 @@ class OutlookMailSource(BaseSource):
         """Emit a folder deletion entity and clean up stored links/names."""
         self.logger.info(f"Folder removed: {folder_id}")
         deletion_entity = OutlookMailFolderDeletionEntity(
-            entity_id=folder_id, folder_id=folder_id, deletion_status="removed"
+            entity_id=folder_id,
+            breadcrumbs=[],
+            name=f"Deleted folder {folder_id}",
+            created_at=None,
+            updated_at=None,
         )
         if self.cursor:
             cursor_data = self.cursor.data
@@ -1014,6 +1022,10 @@ class OutlookMailSource(BaseSource):
                         if message_id:
                             deletion_entity = OutlookMessageDeletionEntity(
                                 entity_id=message_id,
+                                breadcrumbs=[],
+                                name=f"Deleted message {message_id}",
+                                created_at=None,
+                                updated_at=None,
                                 message_id=message_id,
                                 deletion_status="removed",
                             )
@@ -1083,6 +1095,10 @@ class OutlookMailSource(BaseSource):
                         if message_id:
                             deletion_entity = OutlookMessageDeletionEntity(
                                 entity_id=message_id,
+                                breadcrumbs=[],
+                                name=f"Deleted message {message_id}",
+                                created_at=None,
+                                updated_at=None,
                                 message_id=message_id,
                                 deletion_status="removed",
                             )
