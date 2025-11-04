@@ -24,7 +24,7 @@ import tenacity
 from tenacity import stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
-from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.confluence import (
@@ -53,6 +53,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="ConfluenceConfig",
     labels=["Knowledge Base", "Documentation"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class ConfluenceSource(BaseSource):
     """Confluence source connector integrates with the Confluence REST API to extract content.

@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.todoist import (
@@ -29,6 +30,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="TodoistConfig",
     labels=["Productivity", "Task Management"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class TodoistSource(BaseSource):
     """Todoist source connector integrates with the Todoist REST API to extract task data.

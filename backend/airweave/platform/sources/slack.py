@@ -7,6 +7,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.slack import SlackMessageEntity
@@ -28,6 +29,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["Communication", "Messaging"],
     supports_continuous=False,
     federated_search=True,  # This source uses federated search instead of syncing
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class SlackSource(BaseSource):
     """Slack source connector using federated search.

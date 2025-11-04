@@ -20,6 +20,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_drive import (
@@ -45,7 +46,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="GoogleDriveConfig",
     labels=["File Storage"],
     supports_continuous=True,
-    rate_limit_level="org",
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class GoogleDriveSource(BaseSource):
     """Google Drive source connector integrates with the Google Drive API to extract files.

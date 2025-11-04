@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.salesforce import (
@@ -36,6 +37,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="SalesforceConfig",
     labels=["CRM", "Sales"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class SalesforceSource(BaseSource):
     """Salesforce source connector integrates with the Salesforce REST API to extract CRM data.

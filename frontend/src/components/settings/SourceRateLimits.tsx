@@ -1,20 +1,18 @@
 import { useState, useEffect } from 'react';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Save, Trash2, Building2, User, Loader2 } from 'lucide-react';
+import { Save, Trash2, Building2, User, Loader2, RotateCcw, Clock, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api';
+import { cn } from '@/lib/utils';
+import { useTheme } from '@/lib/theme-provider';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface SourceRateLimitRow {
     source_short_name: string;
@@ -31,6 +29,8 @@ export const SourceRateLimits = () => {
         Map<string, { limit: string; window: string }>
     >(new Map());
     const [savingRows, setSavingRows] = useState<Set<string>>(new Set());
+    const { resolvedTheme } = useTheme();
+    const isDark = resolvedTheme === 'dark';
 
     // Separate state for Pipedream proxy
     const [pipedreamLimit, setPipedreamLimit] = useState<string>('1000');
@@ -205,200 +205,265 @@ export const SourceRateLimits = () => {
     }
 
     return (
-        <div className="space-y-6">
-            {/* Pipedream Proxy Card */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <Building2 className="h-5 w-5" />
-                        Pipedream Proxy Limit
-                    </CardTitle>
-                    <CardDescription>
-                        Organization-wide limit for all API requests through Pipedream proxy. Applies when using
-                        Pipedream auth provider with default OAuth.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex items-end gap-4">
-                        <div className="flex-1 max-w-xs">
-                            <Label htmlFor="pipedream-limit">Requests per 5 minutes</Label>
-                            <Input
-                                id="pipedream-limit"
-                                type="number"
-                                value={pipedreamLimit}
-                                onChange={(e) => setPipedreamLimit(e.target.value)}
-                                placeholder="1000"
-                                min="1"
-                                className="mt-1.5"
-                            />
+        <TooltipProvider delayDuration={100}>
+            <div className="space-y-4">
+                {/* Header Section */}
+                <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                        Configure rate limits to prevent exhausting API quotas across your organization
+                    </p>
+                </div>
+
+                {/* Pipedream Proxy - Compact inline design */}
+                <div className={cn(
+                    "rounded-lg border transition-all duration-200",
+                    isDark ? "bg-gray-900/50" : "bg-white"
+                )}>
+                    <div className="p-4 space-y-3">
+                        {/* Header */}
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className={cn(
+                                    "h-7 w-7 rounded-md flex items-center justify-center",
+                                    isDark ? "bg-blue-500/10" : "bg-blue-50"
+                                )}>
+                                    <Building2 className={cn("h-3.5 w-3.5", isDark ? "text-blue-400" : "text-blue-600")} />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-medium">Pipedream Proxy</h3>
+                                    <p className="text-[11px] text-muted-foreground">Organization-wide limit</p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex gap-2">
-                            <Button
-                                onClick={handleSavePipedream}
-                                disabled={
-                                    isSavingPipedream ||
-                                    (pipedreamLimit === originalPipedreamLimit && pipedreamWindow === originalPipedreamWindow)
-                                }
-                                size="sm"
-                                className="h-10"
-                            >
-                                {isSavingPipedream ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                ) : (
-                                    <Save className="h-4 w-4 mr-2" />
+
+                        {/* Compact inline controls */}
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-1">
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">Limit:</span>
+                                <Input
+                                    type="number"
+                                    value={pipedreamLimit}
+                                    onChange={(e) => setPipedreamLimit(e.target.value)}
+                                    placeholder="1000"
+                                    min="1"
+                                    className="h-7 w-24 text-xs"
+                                />
+                                <span className="text-[11px] text-muted-foreground">requests</span>
+                                <span className="text-xs text-muted-foreground">/</span>
+                                <span className="text-[11px] text-muted-foreground">5 min</span>
+                            </div>
+                            <div className="flex gap-1.5">
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <button
+                                            onClick={handleSavePipedream}
+                                            disabled={
+                                                isSavingPipedream ||
+                                                (pipedreamLimit === originalPipedreamLimit && pipedreamWindow === originalPipedreamWindow)
+                                            }
+                                            className={cn(
+                                                "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-medium transition-all duration-200",
+                                                isSavingPipedream || (pipedreamLimit === originalPipedreamLimit && pipedreamWindow === originalPipedreamWindow)
+                                                    ? "opacity-40 cursor-not-allowed"
+                                                    : isDark
+                                                        ? "bg-primary/90 hover:bg-primary text-white"
+                                                        : "bg-primary hover:bg-primary/90 text-white"
+                                            )}
+                                        >
+                                            {isSavingPipedream ? (
+                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                                <Save className="h-3 w-3" />
+                                            )}
+                                        </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent><p className="text-xs">Save changes</p></TooltipContent>
+                                </Tooltip>
+                                {pipedreamId && (
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <button
+                                                onClick={async () => {
+                                                    await handleDeleteRow('pipedream_proxy');
+                                                    setPipedreamLimit('1000');
+                                                    setPipedreamWindow('300');
+                                                    setOriginalPipedreamLimit('1000');
+                                                    setOriginalPipedreamWindow('300');
+                                                }}
+                                                disabled={isSavingPipedream}
+                                                className={cn(
+                                                    "h-7 w-7 rounded-md flex items-center justify-center transition-all duration-200",
+                                                    isDark
+                                                        ? "hover:bg-gray-800 text-muted-foreground"
+                                                        : "hover:bg-gray-100 text-muted-foreground"
+                                                )}
+                                            >
+                                                <RotateCcw className="h-3 w-3" />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent><p className="text-xs">Restore default</p></TooltipContent>
+                                    </Tooltip>
                                 )}
-                                Save
-                            </Button>
-                            {pipedreamId && (
-                                <Button
-                                    onClick={async () => {
-                                        await handleDeleteRow('pipedream_proxy');
-                                        // Reset to defaults
-                                        setPipedreamLimit('1000');
-                                        setPipedreamWindow('300');
-                                        setOriginalPipedreamLimit('1000');
-                                        setOriginalPipedreamWindow('300');
-                                    }}
-                                    disabled={isSavingPipedream}
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-10"
-                                >
-                                    Restore Default
-                                </Button>
-                            )}
+                            </div>
                         </div>
                     </div>
-                </CardContent>
-            </Card>
+                </div>
 
-            {/* Sources Table Card */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>Source-Specific Rate Limits</CardTitle>
-                    <CardDescription>
-                        Configure rate limits per source to prevent exhausting API quotas. Limits apply to all users in
-                        your organization.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Source</TableHead>
-                                <TableHead>Tracking Level</TableHead>
-                                <TableHead>Limit (requests)</TableHead>
-                                <TableHead>Window (seconds)</TableHead>
-                                <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {limits.map((row) => {
-                                const isEditing = editingRows.has(row.source_short_name);
-                                const isSaving = savingRows.has(row.source_short_name);
-                                const edited = editingRows.get(row.source_short_name);
+                {/* Source Limits - Minimal, list-based design */}
+                <div className="space-y-2">
+                    <div className="flex items-center gap-2 px-1 py-1">
+                        <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Source Limits</span>
+                    </div>
 
-                                return (
-                                    <TableRow key={row.source_short_name}>
-                                        <TableCell className="font-medium capitalize">
-                                            {row.source_short_name}
-                                        </TableCell>
-                                        <TableCell>
+                    <div className="space-y-1.5">
+                        {limits.map((row) => {
+                            const isEditing = editingRows.has(row.source_short_name);
+                            const isSaving = savingRows.has(row.source_short_name);
+                            const edited = editingRows.get(row.source_short_name);
+                            const hasChanges = edited && (
+                                edited.limit !== (row.limit !== null ? String(row.limit) : '') ||
+                                edited.window !== (row.window_seconds !== null ? String(row.window_seconds) : '')
+                            );
+
+                            return (
+                                <div
+                                    key={row.source_short_name}
+                                    className={cn(
+                                        "rounded-lg border p-3 transition-all duration-200",
+                                        isDark ? "bg-gray-900/50" : "bg-white",
+                                        !row.rate_limit_level && "opacity-50"
+                                    )}
+                                >
+                                    <div className="flex items-center justify-between gap-3">
+                                        {/* Source name and badge */}
+                                        <div className="flex items-center gap-2.5 min-w-[140px]">
+                                            <span className="text-sm font-medium capitalize">{row.source_short_name}</span>
                                             {row.rate_limit_level === 'org' && (
-                                                <Badge variant="secondary" className="gap-1">
-                                                    <Building2 className="h-3 w-3" />
-                                                    Organization-wide
-                                                </Badge>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <div className={cn(
+                                                            "h-5 px-1.5 rounded flex items-center gap-1",
+                                                            isDark ? "bg-blue-500/10" : "bg-blue-50"
+                                                        )}>
+                                                            <Building2 className={cn("h-2.5 w-2.5", isDark ? "text-blue-400" : "text-blue-600")} />
+                                                            <span className={cn("text-[10px] font-medium", isDark ? "text-blue-400" : "text-blue-600")}>ORG</span>
+                                                        </div>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent><p className="text-xs">Organization-wide tracking</p></TooltipContent>
+                                                </Tooltip>
                                             )}
                                             {row.rate_limit_level === 'connection' && (
-                                                <Badge variant="outline" className="gap-1">
-                                                    <User className="h-3 w-3" />
-                                                    Per Connection
-                                                </Badge>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <div className={cn(
+                                                            "h-5 px-1.5 rounded flex items-center gap-1",
+                                                            isDark ? "bg-purple-500/10" : "bg-purple-50"
+                                                        )}>
+                                                            <User className={cn("h-2.5 w-2.5", isDark ? "text-purple-400" : "text-purple-600")} />
+                                                            <span className={cn("text-[10px] font-medium", isDark ? "text-purple-400" : "text-purple-600")}>CONN</span>
+                                                        </div>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent><p className="text-xs">Per-connection tracking</p></TooltipContent>
+                                                </Tooltip>
                                             )}
                                             {!row.rate_limit_level && (
-                                                <span className="text-muted-foreground text-sm">Not supported</span>
+                                                <span className="text-[10px] text-muted-foreground">Not supported</span>
                                             )}
-                                        </TableCell>
-                                        <TableCell>
-                                            {row.rate_limit_level ? (
-                                                <Input
-                                                    type="number"
-                                                    placeholder="e.g. 800"
-                                                    value={edited?.limit ?? row.limit ?? ''}
-                                                    onChange={(e) =>
-                                                        handleEditChange(row.source_short_name, 'limit', e.target.value)
-                                                    }
-                                                    className="w-28"
-                                                    min="1"
-                                                    disabled={isSaving}
-                                                />
-                                            ) : (
-                                                <span className="text-muted-foreground">-</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell>
-                                            {row.rate_limit_level ? (
-                                                <Input
-                                                    type="number"
-                                                    placeholder="e.g. 60"
-                                                    value={edited?.window ?? row.window_seconds ?? ''}
-                                                    onChange={(e) =>
-                                                        handleEditChange(row.source_short_name, 'window', e.target.value)
-                                                    }
-                                                    className="w-28"
-                                                    min="1"
-                                                    disabled={isSaving}
-                                                />
-                                            ) : (
-                                                <span className="text-muted-foreground">-</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            {row.rate_limit_level && (
-                                                <div className="flex justify-end gap-2">
-                                                    <Button
-                                                        size="sm"
-                                                        onClick={() => handleSaveRow(row.source_short_name)}
-                                                        disabled={
-                                                            isSaving ||
-                                                            // Disabled if no edits OR if values match DB
-                                                            (!isEditing || (
-                                                                edited &&
-                                                                edited.limit === (row.limit !== null ? String(row.limit) : '') &&
-                                                                edited.window === (row.window_seconds !== null ? String(row.window_seconds) : '')
-                                                            ))
+                                        </div>
+
+                                        {/* Inline inputs and controls */}
+                                        {row.rate_limit_level ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-1.5">
+                                                    <Input
+                                                        type="number"
+                                                        placeholder="800"
+                                                        value={edited?.limit ?? row.limit ?? ''}
+                                                        onChange={(e) =>
+                                                            handleEditChange(row.source_short_name, 'limit', e.target.value)
                                                         }
-                                                    >
-                                                        {isSaving ? (
-                                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                                        ) : (
-                                                            <Save className="h-4 w-4" />
-                                                        )}
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="ghost"
-                                                        onClick={() => handleDeleteRow(row.source_short_name)}
-                                                        disabled={isSaving || !row.id}
-                                                    >
-                                                        {isSaving ? (
-                                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                                        ) : (
-                                                            <Trash2 className="h-4 w-4" />
-                                                        )}
-                                                    </Button>
+                                                        className="h-7 w-20 text-xs"
+                                                        min="1"
+                                                        disabled={isSaving}
+                                                    />
+                                                    <span className="text-[11px] text-muted-foreground">req</span>
                                                 </div>
-                                            )}
-                                        </TableCell>
-                                    </TableRow>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
-        </div>
+                                                <span className="text-xs text-muted-foreground">/</span>
+                                                <div className="flex items-center gap-1.5">
+                                                    <Input
+                                                        type="number"
+                                                        placeholder="60"
+                                                        value={edited?.window ?? row.window_seconds ?? ''}
+                                                        onChange={(e) =>
+                                                            handleEditChange(row.source_short_name, 'window', e.target.value)
+                                                        }
+                                                        className="h-7 w-16 text-xs"
+                                                        min="1"
+                                                        disabled={isSaving}
+                                                    />
+                                                    <span className="text-[11px] text-muted-foreground">sec</span>
+                                                </div>
+                                                <div className="flex gap-1">
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <button
+                                                                onClick={() => handleSaveRow(row.source_short_name)}
+                                                                disabled={isSaving || !isEditing || !hasChanges}
+                                                                className={cn(
+                                                                    "h-7 w-7 rounded-md flex items-center justify-center transition-all duration-200",
+                                                                    isSaving || !isEditing || !hasChanges
+                                                                        ? "opacity-40 cursor-not-allowed"
+                                                                        : isDark
+                                                                            ? "bg-primary/90 hover:bg-primary text-white"
+                                                                            : "bg-primary hover:bg-primary/90 text-white"
+                                                                )}
+                                                            >
+                                                                {isSaving ? (
+                                                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                                                ) : (
+                                                                    <Save className="h-3 w-3" />
+                                                                )}
+                                                            </button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent><p className="text-xs">Save changes</p></TooltipContent>
+                                                    </Tooltip>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <button
+                                                                onClick={() => handleDeleteRow(row.source_short_name)}
+                                                                disabled={isSaving || !row.id}
+                                                                className={cn(
+                                                                    "h-7 w-7 rounded-md flex items-center justify-center transition-all duration-200",
+                                                                    isSaving || !row.id
+                                                                        ? "opacity-40 cursor-not-allowed"
+                                                                        : isDark
+                                                                            ? "hover:bg-red-500/10 text-red-400"
+                                                                            : "hover:bg-red-50 text-red-600"
+                                                                )}
+                                                            >
+                                                                {isSaving ? (
+                                                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                                                ) : (
+                                                                    <Trash2 className="h-3 w-3" />
+                                                                )}
+                                                            </button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent><p className="text-xs">Remove limit</p></TooltipContent>
+                                                    </Tooltip>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">No rate limiting available</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        </TooltipProvider>
     );
 };
 

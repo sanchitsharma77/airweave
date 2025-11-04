@@ -38,6 +38,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.google_calendar import (
@@ -64,6 +65,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="GoogleCalendarConfig",
     labels=["Productivity", "Calendar"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class GoogleCalendarSource(BaseSource):
     """Google Calendar source connector integrates with the Google Calendar API to extract data.

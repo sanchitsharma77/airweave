@@ -10,6 +10,7 @@ import httpx
 import tenacity
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.configs.auth import GitHubAuthConfig
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
@@ -37,6 +38,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     labels=["Code"],
     supports_continuous=True,
     supports_temporal_relevance=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class GitHubSource(BaseSource):
     """GitHub source connector integrates with the GitHub REST API to extract and synchronize data.

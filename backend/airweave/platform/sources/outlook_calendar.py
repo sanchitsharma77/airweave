@@ -16,6 +16,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_calendar import (
@@ -40,6 +41,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="OutlookCalendarConfig",
     labels=["Productivity", "Calendar"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class OutlookCalendarSource(BaseSource):
     """Outlook Calendar source connector integrates with the Microsoft Graph API to extract data.

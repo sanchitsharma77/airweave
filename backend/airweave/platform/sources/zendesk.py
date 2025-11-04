@@ -7,6 +7,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.zendesk import (
@@ -33,6 +34,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     auth_config_class=None,
     config_class="ZendeskConfig",
     labels=["Customer Support", "CRM"],
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class ZendeskSource(BaseSource):
     """Zendesk source connector integrates with the Zendesk API to extract and synchronize data.

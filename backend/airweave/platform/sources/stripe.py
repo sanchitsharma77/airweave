@@ -22,6 +22,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.configs.auth import StripeAuthConfig
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
@@ -51,6 +52,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     config_class="StripeConfig",
     labels=["Payment"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class StripeSource(BaseSource):
     """Stripe source connector integrates with the Stripe API to extract payment and financial data.

@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.configs.auth import MondayAuthConfig
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
@@ -37,6 +38,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="MondayConfig",
     labels=["Project Management"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class MondaySource(BaseSource):
     """Monday source connector integrates with the Monday.com GraphQL API to extract work data.

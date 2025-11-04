@@ -16,6 +16,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_mail import (
@@ -54,6 +55,7 @@ def _should_retry_outlook_request(exception: Exception) -> bool:
     config_class="OutlookMailConfig",
     labels=["Communication", "Email"],
     supports_continuous=True,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class OutlookMailSource(BaseSource):
     """Outlook Mail source connector integrates with the Microsoft Graph API to extract email data.

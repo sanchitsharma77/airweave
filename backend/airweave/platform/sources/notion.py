@@ -15,6 +15,7 @@ from httpx import HTTPStatusError, ReadTimeout, TimeoutException
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.notion import (
@@ -40,7 +41,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="NotionConfig",
     labels=["Knowledge Base", "Productivity"],
     supports_continuous=False,
-    rate_limit_level="connection",
+    rate_limit_level=RateLimitLevel.CONNECTION,
 )
 class NotionSource(BaseSource):
     """Notion source connector integrates with the Notion API to extract and synchronize content.

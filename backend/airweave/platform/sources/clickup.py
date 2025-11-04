@@ -7,6 +7,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.clickup import (
@@ -37,6 +38,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["Project Management"],
     supports_continuous=False,
     supports_temporal_relevance=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class ClickUpSource(BaseSource):
     """ClickUp source connector integrates with the ClickUp API to extract and synchronize data.

@@ -12,6 +12,7 @@ from uuid import UUID
 from airweave.core.exceptions import SourceRateLimitExceededException
 from airweave.core.logging import logger
 from airweave.core.redis_client import redis_client
+from airweave.core.shared_models import RateLimitLevel
 
 
 class SourceRateLimiter:
@@ -89,12 +90,12 @@ class SourceRateLimiter:
         Returns:
             Redis key string
         """
-        if rate_limit_level == "connection":
+        if rate_limit_level == RateLimitLevel.CONNECTION.value:
             return (
                 f"{SourceRateLimiter.KEY_PREFIX}:{org_id}:{source_short_name}:"
                 f"connection:{source_connection_id}"
             )
-        else:  # "org"
+        else:  # RateLimitLevel.ORG
             return f"{SourceRateLimiter.KEY_PREFIX}:{org_id}:{source_short_name}:org:org"
 
     @staticmethod

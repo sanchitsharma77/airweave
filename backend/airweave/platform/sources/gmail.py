@@ -19,6 +19,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.gmail import (
@@ -57,6 +58,7 @@ def _should_retry_gmail_request(exception: Exception) -> bool:
     config_class="GmailConfig",
     labels=["Communication", "Email"],
     supports_continuous=True,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class GmailSource(BaseSource):
     """Gmail source connector integrates with the Gmail API to extract and synchronize email data.

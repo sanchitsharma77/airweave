@@ -14,7 +14,7 @@ import tenacity
 from tenacity import stop_after_attempt, wait_exponential
 
 from airweave.core.exceptions import TokenRefreshError
-from airweave.core.logging import logger
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.jira import (
@@ -38,6 +38,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="JiraConfig",
     labels=["Project Management", "Issue Tracking"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class JiraSource(BaseSource):
     """Jira source connector integrates with the Jira REST API to extract project management data.

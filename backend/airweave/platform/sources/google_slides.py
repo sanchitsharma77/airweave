@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_slides import (
@@ -44,6 +45,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="GoogleSlidesConfig",
     labels=["Productivity", "Presentations"],
     supports_continuous=True,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class GoogleSlidesSource(BaseSource):
     """Google Slides source connector integrates with Google Drive API.

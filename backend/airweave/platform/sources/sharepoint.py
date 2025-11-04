@@ -19,6 +19,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.sharepoint import (
@@ -48,6 +49,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="SharePointConfig",
     labels=["File Storage", "Collaboration"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class SharePointSource(BaseSource):
     """SharePoint source connector integrates with the Microsoft Graph API.

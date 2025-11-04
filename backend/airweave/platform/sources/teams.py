@@ -20,6 +20,7 @@ from typing import Any, AsyncGenerator, Dict, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.teams import (
@@ -46,6 +47,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     config_class="TeamsConfig",
     labels=["Communication", "Collaboration"],
     supports_continuous=False,
+    rate_limit_level=RateLimitLevel.ORG,
 )
 class TeamsSource(BaseSource):
     """Microsoft Teams source connector integrates with the Microsoft Graph API.
