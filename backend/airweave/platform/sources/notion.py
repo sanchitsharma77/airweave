@@ -12,10 +12,11 @@ from urllib.parse import urlparse
 
 import httpx
 from httpx import HTTPStatusError, ReadTimeout, TimeoutException
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from airweave.core.logging import logger
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.sources.retry_helpers import wait_rate_limit_with_backoff
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.notion import (
@@ -169,8 +170,8 @@ class NotionSource(BaseSource):
 
     @retry(
         retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError)),
-        stop=stop_after_attempt(MAX_RETRIES),
-        wait=wait_exponential(multiplier=2, min=10, max=60),
+        stop=stop_after_attempt(10),
+        wait=wait_rate_limit_with_backoff,
         reraise=True,
     )
     async def _get_with_auth(self, client: httpx.AsyncClient, url: str) -> dict:
@@ -231,8 +232,8 @@ class NotionSource(BaseSource):
 
     @retry(
         retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError)),
-        stop=stop_after_attempt(MAX_RETRIES),
-        wait=wait_exponential(multiplier=2, min=10, max=60),
+        stop=stop_after_attempt(10),
+        wait=wait_rate_limit_with_backoff,
         reraise=True,
     )
     async def _post_with_auth(self, client: httpx.AsyncClient, url: str, json_data: dict) -> dict:

@@ -8,8 +8,13 @@ GraphQL queries for retrieving these objects.
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
+from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.sources.retry_helpers import (
+    retry_if_rate_limit_or_timeout,
+    wait_rate_limit_with_backoff,
+)
 from airweave.platform.configs.auth import MondayAuthConfig
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
@@ -68,6 +73,12 @@ class MondaySource(BaseSource):
         instance.access_token = auth_config.access_token
         return instance
 
+    @retry(
+        stop=stop_after_attempt(10),
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
+        reraise=True,
+    )
     async def _graphql_query(
         self, client: httpx.AsyncClient, query: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:

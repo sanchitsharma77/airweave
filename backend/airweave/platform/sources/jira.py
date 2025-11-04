@@ -10,11 +10,14 @@ References:
 from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
-import tenacity
-from tenacity import stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt
 
 from airweave.core.exceptions import TokenRefreshError
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.sources.retry_helpers import (
+    retry_if_rate_limit_or_timeout,
+    wait_rate_limit_with_backoff,
+)
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.jira import (
@@ -96,8 +99,11 @@ class JiraSource(BaseSource):
         instance.config = config or {}
         return instance
 
-    @tenacity.retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+    @retry(
+        stop=stop_after_attempt(10),
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
+        reraise=True,
     )
     async def _get_with_auth(self, client: httpx.AsyncClient, url: str) -> Any:
         """Make an authenticated GET request to the Jira REST API."""
@@ -151,8 +157,11 @@ class JiraSource(BaseSource):
             self.logger.error(f"Request failed: {str(e)}")
             raise
 
-    @tenacity.retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True
+    @retry(
+        stop=stop_after_attempt(10),
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
+        reraise=True,
     )
     async def _post_with_auth(
         self, client: httpx.AsyncClient, url: str, json_data: Dict[str, Any]
