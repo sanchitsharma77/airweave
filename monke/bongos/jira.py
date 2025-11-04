@@ -32,6 +32,7 @@ class JiraBongo(BaseBongo):
         # Configuration from config file
         self.entity_count = int(kwargs.get("entity_count", 3))
         self.openai_model = kwargs.get("openai_model", "gpt-4.1-mini")
+        self.project_keys = kwargs.get("project_keys", [])
 
         # Test data tracking
         self.test_issues = []
@@ -230,29 +231,52 @@ class JiraBongo(BaseBongo):
         """Ensure we have a test project to work with."""
         await self._rate_limit()
 
-        # For Jira, we'll use the first available project
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3/project",
-                headers={
-                    "Authorization": f"Bearer {self.access_token}",
-                    "Accept": "application/json",
-                },
-            )
+        # Use configured project if available, otherwise discover
+        if self.project_keys:
+            # Use the first configured project key
+            self.test_project_key = self.project_keys[0]
+            self.logger.info(f"📁 Using configured project: {self.test_project_key}")
+            
+            # Verify the project exists
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3/project/{self.test_project_key}",
+                    headers={
+                        "Authorization": f"Bearer {self.access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+                
+                if response.status_code != 200:
+                    raise Exception(
+                        f"Configured project '{self.test_project_key}' not found or not accessible. "
+                        f"Please ensure the project exists in your Jira instance. "
+                        f"Error: {response.status_code} - {response.text}"
+                    )
+        else:
+            # Fall back to discovering the first project (for backwards compatibility)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3/project",
+                    headers={
+                        "Authorization": f"Bearer {self.access_token}",
+                        "Accept": "application/json",
+                    },
+                )
 
-            if response.status_code != 200:
-                raise Exception(f"Failed to get projects: {response.status_code} - {response.text}")
+                if response.status_code != 200:
+                    raise Exception(f"Failed to get projects: {response.status_code} - {response.text}")
 
-            projects = response.json()
-            if not projects:
-                raise Exception("No projects found in Jira")
+                projects = response.json()
+                if not projects:
+                    raise Exception("No projects found in Jira")
 
-            # Use the first project
-            self.test_project_key = projects[0]["key"]
-            self.logger.info(f"📁 Using project: {self.test_project_key}")
+                # Use the first project
+                self.test_project_key = projects[0]["key"]
+                self.logger.info(f"📁 Using discovered project: {self.test_project_key}")
 
-            # Fetch valid issue types for this project
-            await self._fetch_valid_issue_types()
+        # Fetch valid issue types for this project
+        await self._fetch_valid_issue_types()
 
     async def _fetch_valid_issue_types(self):
         """Fetch valid issue types for the current project."""

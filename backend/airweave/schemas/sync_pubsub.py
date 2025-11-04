@@ -29,6 +29,10 @@ class SyncProgressUpdate(BaseModel):
     )
     # Status field to track the final state - None means still in progress
     status: Optional[SyncJobStatus] = None
+    # Timestamp for stuck job detection
+    last_update_timestamp: Optional[str] = Field(
+        None, description="ISO timestamp of last update (for cleanup job stuck detection)"
+    )
 
 
 class EntityStateUpdate(BaseModel):

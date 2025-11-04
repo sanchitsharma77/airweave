@@ -161,13 +161,21 @@ if all_edges_go_to_destinations:
 - **Atomic Counters**: Thread-safe increment operations with async locks
 - **Threshold Publishing**: Publishes updates every N operations (default: 3)
 - **Entity Tracking**: Maintains count of unique entities by type
-- **Redis Integration**: Publishes to `sync_job:{job_id}` channels
+- **Redis Integration**: Publishes to `sync_job:{job_id}` channels and stores snapshots for cleanup job
 
 **Statistics Tracked**:
 - `inserted`, `updated`, `deleted`: Destination operations
 - `kept`: Unchanged entities (hash match)
 - `skipped`: Failed or filtered entities
 - `entities_encountered`: Count by entity type
+- `status`: Final job status (None if still in progress)
+- `last_update_timestamp`: ISO timestamp of last update (for cleanup job stuck detection)
+
+**Redis Snapshot Storage**:
+- Each progress update stores a snapshot in Redis with key `sync_progress_snapshot:{job_id}`
+- Snapshot includes `last_update_timestamp` for cleanup job to detect stuck syncs
+- 30-minute TTL to automatically clean up completed syncs
+- Used by `cleanup_stuck_sync_jobs_activity` to identify RUNNING jobs with no recent activity
 
 **Critical Fix**:
 ```python
@@ -247,7 +255,10 @@ EntityProcessor.process()
 Every operation increments counter
 ├── Async lock ensures thread safety
 ├── Threshold check (every 3 ops)
-├── Publish to Redis if threshold met
+├── Publish to Redis pubsub if threshold met
+│   ├── Real-time updates to subscribers
+│   └── Snapshot stored in Redis (sync_progress_snapshot:{job_id})
+│       └── Includes last_update_timestamp for cleanup job detection
 └── Subscribers receive real-time updates
 ```
 
