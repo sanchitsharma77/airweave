@@ -457,7 +457,7 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
     # Calculate cutoff times
     now = utc_now_naive()
     cancelling_pending_cutoff = now - timedelta(minutes=3)
-    running_cutoff = now - timedelta(minutes=10)
+    running_cutoff = now - timedelta(minutes=5)
 
     stuck_job_count = 0
     cancelled_count = 0
@@ -467,6 +467,8 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
         async with get_db_context() as db:
             # Import CRUD layer inside to avoid sandbox issues
             from airweave import crud
+            from airweave.core.redis_client import redis_client
+            import json
 
             # Query 1: Find CANCELLING/PENDING jobs stuck for > 3 minutes
             cancelling_pending_jobs = await crud.sync_job.get_stuck_jobs_by_status(
@@ -480,35 +482,78 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
                 f"stuck for > 3 minutes"
             )
 
-            # Query 2: Find RUNNING jobs > 10 minutes old
+            # Query 2: Find RUNNING jobs > 5 minutes old
             running_jobs = await crud.sync_job.get_stuck_jobs_by_status(
                 db=db,
                 status=[SyncJobStatus.RUNNING.value],
                 started_before=running_cutoff,
             )
 
-            logger.info(f"Found {len(running_jobs)} RUNNING jobs that started > 10 minutes ago")
+            logger.info(f"Found {len(running_jobs)} RUNNING jobs that started > 5 minutes ago")
 
-            # Check which RUNNING jobs have no recent entity updates
+            # Check which RUNNING jobs have no recent activity (via Redis snapshot)
             stuck_running_jobs = []
             for job in running_jobs:
-                # Get the most recent entity created_at for this job using CRUD
-                latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
-                    db=db,
-                    sync_job_id=job.id,
-                )
+                job_id_str = str(job.id)
+                snapshot_key = f"sync_progress_snapshot:{job_id_str}"
 
-                # Consider stuck if no entities or latest entity is > 10 minutes old
-                if latest_entity_time is None or latest_entity_time < running_cutoff:
-                    stuck_running_jobs.append(job)
-                    logger.info(
-                        f"Job {job.id} has no entity updates since "
-                        f"{latest_entity_time or 'job start'} - marking as stuck"
+                try:
+                    snapshot_json = await redis_client.client.get(snapshot_key)
+
+                    if not snapshot_json:
+                        logger.debug(f"No snapshot for job {job_id_str} - skipping")
+                        continue
+
+                    snapshot = json.loads(snapshot_json)
+                    last_update_str = snapshot.get("last_update_timestamp")
+
+                    if not last_update_str:
+                        # Old snapshot without timestamp - fall back to DB check
+                        latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
+                            db=db, sync_job_id=job.id
+                        )
+                        if latest_entity_time is None or latest_entity_time < running_cutoff:
+                            stuck_running_jobs.append(job)
+                        continue
+
+                    # Check if activity is recent
+                    from datetime import datetime
+
+                    last_update = datetime.fromisoformat(last_update_str)
+                    # Convert to naive datetime to match running_cutoff (from utc_now_naive)
+                    if last_update.tzinfo is not None:
+                        last_update = last_update.replace(tzinfo=None)
+
+                    if last_update < running_cutoff:
+                        total_ops = sum(
+                            [
+                                snapshot.get("inserted", 0),
+                                snapshot.get("updated", 0),
+                                snapshot.get("deleted", 0),
+                                snapshot.get("kept", 0),
+                                snapshot.get("skipped", 0),
+                            ]
+                        )
+                        stuck_running_jobs.append(job)
+                        logger.info(
+                            f"Job {job_id_str} last activity at {last_update} "
+                            f"({total_ops} total ops) - marking as stuck"
+                        )
+                    else:
+                        logger.debug(f"Job {job_id_str} active at {last_update} - healthy")
+
+                except Exception as e:
+                    logger.warning(
+                        f"Error checking job {job_id_str}: {e}, falling back to DB check"
                     )
+                    latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
+                        db=db, sync_job_id=job.id
+                    )
+                    if latest_entity_time is None or latest_entity_time < running_cutoff:
+                        stuck_running_jobs.append(job)
 
             logger.info(
-                f"Found {len(stuck_running_jobs)} RUNNING jobs with no entity "
-                f"updates in last 10 minutes"
+                f"Found {len(stuck_running_jobs)} RUNNING jobs with no activity in last 5 minutes"
             )
 
             # Combine all stuck jobs
