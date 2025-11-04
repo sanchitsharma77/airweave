@@ -64,7 +64,6 @@ class SourceRateLimitResponse(BaseModel):
     """Response schema with source metadata merged for UI display."""
 
     source_short_name: str
-    source_name: str
     rate_limit_level: Optional[str] = Field(
         None,
         description=("'org' (organization-wide), 'connection' (per-user), or None (not supported)"),

@@ -1,18 +1,17 @@
 """Source rate limit model."""
 
 from typing import TYPE_CHECKING
-from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from airweave.models._base import Base
+from airweave.models._base import OrganizationBase, UserMixin
 
 if TYPE_CHECKING:
     from airweave.models.organization import Organization
 
 
-class SourceRateLimit(Base):
+class SourceRateLimit(OrganizationBase, UserMixin):
     """Rate limit configuration for source API calls.
 
     Stores ONE limit per (organization, source) combination. The limit applies
@@ -28,9 +27,6 @@ class SourceRateLimit(Base):
 
     __tablename__ = "source_rate_limits"
 
-    organization_id: Mapped[UUID] = mapped_column(
-        ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
-    )
     source_short_name: Mapped[str] = mapped_column(String(100), nullable=False)
     limit: Mapped[int] = mapped_column(Integer, nullable=False)
     window_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)

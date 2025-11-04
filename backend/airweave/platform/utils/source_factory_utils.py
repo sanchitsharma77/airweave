@@ -457,13 +457,21 @@ def wrap_source_with_airweave_client(
     # Check if feature is enabled for this organization
     feature_enabled = ctx.has_feature(FeatureFlag.SOURCE_RATE_LIMITING)
 
-    # Get original HTTP client factory (may be httpx or Pipedream proxy)
-    original_factory = source.http_client
+    # Get original HTTP client factory (may be None, or a factory function)
+    # NOTE: We get the FACTORY, not the property (which would cause recursion)
+    original_factory = source._http_client_factory
 
     # Create wrapper factory
     def airweave_client_factory(**kwargs):
-        # Create base client (httpx or Pipedream)
-        base_client = original_factory(**kwargs)
+        # Create base client using original factory or httpx default
+        if original_factory:
+            # Original factory exists (Pipedream proxy or custom)
+            base_client = original_factory(**kwargs)
+        else:
+            # No factory - use vanilla httpx
+            import httpx
+
+            base_client = httpx.AsyncClient(**kwargs)
 
         # Wrap with AirweaveHttpClient
         # Rate limiter will read rate_limit_level from Source table
@@ -473,6 +481,7 @@ def wrap_source_with_airweave_client(
             source_short_name=source_short_name,
             source_connection_id=source_connection_id,
             feature_flag_enabled=feature_enabled,
+            logger=logger,  # Pass contextual logger with sync/search metadata
         )
 
     # Set wrapper factory on source

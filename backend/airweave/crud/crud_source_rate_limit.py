@@ -72,7 +72,7 @@ class CRUDSourceRateLimit(
         rate_limit_data = obj_in.model_dump()
         rate_limit_data["organization_id"] = ctx.organization.id
 
-        # Use parent create method which handles user tracking
+        # Use parent create method which handles user tracking and timestamps
         return await super().create(
             db=db,
             obj_in=rate_limit_data,
