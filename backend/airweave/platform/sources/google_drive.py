@@ -205,7 +205,7 @@ class GoogleDriveSource(BaseSource):
                 self.logger.error(
                     f"HTTP status error {e.response.status_code} from Google Drive API: {url}"
                 )
-                raise
+            raise  # Re-raise for ALL HTTP errors (tenacity will retry 429s)
         except httpx.HTTPError as e:
             self.logger.error(f"HTTP error when accessing Google Drive API: {url}, {str(e)}")
             raise
