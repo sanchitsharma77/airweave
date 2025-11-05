@@ -530,6 +530,7 @@ class QdrantDestination(VectorDBDestination):
             return
 
         try:
+            start_time = asyncio.get_event_loop().time()
             self.logger.debug(
                 f"[Qdrant] Upserting {len(points)} points to collection={self.collection_name}, "
                 f"collection_id={self.collection_id}, vector_size={self.vector_size}"
@@ -539,10 +540,19 @@ class QdrantDestination(VectorDBDestination):
                 points=points,
                 wait=True,
             )
+            duration = asyncio.get_event_loop().time() - start_time
+
             if hasattr(op, "errors") and op.errors:
                 raise Exception(f"Errors during bulk insert: {op.errors}")
+
+            # SUCCESS LOGGING - Critical for confirming split effectiveness
+            self.logger.info(
+                f"[Qdrant] ✅ Upserted {len(points)} points in {duration:.2f}s "
+                f"(collection={self.collection_name})"
+            )
         except (*timeout_errors, *rhex) as e:  # type: ignore[misc]
             n = len(points)
+            timeout_duration = asyncio.get_event_loop().time() - start_time
 
             # Extract underlying error if wrapped
             underlying_error = None
@@ -557,17 +567,17 @@ class QdrantDestination(VectorDBDestination):
 
             if n <= 1 or n <= min_batch:
                 self.logger.error(
-                    f"[Qdrant] Upsert failed on batch of {n} (min_batch={min_batch}) "
-                    f"to collection={self.collection_name}, collection_id={self.collection_id}. "
-                    f"Error: {error_details}",
+                    f"[Qdrant] 💥 FATAL: Cannot split further - {n} points ≤ min_batch={min_batch} "
+                    f"after {timeout_duration:.2f}s timeout "
+                    f"(collection={self.collection_name}). Error: {error_details}",
                     exc_info=True,  # This will log the full traceback
                 )
                 raise
             mid = n // 2
             left, right = points[:mid], points[mid:]
             self.logger.warning(
-                f"[Qdrant] Write timed out for {n} points; splitting into "
-                f"{len(left)} + {len(right)} and retrying..."
+                f"[Qdrant] ⚠️  Timeout after {timeout_duration:.2f}s for {n} points; "
+                f"splitting into {len(left)} + {len(right)} and retrying..."
             )
             await self._upsert_points_with_fallback(left, min_batch=min_batch)
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
@@ -594,6 +604,13 @@ class QdrantDestination(VectorDBDestination):
             return
 
         # Try once with the whole payload; fall back to halving on failure
+        # Track semaphore contention to understand queueing behavior
+        active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
+        self.logger.info(
+            f"[Qdrant] 🔒 Semaphore state: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active writes "
+            f"before acquiring lock for {len(point_structs)} points"
+        )
+
         async with self._write_sem:
             await self._upsert_points_with_fallback(point_structs, min_batch=10)
 
@@ -603,6 +620,14 @@ class QdrantDestination(VectorDBDestination):
     async def delete(self, db_entity_id: UUID) -> None:
         """Delete all points belonging to a DB entity id (parent)."""
         await self.ensure_client_readiness()
+
+        # Track semaphore + timing for delete operations
+        active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
+        self.logger.info(
+            f"[Qdrant] 🗑️  Delete by db_entity_id: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
+        )
+
+        start_time = asyncio.get_event_loop().time()
         async with self._write_sem:
             await self.client.delete(
                 collection_name=self.collection_name,
@@ -623,6 +648,11 @@ class QdrantDestination(VectorDBDestination):
                 ),
                 wait=True,
             )
+        duration = asyncio.get_event_loop().time() - start_time
+        self.logger.info(
+            f"[Qdrant] 🗑️  ✅ Deleted by db_entity_id in {duration:.2f}s "
+            f"(collection={self.collection_name})"
+        )
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
         """Delete all points that have the provided sync job id."""
@@ -653,6 +683,14 @@ class QdrantDestination(VectorDBDestination):
         if not entity_ids:
             return
         await self.ensure_client_readiness()
+
+        active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
+        self.logger.info(
+            f"[Qdrant] 🗑️  Bulk delete {len(entity_ids)} entities: "
+            f"{active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
+        )
+
+        start_time = asyncio.get_event_loop().time()
         async with self._write_sem:
             await self.client.delete(
                 collection_name=self.collection_name,
@@ -677,12 +715,23 @@ class QdrantDestination(VectorDBDestination):
                 ),
                 wait=True,
             )
+        duration = asyncio.get_event_loop().time() - start_time
+        self.logger.info(
+            f"[Qdrant] 🗑️  ✅ Bulk deleted {len(entity_ids)} entities in {duration:.2f}s"
+        )
 
     async def bulk_delete_by_parent_id(self, parent_id: str, sync_id: UUID | str) -> None:
         """Delete all points for a given parent (db entity) id and sync id."""
         if not parent_id:
             return
         await self.ensure_client_readiness()
+
+        active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
+        self.logger.info(
+            f"[Qdrant] 🗑️  Delete by parent_id: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
+        )
+
+        start_time = asyncio.get_event_loop().time()
         async with self._write_sem:
             await self.client.delete(
                 collection_name=self.collection_name,
@@ -707,6 +756,8 @@ class QdrantDestination(VectorDBDestination):
                 ),
                 wait=True,
             )
+        duration = asyncio.get_event_loop().time() - start_time
+        self.logger.info(f"[Qdrant] 🗑️  ✅ Deleted by parent_id in {duration:.2f}s")
 
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
         """Delete all points whose parent id is in the provided list and match sync id."""
