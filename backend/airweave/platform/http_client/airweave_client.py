@@ -5,7 +5,7 @@ and adds source rate limiting to prevent exhausting customer API quotas.
 """
 
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional, Union
 from uuid import UUID
 
 import httpx
@@ -13,6 +13,9 @@ import httpx
 from airweave.core.exceptions import SourceRateLimitExceededException
 from airweave.core.logging import ContextualLogger
 from airweave.core.source_rate_limiter_service import source_rate_limiter
+
+if TYPE_CHECKING:
+    from airweave.platform.http_client import PipedreamProxyClient
 
 
 class AirweaveHttpClient:
@@ -34,7 +37,7 @@ class AirweaveHttpClient:
 
     def __init__(
         self,
-        wrapped_client: Any,
+        wrapped_client: Union[httpx.AsyncClient, PipedreamProxyClient],
         org_id: UUID,
         source_short_name: str,
         source_connection_id: Optional[UUID] = None,
