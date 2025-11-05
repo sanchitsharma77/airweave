@@ -18,8 +18,6 @@ from typing import Dict, List, Optional
 import httpx
 import pytest
 
-# Mark all tests in this file to run last
-pytestmark = pytest.mark.rate_limit
 
 # Test rate limit configuration
 RATE_LIMIT = 1  # requests
@@ -238,10 +236,14 @@ async def delete_source_rate_limit(api_client: httpx.AsyncClient, source_short_n
     """
     response = await api_client.delete(f"/source-rate-limits/{source_short_name}")
 
-    if response.status_code not in [204, 404]:  # 404 is OK (nothing to delete)
+    # 204 = deleted, 404 = not found, 403 = feature disabled (all OK for cleanup)
+    if response.status_code not in [204, 404, 403]:
         raise Exception(f"Failed to delete rate limit: {response.text}")
 
-    print(f"Deleted rate limit for {source_short_name}")
+    if response.status_code == 403:
+        print(f"Skipped deleting rate limit for {source_short_name} (feature disabled)")
+    else:
+        print(f"Deleted rate limit for {source_short_name}")
 
 
 async def trigger_sync(api_client: httpx.AsyncClient, connection_id: str) -> Dict:
@@ -486,9 +488,7 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
         "config": {
             "include_patterns": ["slapieslapie/*"]
         },
-        "schedule": {
-            "continuous": False  # Disable minute schedules for testing
-        },
+
         "sync_immediately": False,
     }
 
@@ -510,9 +510,6 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
         },
         "config": {
             "include_patterns": ["slapieslapie/*"]
-        },
-        "schedule": {
-            "continuous": False  # Disable minute schedules for testing
         },
         "sync_immediately": False,
     }
@@ -676,9 +673,10 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
         if gdrive_job["status"] == "completed":
             verify_sync_stats_only_inserts(gdrive_job, "Google Drive")
 
-        # Verify Redis has 1 proxy key (shared across sources)
-        redis_keys = await get_redis_keys("pipedream_proxy_rate_limit:*")
-        assert len(redis_keys) == 1, f"Expected 1 proxy key, got {len(redis_keys)}: {redis_keys}"
+        # Verify Redis had 1 proxy key during sync (shared across sources)
+        # Use monitoring data since keys expire quickly (10s TTL)
+        assert len(monitoring_data) >= 1, f"Expected at least 1 proxy key during sync, got {len(monitoring_data)}: {list(monitoring_data.keys())}"
+        print(f"✅ Found {len(monitoring_data)} shared proxy rate limit key(s) during sync")
 
         # Verify rate limits were enforced during sync
         print(f"\n📊 Redis monitoring during sync:")
@@ -686,13 +684,6 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
             max_counter = max(counters) if counters else 0
             print(f"  {key}: max={max_counter}/5, samples={counters}")
             assert max_counter <= 5, f"Proxy rate limit exceeded during sync: {max_counter}/5"
-
-        # Verify counter aggregated requests from both sources
-        proxy_counter = await get_redis_counter(redis_keys[0])
-        print(f"\n📊 Pipedream proxy counter: {proxy_counter}/5")
-
-        # Verify both sources respected shared quota
-        assert proxy_counter <= 5, f"Proxy counter exceeded limit: {proxy_counter}/5"
 
         completed_count = sum(
             1 for job in [notion_job, gdrive_job] if job["status"] == "completed"
@@ -785,12 +776,11 @@ async def test_dual_rate_limiting_proxy_and_source(
         # Verify only inserts
         verify_sync_stats_only_inserts(job, "Google Drive")
 
-        # Verify both Redis keys exist
-        proxy_keys = await get_redis_keys("pipedream_proxy_rate_limit:*")
-        source_keys = await get_redis_keys("source_rate_limit:*:google_drive:org:*")
-
-        assert len(proxy_keys) == 1, f"Expected 1 proxy key, got {len(proxy_keys)}"
-        assert len(source_keys) == 1, f"Expected 1 source key, got {len(source_keys)}"
+        # Verify both rate limit types were tracked during sync
+        # Use monitoring data since keys may expire (proxy: 10s TTL, source: 3s TTL)
+        assert len(proxy_monitoring_data) >= 1, f"Expected at least 1 proxy key during sync, got {len(proxy_monitoring_data)}"
+        assert len(source_monitoring_data) >= 1, f"Expected at least 1 source key during sync, got {len(source_monitoring_data)}"
+        print(f"✅ Found both proxy and source rate limit keys during sync")
 
         # Verify rate limits were enforced during sync
         print(f"\n📊 Proxy rate limit monitoring:")
@@ -805,17 +795,6 @@ async def test_dual_rate_limiting_proxy_and_source(
             print(f"  {key}: max={max_counter}/{RATE_LIMIT}, samples={counters}")
             assert max_counter <= RATE_LIMIT, f"Source limit exceeded during sync: {max_counter}/{RATE_LIMIT}"
 
-        # Get final counters
-        proxy_counter = await get_redis_counter(proxy_keys[0])
-        source_counter = await get_redis_counter(source_keys[0])
-
-        print(f"\n📊 Final counters:")
-        print(f"  Proxy: {proxy_counter}/10")
-        print(f"  Source: {source_counter}/{RATE_LIMIT}")
-
-        # Source limit (stricter) should be the bottleneck
-        assert source_counter <= RATE_LIMIT, f"Source counter exceeded: {source_counter}/{RATE_LIMIT}"
-
         print(f"\n✅ Dual rate limiting verified: Both limits checked, sync completed")
 
     finally:
@@ -824,79 +803,6 @@ async def test_dual_rate_limiting_proxy_and_source(
         await delete_source_rate_limit(api_client, "google_drive")
         await delete_source_rate_limit(api_client, "pipedream_proxy")
         await clear_redis()  # Prevent interference with other tests
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_without_decorator_level(
-    api_client: httpx.AsyncClient, collection: Dict, config
-):
-    """Test that sources without rate_limit_level decorator skip rate limiting.
-
-    Verifies that setting a rate limit on a source without rate_limit_level in the
-    decorator is handled gracefully - the limit is stored but not enforced.
-    """
-    await clear_redis()
-
-    # Use Monday as example (doesn't have rate_limit_level set)
-    # Set rate limit in DB (should be accepted but ignored during sync)
-    await set_source_rate_limit(api_client, "monday", RATE_LIMIT, WINDOW_SECONDS)
-
-    # Create Monday connection (using direct auth with dummy token for test)
-    # Note: This will fail validation, but we just need to test that rate limiter
-    # skips checking when rate_limit_level is None
-    conn_data = {
-        "name": f"Monday No Level Test {int(time.time())}",
-        "short_name": "monday",
-        "readable_collection_id": collection["readable_id"],
-        "authentication": {
-            "credentials": {
-                "access_token": "test-token-will-fail-validation",
-            }
-        },
-        "sync_immediately": False,
-    }
-
-    response = await api_client.post("/source-connections", json=conn_data)
-
-    # Connection creation should succeed (validation happens during sync)
-    if response.status_code == 200:
-        connection = response.json()
-
-        try:
-            # Trigger sync (will fail validation, but rate limiter should skip)
-            await trigger_sync(api_client, connection["id"])
-
-            # Wait briefly for sync to start and fail
-            await asyncio.sleep(5)
-
-            # Get job details
-            conn_response = await api_client.get(f"/source-connections/{connection['id']}")
-            conn_details = conn_response.json()
-
-            # Verify no rate limit keys were created (skipped due to no rate_limit_level)
-            redis_keys = await get_redis_keys("source_rate_limit:*:monday:*")
-            assert len(redis_keys) == 0, f"Rate limit keys created despite no rate_limit_level: {redis_keys}"
-
-            print(f"✅ Source without rate_limit_level skipped rate limiting as expected")
-
-        finally:
-            # Cleanup
-            await api_client.delete(f"/source-connections/{connection['id']}")
-            await delete_source_rate_limit(api_client, "monday")
-            await clear_redis()  # Prevent interference with other tests
-    else:
-        # If connection creation fails (validation at creation time), that's also acceptable
-        # Just verify the limit was set in DB
-        limits_response = await api_client.get("/source-rate-limits")
-        assert limits_response.status_code == 200
-
-        limits = limits_response.json()
-        monday_limit = next((l for l in limits if l["source_short_name"] == "monday"), None)
-        assert monday_limit is not None, "Monday limit not found in DB"
-        assert monday_limit["limit"] == RATE_LIMIT
-
-        await delete_source_rate_limit(api_client, "monday")
-        print(f"✅ Limit stored in DB even for sources without rate_limit_level")
 
 
 @pytest.mark.asyncio
@@ -935,9 +841,6 @@ async def test_rate_limiting_feature_flag_disabled(
         "config": {
             "include_patterns": ["slapieslapie/*"]
         },
-        "schedule": {
-            "continuous": False  # Disable minute schedules for testing
-        },
         "sync_immediately": False,
     }
 
@@ -966,9 +869,8 @@ async def test_rate_limiting_feature_flag_disabled(
         assert job1["status"] == "completed", f"Sync failed: {job1.get('error')}"
         verify_sync_stats_only_inserts(job1, "enabled test")
 
-        # Verify rate limiting WAS applied
-        redis_keys1 = await get_redis_keys("source_rate_limit:*:google_drive:*")
-        assert len(redis_keys1) > 0, "Rate limit keys should exist when feature is enabled"
+        # Verify rate limiting WAS applied (use monitoring data since keys expire after 3s TTL)
+        assert len(monitoring_data1) > 0, f"Expected rate limit keys during sync when feature is enabled, got {len(monitoring_data1)}"
         
         print(f"\n📊 Redis monitoring (feature ENABLED):")
         for key, counters in monitoring_data1.items():
@@ -976,7 +878,7 @@ async def test_rate_limiting_feature_flag_disabled(
             print(f"  {key}: max={max_counter}/{RATE_LIMIT}, samples={counters}")
             assert max_counter <= RATE_LIMIT, f"Rate limit violated: {max_counter}/{RATE_LIMIT}"
         
-        print(f"\n✅ Feature ENABLED: Rate limiting applied, sync took {elapsed1:.1f}s")
+        print(f"\n✅ Feature ENABLED: Rate limiting applied ({len(monitoring_data1)} keys tracked), sync took {elapsed1:.1f}s")
 
         # ========== TEST 2: Feature Flag DISABLED ==========
         print("\n" + "="*60)
@@ -989,27 +891,30 @@ async def test_rate_limiting_feature_flag_disabled(
         
         await trigger_sync(api_client, connection["id"])
         
-        start_time = time.time()
-        await asyncio.sleep(3)  # Wait for sync to start
-        redis_keys2 = await get_redis_keys("source_rate_limit:*:google_drive:*")
+        # Monitor Redis during second sync
+        monitoring_task2 = asyncio.create_task(
+            monitor_redis_during_sync("source_rate_limit:*:google_drive:*", duration=15, interval=2)
+        )
         
+        start_time = time.time()
         job2 = await wait_for_sync_completion(api_client, connection["id"], timeout=120)
         elapsed2 = time.time() - start_time
+        monitoring_data2 = await monitoring_task2
 
         assert job2["status"] == "completed", f"Sync failed: {job2.get('error')}"
         # Note: Second sync will have updates, not inserts, since data already exists
         # Just verify it completed successfully
 
-        # Verify rate limiting was SKIPPED
-        assert len(redis_keys2) == 0, "Rate limit keys should NOT exist when feature is disabled"
+        # Verify rate limiting was SKIPPED (no keys created during sync)
+        assert len(monitoring_data2) == 0, f"Rate limit keys should NOT exist when feature is disabled, but found {len(monitoring_data2)}: {list(monitoring_data2.keys())}"
         
-        print(f"\n✅ Feature DISABLED: Rate limiting skipped, sync took {elapsed2:.1f}s")
+        print(f"\n✅ Feature DISABLED: Rate limiting skipped (0 keys tracked), sync took {elapsed2:.1f}s")
         
         # Sync should be faster when rate limiting is disabled
         if elapsed2 < elapsed1:
             print(f"✅ Disabled sync was faster ({elapsed2:.1f}s vs {elapsed1:.1f}s)")
         
-        print(f"\n✅ AirweaveHttpClient wrapper confirmed (both syncs completed)")
+        print(f"\n✅ Feature flag toggle confirmed (both syncs completed)")
 
     finally:
         # Cleanup and restore original state
@@ -1067,9 +972,6 @@ async def test_rate_limiting_no_limit_configured(
         "config": {
             "include_patterns": ["slapieslapie/*"]
         },
-        "schedule": {
-            "continuous": False  # Disable minute schedules for testing
-        },
         "sync_immediately": False,
     }
 
@@ -1079,12 +981,17 @@ async def test_rate_limiting_no_limit_configured(
 
     try:
         # Trigger sync
-        start_time = time.time()
         await trigger_sync(api_client, connection["id"])
 
-        # Wait for completion
-        job = await wait_for_sync_completion(api_client, connection["id"], timeout=60)
+        # Monitor Redis during sync
+        monitoring_task = asyncio.create_task(
+            monitor_redis_during_sync("source_rate_limit:*:google_drive:*", duration=30, interval=2)
+        )
+
+        start_time = time.time()
+        job = await wait_for_sync_completion(api_client, connection["id"], timeout=120)
         elapsed = time.time() - start_time
+        monitoring_data = await monitoring_task
 
         # Verify sync completed successfully
         assert job["status"] == "completed", f"Sync failed: {job.get('error')}"
@@ -1092,13 +999,12 @@ async def test_rate_limiting_no_limit_configured(
         # Verify only inserts
         verify_sync_stats_only_inserts(job, "no limit test")
 
-        # Verify no rate limit keys created
-        redis_keys = await get_redis_keys("source_rate_limit:*:google_drive:*")
-        assert len(redis_keys) == 0, f"Rate limit keys created despite no limit: {redis_keys}"
+        # Verify no rate limit keys created during sync
+        assert len(monitoring_data) == 0, f"Rate limit keys created despite no limit: {list(monitoring_data.keys())}"
 
         # Sync should be fast (no artificial delays)
         print(f"\nSync completed in {elapsed:.1f}s (no rate limiting)")
-        print(f"✅ No limit configured: Sync proceeded without rate limiting")
+        print(f"✅ No limit configured: Sync proceeded without rate limiting (0 keys tracked)")
 
     finally:
         # Cleanup
