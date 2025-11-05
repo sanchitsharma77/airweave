@@ -7,7 +7,7 @@ Tests verify:
 - Feature flag behavior
 - Atomic Lua script prevents race conditions
 
-All tests marked with @pytest.mark.rate_limit to run last and avoid quota interference.
+All tests marked with @pytest.mark.rate_limit to run sequentially for proper isolation.
 """
 
 import asyncio
@@ -17,6 +17,10 @@ from typing import Dict, List, Optional
 
 import httpx
 import pytest
+
+# Mark all tests in this module to run sequentially (no parallel execution)
+# This ensures proper Redis isolation between tests
+pytestmark = [pytest.mark.rate_limit]
 
 
 # Test rate limit configuration
@@ -423,9 +427,9 @@ async def test_notion_connection_level_rate_limiting_isolated(
         verify_sync_stats_only_inserts(job1, "connection 1")
         verify_sync_stats_only_inserts(job2, "connection 2")
 
-        # Verify Redis has 2 separate keys (connection-level tracking)
+        # Verify Redis has exactly 2 separate keys (connection-level tracking)
         # Use monitoring data since keys expire quickly (6s TTL)
-        assert len(monitoring_data) == 2, f"Expected 2 connection-level keys during sync, got {len(monitoring_data)}: {list(monitoring_data.keys())}"
+        assert len(monitoring_data) == 2, f"Expected exactly 2 connection-level keys during sync, got {len(monitoring_data)}: {list(monitoring_data.keys())}"
         print(f"✅ Found 2 separate connection-level rate limit keys during sync")
 
         # Verify rate limits were enforced during sync (check monitoring data)
@@ -545,9 +549,10 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
         if job2["status"] == "completed":
             verify_sync_stats_only_inserts(job2, "connection 2")
 
-        # Verify Redis has only 1 shared key (org-level tracking)
-        redis_keys = await get_redis_keys("source_rate_limit:*:google_drive:org:*")
-        assert len(redis_keys) == 1, f"Expected 1 org-level key, got {len(redis_keys)}: {redis_keys}"
+        # Verify Redis had exactly 1 shared key during sync (org-level tracking)
+        # Use monitoring data since keys expire quickly (3s TTL)
+        assert len(monitoring_data) == 1, f"Expected exactly 1 org-level key during sync, got {len(monitoring_data)}: {list(monitoring_data.keys())}"
+        print(f"✅ Found 1 shared org-level rate limit key during sync")
 
         # Verify rate limits were enforced during sync (check monitoring data)
         print(f"\n📊 Redis monitoring during sync:")
@@ -556,14 +561,10 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
             print(f"  {key}: max={max_counter}/{RATE_LIMIT}, samples={counters}")
             assert max_counter <= RATE_LIMIT, f"Rate limit exceeded during sync: {max_counter}/{RATE_LIMIT}"
 
-        # Verify the shared counter respected the limit
-        counter = await get_redis_counter(redis_keys[0])
-        print(f"\n📊 Shared org-level counter: {counter}/{RATE_LIMIT}")
-
         # With aggressive limits and concurrent syncs, expect some contention
         # At least one should complete (demonstrates shared quota)
         completed_count = sum(1 for job in [job1, job2] if job["status"] == "completed")
-        print(f"\n✅ Org-level aggregation verified: 1 shared quota, {completed_count}/2 syncs completed")
+        print(f"\n✅ Org-level aggregation verified: Shared quota enforced, {completed_count}/2 syncs completed")
 
     finally:
         # Cleanup
