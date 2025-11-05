@@ -215,7 +215,22 @@ jobs:
         env:
           TEST_ENV: local
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TEST_STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+          # Required test environment variables (needed by TestSettings even for rate limit tests)
+          TEST_NOTION_TOKEN: ${{ secrets.TEST_NOTION_TOKEN }}
+          TEST_GOOGLE_CLIENT_ID: ${{ secrets.TEST_GOOGLE_CLIENT_ID }}
+          TEST_GOOGLE_CLIENT_SECRET: ${{ secrets.TEST_GOOGLE_CLIENT_SECRET }}
+          TEST_TRELLO_CONSUMER_KEY: ${{ secrets.TEST_TRELLO_CONSUMER_KEY }}
+          TEST_TRELLO_CONSUMER_SECRET: ${{ secrets.TEST_TRELLO_CONSUMER_SECRET }}
+          TEST_AUTH_PROVIDER_NAME: composio
           TEST_COMPOSIO_API_KEY: ${{ secrets.TEST_COMPOSIO_API_KEY }}
+          # Pipedream configurations (regular tests - required by TestSettings)
+          TEST_PIPEDREAM_CLIENT_ID: ${{ secrets.TEST_PIPEDREAM_CLIENT_ID }}
+          TEST_PIPEDREAM_CLIENT_SECRET: ${{ secrets.TEST_PIPEDREAM_CLIENT_SECRET }}
+          TEST_PIPEDREAM_PROJECT_ID: ${{ secrets.TEST_PIPEDREAM_PROJECT_ID }}
+          TEST_PIPEDREAM_ACCOUNT_ID: ${{ secrets.TEST_PIPEDREAM_ACCOUNT_ID }}
+          TEST_PIPEDREAM_EXTERNAL_USER_ID: ${{ secrets.TEST_PIPEDREAM_EXTERNAL_USER_ID }}
+          # Composio configurations (rate limit tests)
           TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_1: ${{ secrets.TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_1 }}
           TEST_COMPOSIO_NOTION_ACCOUNT_ID_1: ${{ secrets.TEST_COMPOSIO_NOTION_ACCOUNT_ID_1 }}
           TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_2: ${{ secrets.TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_2 }}
@@ -224,6 +239,7 @@ jobs:
           TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_1: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_1 }}
           TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_2: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_2 }}
           TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_2: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_2 }}
+          # Pipedream configurations (rate limit tests - separate project)
           TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID }}
           TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET }}
           TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID }}
