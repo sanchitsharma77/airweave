@@ -16,7 +16,6 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from airweave.core.logging import logger
 from airweave.core.shared_models import RateLimitLevel
-from airweave.platform.sources.retry_helpers import wait_rate_limit_with_backoff
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.notion import (
@@ -26,6 +25,7 @@ from airweave.platform.entities.notion import (
     NotionPropertyEntity,
 )
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sources.retry_helpers import wait_rate_limit_with_backoff
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
@@ -227,7 +227,7 @@ class NotionSource(BaseSource):
             self.logger.warning(f"Error during GET request to {url}: {str(e)}")
             raise
         except Exception as e:
-            self.logger.error(f"Error during GET request to {url}: {str(e)}")
+            self.logger.warning(f"Error during GET request to {url}: {str(e)}")
             raise
 
     @retry(

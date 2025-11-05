@@ -697,6 +697,11 @@ async def enable_feature_flag(
     # Enable the feature
     await crud.organization.enable_feature(db, organization_id, feature_flag)
 
+    # Invalidate organization cache so next request sees updated feature flags
+    from airweave.core.context_cache_service import context_cache
+
+    await context_cache.invalidate_organization(organization_id)
+
     ctx.logger.info(f"Admin enabled feature flag {flag} for org {organization_id}")
 
     return {"message": f"Feature flag '{flag}' enabled", "organization_id": str(organization_id)}
@@ -738,6 +743,11 @@ async def disable_feature_flag(
 
     # Disable the feature
     await crud.organization.disable_feature(db, organization_id, feature_flag)
+
+    # Invalidate organization cache so next request sees updated feature flags
+    from airweave.core.context_cache_service import context_cache
+
+    await context_cache.invalidate_organization(organization_id)
 
     ctx.logger.info(f"Admin disabled feature flag {flag} for org {organization_id}")
 

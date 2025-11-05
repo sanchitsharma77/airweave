@@ -340,15 +340,15 @@ def unique_name() -> str:
 
 @pytest_asyncio.fixture
 async def pipedream_auth_provider(api_client: httpx.AsyncClient) -> Dict:
-    """Create a Pipedream auth provider for testing."""
+    """Create a Pipedream auth provider for rate limit testing."""
     import os
 
-    # Check for Pipedream environment variables
-    pipedream_client_id = os.environ.get("TEST_PIPEDREAM_CLIENT_ID")
-    pipedream_client_secret = os.environ.get("TEST_PIPEDREAM_CLIENT_SECRET")
+    # Use rate limit-specific Pipedream credentials (separate from regular Pipedream tests)
+    pipedream_client_id = os.environ.get("TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID")
+    pipedream_client_secret = os.environ.get("TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET")
 
     if not all([pipedream_client_id, pipedream_client_secret]):
-        pytest.fail("Pipedream credentials not configured")
+        pytest.fail("Pipedream rate limit test credentials not configured")
 
     provider_id = f"pipedream-test-{uuid.uuid4().hex[:8]}"
     auth_provider_payload = {

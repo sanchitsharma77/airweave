@@ -13,7 +13,7 @@ All tests marked with @pytest.mark.rate_limit to run last and avoid quota interf
 import asyncio
 import subprocess
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import httpx
 import pytest
@@ -119,7 +119,10 @@ async def monitor_redis_during_sync(pattern: str, duration: int = 10, interval: 
 
 
 async def get_current_org_id(api_client: httpx.AsyncClient) -> str:
-    """Get the current organization ID.
+    """Get the current organization ID from organizations list.
+    
+    In DEV_MODE with AUTH disabled, there's a default organization.
+    We get the list and use the first one.
     
     Args:
         api_client: HTTP client
@@ -127,16 +130,20 @@ async def get_current_org_id(api_client: httpx.AsyncClient) -> str:
     Returns:
         Organization ID as string
     """
-    response = await api_client.get("/organizations/current")
+    response = await api_client.get("/admin/organizations")
     
     if response.status_code != 200:
-        raise Exception(f"Could not fetch org info: {response.status_code}")
+        raise Exception(f"Could not fetch organizations: {response.status_code} - {response.text}")
     
-    org = response.json()
-    return org["id"]
+    orgs = response.json()
+    if not orgs or len(orgs) == 0:
+        raise Exception("No organizations found")
+    
+    # In DEV_MODE, use the first (default) organization
+    return str(orgs[0]["id"])
 
 
-async def verify_feature_flag_enabled(api_client: httpx.AsyncClient, flag_name: str = "SOURCE_RATE_LIMITING") -> bool:
+async def verify_feature_flag_enabled(api_client: httpx.AsyncClient, flag_name: str = "source_rate_limiting") -> bool:
     """Check if a feature flag is enabled for the test organization.
     
     Args:
@@ -146,51 +153,59 @@ async def verify_feature_flag_enabled(api_client: httpx.AsyncClient, flag_name: 
     Returns:
         True if enabled, False otherwise
     """
-    response = await api_client.get("/organizations/current")
+    org_id = await get_current_org_id(api_client)
+    response = await api_client.get(f"/admin/organizations/{org_id}")
     
     if response.status_code != 200:
         print(f"Could not fetch org info: {response.status_code}")
         return False
     
     org = response.json()
+    # Feature flags come as a list of objects with 'flag' and 'enabled' fields
     feature_flags = org.get("feature_flags", [])
     
-    is_enabled = flag_name in feature_flags
+    is_enabled = any(ff.get("flag") == flag_name and ff.get("enabled") for ff in feature_flags)
     print(f"Feature flag '{flag_name}': {'ENABLED' if is_enabled else 'DISABLED'}")
     
     return is_enabled
 
 
-async def enable_feature_flag(api_client: httpx.AsyncClient, flag_name: str = "SOURCE_RATE_LIMITING"):
+async def enable_feature_flag(api_client: httpx.AsyncClient, flag_name: str = "source_rate_limiting", org_id: Optional[str] = None):
     """Enable a feature flag for the test organization.
     
     Args:
         api_client: HTTP client
         flag_name: Feature flag name
+        org_id: Organization ID (if None, will be auto-detected)
     """
-    org_id = await get_current_org_id(api_client)
+    if org_id is None:
+        org_id = await get_current_org_id(api_client)
+    
     response = await api_client.post(f"/admin/organizations/{org_id}/feature-flags/{flag_name}/enable")
     
     if response.status_code != 200:
         raise Exception(f"Failed to enable feature flag: {response.text}")
     
-    print(f"✓ Enabled feature flag '{flag_name}'")
+    print(f"✓ Enabled feature flag '{flag_name}' for org {org_id}")
 
 
-async def disable_feature_flag(api_client: httpx.AsyncClient, flag_name: str = "SOURCE_RATE_LIMITING"):
+async def disable_feature_flag(api_client: httpx.AsyncClient, flag_name: str = "source_rate_limiting", org_id: Optional[str] = None):
     """Disable a feature flag for the test organization.
     
     Args:
         api_client: HTTP client
         flag_name: Feature flag name
+        org_id: Organization ID (if None, will be auto-detected)
     """
-    org_id = await get_current_org_id(api_client)
+    if org_id is None:
+        org_id = await get_current_org_id(api_client)
+    
     response = await api_client.post(f"/admin/organizations/{org_id}/feature-flags/{flag_name}/disable")
     
     if response.status_code != 200:
         raise Exception(f"Failed to disable feature flag: {response.text}")
     
-    print(f"✓ Disabled feature flag '{flag_name}'")
+    print(f"✓ Disabled feature flag '{flag_name}' for org {org_id}")
 
 
 async def set_source_rate_limit(
@@ -287,18 +302,26 @@ async def wait_for_sync_completion(
     raise TimeoutError(f"Sync did not complete within {timeout} seconds")
 
 
-def verify_sync_stats_only_inserts(stats: Dict, connection_name: str = "connection"):
+def verify_sync_stats_only_inserts(job: Dict, connection_name: str = "connection"):
     """Verify that sync only performed inserts (fresh sync, no updates/deletes/skips/keeps).
     
     Args:
-        stats: Sync job stats dictionary
+        job: Sync job dictionary with entity count fields
         connection_name: Name for error messages
     """
-    assert stats.get("inserted", 0) > 0, f"No entities inserted for {connection_name}: {stats}"
-    assert stats.get("updated", 0) == 0, f"Unexpected updates in {connection_name}: {stats}"
-    assert stats.get("deleted", 0) == 0, f"Unexpected deletes in {connection_name}: {stats}"
-    assert stats.get("skipped", 0) == 0, f"Entities skipped in {connection_name}: {stats}"
-    assert stats.get("kept", 0) == 0, f"Unexpected kept entities in {connection_name}: {stats}"
+    inserted = job.get("entities_inserted", 0)
+    updated = job.get("entities_updated", 0)
+    deleted = job.get("entities_deleted", 0)
+    skipped = job.get("entities_skipped", 0)
+    kept = job.get("entities_kept", 0)
+    
+    assert inserted > 0, f"No entities inserted for {connection_name}: inserted={inserted}"
+    assert updated == 0, f"Unexpected updates in {connection_name}: updated={updated}"
+    assert deleted == 0, f"Unexpected deletes in {connection_name}: deleted={deleted}"
+    assert skipped == 0, f"Entities skipped in {connection_name}: skipped={skipped}"
+    assert kept == 0, f"Unexpected kept entities in {connection_name}: kept={kept}"
+    
+    print(f"✅ {connection_name}: {inserted} inserted, 0 updates/deletes/skips/keeps")
 
 
 # ============================================================================
@@ -328,6 +351,9 @@ async def test_notion_connection_level_rate_limiting_isolated(
 
     # Clear Redis to start fresh
     await clear_redis()
+
+    # Enable feature flag before setting rate limits
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
 
     # Set Notion rate limit: 1 req/3s (org-wide, but tracked per connection)
     await set_source_rate_limit(api_client, "notion", RATE_LIMIT, WINDOW_SECONDS)
@@ -392,12 +418,13 @@ async def test_notion_connection_level_rate_limiting_isolated(
         assert job2["status"] == "completed", f"Sync 2 failed: {job2.get('error')}"
 
         # Verify only inserts happened (fresh sync, no updates/deletes/skips/keeps)
-        verify_sync_stats_only_inserts(job1.get("stats", {}), "connection 1")
-        verify_sync_stats_only_inserts(job2.get("stats", {}), "connection 2")
+        verify_sync_stats_only_inserts(job1, "connection 1")
+        verify_sync_stats_only_inserts(job2, "connection 2")
 
         # Verify Redis has 2 separate keys (connection-level tracking)
-        redis_keys = await get_redis_keys("source_rate_limit:*:notion:connection:*")
-        assert len(redis_keys) == 2, f"Expected 2 connection-level keys, got {len(redis_keys)}: {redis_keys}"
+        # Use monitoring data since keys expire quickly (6s TTL)
+        assert len(monitoring_data) == 2, f"Expected 2 connection-level keys during sync, got {len(monitoring_data)}: {list(monitoring_data.keys())}"
+        print(f"✅ Found 2 separate connection-level rate limit keys during sync")
 
         # Verify rate limits were enforced during sync (check monitoring data)
         print(f"\n📊 Redis monitoring during sync:")
@@ -405,13 +432,6 @@ async def test_notion_connection_level_rate_limiting_isolated(
             max_counter = max(counters) if counters else 0
             print(f"  {key}: max={max_counter}/{RATE_LIMIT}, samples={counters}")
             assert max_counter <= RATE_LIMIT, f"Rate limit exceeded during sync: {max_counter}/{RATE_LIMIT}"
-
-        # Verify final Redis state
-        print(f"\n📊 Final Redis state:")
-        for key in redis_keys:
-            counter = await get_redis_counter(key)
-            print(f"  {key}: {counter} entries")
-            assert counter <= RATE_LIMIT, f"Final counter exceeded limit: {counter}/{RATE_LIMIT}"
 
         print(f"\n✅ Connection-level isolation verified: 2 separate quotas, both syncs completed")
 
@@ -445,6 +465,9 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
 
     await clear_redis()
 
+    # Enable feature flag before setting rate limits
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
+
     # Set Google Drive rate limit: 1 req/3s (org-wide aggregation)
     await set_source_rate_limit(api_client, "google_drive", RATE_LIMIT, WINDOW_SECONDS)
 
@@ -462,6 +485,9 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
         },
         "config": {
             "include_patterns": ["slapieslapie/*"]
+        },
+        "schedule": {
+            "continuous": False  # Disable minute schedules for testing
         },
         "sync_immediately": False,
     }
@@ -484,6 +510,9 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
         },
         "config": {
             "include_patterns": ["slapieslapie/*"]
+        },
+        "schedule": {
+            "continuous": False  # Disable minute schedules for testing
         },
         "sync_immediately": False,
     }
@@ -515,9 +544,9 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
 
         # Verify only inserts for completed syncs
         if job1["status"] == "completed":
-            verify_sync_stats_only_inserts(job1.get("stats", {}), "connection 1")
+            verify_sync_stats_only_inserts(job1, "connection 1")
         if job2["status"] == "completed":
-            verify_sync_stats_only_inserts(job2.get("stats", {}), "connection 2")
+            verify_sync_stats_only_inserts(job2, "connection 2")
 
         # Verify Redis has only 1 shared key (org-level tracking)
         redis_keys = await get_redis_keys("source_rate_limit:*:google_drive:org:*")
@@ -569,6 +598,9 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
 
     await clear_redis()
 
+    # Enable feature flag before setting rate limits
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
+
     # Set Pipedream proxy limit: 5 req/10s (org-wide)
     await set_source_rate_limit(api_client, "pipedream_proxy", 5, 10)
 
@@ -580,7 +612,7 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
         "authentication": {
             "provider_readable_id": pipedream_auth_provider["readable_id"],
             "provider_config": {
-                "project_id": config.TEST_PIPEDREAM_PROJECT_ID,
+                "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_ACCOUNT_ID,
                 "external_user_id": config.TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_EXTERNAL_USER_ID,
                 "environment": "development",
@@ -601,7 +633,7 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
         "authentication": {
             "provider_readable_id": pipedream_auth_provider["readable_id"],
             "provider_config": {
-                "project_id": config.TEST_PIPEDREAM_PROJECT_ID,
+                "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID,
                 "external_user_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_EXTERNAL_USER_ID,
                 "environment": "development",
@@ -640,9 +672,9 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
 
         # Verify only inserts for completed syncs
         if notion_job["status"] == "completed":
-            verify_sync_stats_only_inserts(notion_job.get("stats", {}), "Notion")
+            verify_sync_stats_only_inserts(notion_job, "Notion")
         if gdrive_job["status"] == "completed":
-            verify_sync_stats_only_inserts(gdrive_job.get("stats", {}), "Google Drive")
+            verify_sync_stats_only_inserts(gdrive_job, "Google Drive")
 
         # Verify Redis has 1 proxy key (shared across sources)
         redis_keys = await get_redis_keys("pipedream_proxy_rate_limit:*")
@@ -695,6 +727,9 @@ async def test_dual_rate_limiting_proxy_and_source(
 
     await clear_redis()
 
+    # Enable feature flag before setting rate limits
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
+
     # Set generous Pipedream proxy limit (won't be the bottleneck)
     await set_source_rate_limit(api_client, "pipedream_proxy", 10, 10)
 
@@ -709,7 +744,7 @@ async def test_dual_rate_limiting_proxy_and_source(
         "authentication": {
             "provider_readable_id": pipedream_auth_provider["readable_id"],
             "provider_config": {
-                "project_id": config.TEST_PIPEDREAM_PROJECT_ID,
+                "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID,
                 "external_user_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_EXTERNAL_USER_ID,
                 "environment": "development",
@@ -748,7 +783,7 @@ async def test_dual_rate_limiting_proxy_and_source(
         assert job["status"] == "completed", f"Sync failed: {job.get('error')}"
 
         # Verify only inserts
-        verify_sync_stats_only_inserts(job.get("stats", {}), "Google Drive")
+        verify_sync_stats_only_inserts(job, "Google Drive")
 
         # Verify both Redis keys exist
         proxy_keys = await get_redis_keys("pipedream_proxy_rate_limit:*")
@@ -876,10 +911,10 @@ async def test_rate_limiting_feature_flag_disabled(
         pytest.fail("Google Drive test account not configured")
 
     # Store initial feature flag state
-    initial_state = await verify_feature_flag_enabled(api_client, "SOURCE_RATE_LIMITING")
+    initial_state = await verify_feature_flag_enabled(api_client, "source_rate_limiting")
     
     # Ensure feature is ENABLED for first test
-    await enable_feature_flag(api_client, "SOURCE_RATE_LIMITING")
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
     await clear_redis()
 
     # Set Google Drive limit
@@ -899,6 +934,9 @@ async def test_rate_limiting_feature_flag_disabled(
         },
         "config": {
             "include_patterns": ["slapieslapie/*"]
+        },
+        "schedule": {
+            "continuous": False  # Disable minute schedules for testing
         },
         "sync_immediately": False,
     }
@@ -926,7 +964,7 @@ async def test_rate_limiting_feature_flag_disabled(
         monitoring_data1 = await monitoring_task
 
         assert job1["status"] == "completed", f"Sync failed: {job1.get('error')}"
-        verify_sync_stats_only_inserts(job1.get("stats", {}), "enabled test")
+        verify_sync_stats_only_inserts(job1, "enabled test")
 
         # Verify rate limiting WAS applied
         redis_keys1 = await get_redis_keys("source_rate_limit:*:google_drive:*")
@@ -946,7 +984,7 @@ async def test_rate_limiting_feature_flag_disabled(
         print("="*60)
         
         # Disable the feature flag
-        await disable_feature_flag(api_client, "SOURCE_RATE_LIMITING")
+        await disable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
         await clear_redis()
         
         await trigger_sync(api_client, connection["id"])
@@ -980,9 +1018,9 @@ async def test_rate_limiting_feature_flag_disabled(
         
         # Restore original feature flag state
         if initial_state:
-            await enable_feature_flag(api_client, "SOURCE_RATE_LIMITING")
+            await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
         else:
-            await disable_feature_flag(api_client, "SOURCE_RATE_LIMITING")
+            await disable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
         
         await clear_redis()
 
@@ -1000,6 +1038,9 @@ async def test_rate_limiting_no_limit_configured(
         pytest.fail("Google Drive test account not configured")
 
     await clear_redis()
+
+    # Enable feature flag (needed to access rate limit endpoints)
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
 
     # Explicitly ensure NO limit is configured for Google Drive
     await delete_source_rate_limit(api_client, "google_drive")
@@ -1026,6 +1067,9 @@ async def test_rate_limiting_no_limit_configured(
         "config": {
             "include_patterns": ["slapieslapie/*"]
         },
+        "schedule": {
+            "continuous": False  # Disable minute schedules for testing
+        },
         "sync_immediately": False,
     }
 
@@ -1046,7 +1090,7 @@ async def test_rate_limiting_no_limit_configured(
         assert job["status"] == "completed", f"Sync failed: {job.get('error')}"
 
         # Verify only inserts
-        verify_sync_stats_only_inserts(job.get("stats", {}), "no limit test")
+        verify_sync_stats_only_inserts(job, "no limit test")
 
         # Verify no rate limit keys created
         redis_keys = await get_redis_keys("source_rate_limit:*:google_drive:*")
@@ -1075,6 +1119,9 @@ async def test_atomic_lua_prevents_bursts(
         pytest.fail("Notion test account not configured")
 
     await clear_redis()
+
+    # Enable feature flag before setting rate limits
+    await enable_feature_flag(api_client, "source_rate_limiting", org_id=collection["organization_id"])
 
     # Set very strict limit to observe atomic behavior
     await set_source_rate_limit(api_client, "notion", 1, 10)  # 1 req/10s
@@ -1117,7 +1164,7 @@ async def test_atomic_lua_prevents_bursts(
         assert job["status"] == "completed", f"Sync failed: {job.get('error')}"
         
         # Verify only inserts
-        verify_sync_stats_only_inserts(job.get("stats", {}), "atomic test")
+        verify_sync_stats_only_inserts(job, "atomic test")
 
         # Verify atomic behavior: counter NEVER exceeded limit during sync
         print(f"\n📊 Atomic Lua monitoring (checking for bursts):")

@@ -112,6 +112,17 @@ class TestSettings(BaseSettings):
         default=None, description="Composio account ID for Google Drive account 2"
     )
 
+    # Pipedream configuration for rate limit testing (separate project from regular tests)
+    TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID: Optional[str] = Field(
+        default=None, description="Pipedream client ID for rate limit tests"
+    )
+    TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET: Optional[str] = Field(
+        default=None, description="Pipedream client secret for rate limit tests"
+    )
+    TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID: Optional[str] = Field(
+        default=None, description="Pipedream project ID for rate limit tests"
+    )
+    
     # Pipedream configuration for proxy testing
     TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID: Optional[str] = Field(
         default=None, description="Pipedream account ID for Google Drive (default OAuth - proxy mode)"
