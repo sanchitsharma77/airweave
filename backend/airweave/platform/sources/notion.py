@@ -170,7 +170,7 @@ class NotionSource(BaseSource):
 
     @retry(
         retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError)),
-        stop=stop_after_attempt(10),
+        stop=stop_after_attempt(5),
         wait=wait_rate_limit_with_backoff,
         reraise=True,
     )
@@ -232,7 +232,7 @@ class NotionSource(BaseSource):
 
     @retry(
         retry=retry_if_exception_type((TimeoutException, ReadTimeout, HTTPStatusError)),
-        stop=stop_after_attempt(10),
+        stop=stop_after_attempt(5),
         wait=wait_rate_limit_with_backoff,
         reraise=True,
     )

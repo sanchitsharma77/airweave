@@ -86,7 +86,7 @@ class GitLabSource(BaseSource):
         return instance
 
     @retry(
-        stop=stop_after_attempt(10),
+        stop=stop_after_attempt(5),
         retry=retry_if_rate_limit_or_timeout,
         wait=wait_rate_limit_with_backoff,
         reraise=True,

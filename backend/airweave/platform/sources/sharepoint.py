@@ -20,10 +20,6 @@ import httpx
 from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
-from airweave.platform.sources.retry_helpers import (
-    retry_if_rate_limit_or_timeout,
-    wait_rate_limit_with_backoff,
-)
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.sharepoint import (
@@ -37,6 +33,10 @@ from airweave.platform.entities.sharepoint import (
     SharePointUserEntity,
 )
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sources.retry_helpers import (
+    retry_if_rate_limit_or_timeout,
+    wait_rate_limit_with_backoff,
+)
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
@@ -77,7 +77,7 @@ class SharePointSource(BaseSource):
         return instance
 
     @retry(
-        stop=stop_after_attempt(10),
+        stop=stop_after_attempt(5),
         retry=retry_if_rate_limit_or_timeout,
         wait=wait_rate_limit_with_backoff,
         reraise=True,

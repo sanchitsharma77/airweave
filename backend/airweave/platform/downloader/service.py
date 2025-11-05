@@ -45,7 +45,7 @@ class FileDownloadService:
         os.makedirs(self.base_temp_dir, exist_ok=True)
 
     @retry(
-        stop=stop_after_attempt(10),  # Increased for aggressive rate limits
+        stop=stop_after_attempt(5),  # Increased for aggressive rate limits
         retry=retry_if_rate_limit_or_timeout,
         wait=wait_rate_limit_with_backoff,
         reraise=True,
@@ -156,7 +156,7 @@ class FileDownloadService:
         return True, None
 
     @retry(
-        stop=stop_after_attempt(10),  # Increased for aggressive rate limits
+        stop=stop_after_attempt(5),  # Increased for aggressive rate limits
         retry=retry_if_rate_limit_or_timeout,
         wait=wait_rate_limit_with_backoff,
         reraise=True,

@@ -126,7 +126,7 @@ class GoogleDriveSource(BaseSource):
         self.cursor.cursor_data[cursor_field] = new_token
 
     @retry(
-        stop=stop_after_attempt(10),  # Increased for aggressive rate limits
+        stop=stop_after_attempt(5),  # Increased for aggressive rate limits
         retry=retry_if_rate_limit_or_timeout,
         wait=wait_rate_limit_with_backoff,
         reraise=True,
