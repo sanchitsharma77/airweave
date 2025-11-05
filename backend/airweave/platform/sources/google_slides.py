@@ -21,6 +21,7 @@ import httpx
 from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.cursors import GoogleSlidesCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_slides import (
@@ -50,6 +51,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["Productivity", "Presentations"],
     supports_continuous=True,
     rate_limit_level=RateLimitLevel.ORG,
+    cursor_class=GoogleSlidesCursor,
 )
 class GoogleSlidesSource(BaseSource):
     """Google Slides source connector integrates with Google Drive API.

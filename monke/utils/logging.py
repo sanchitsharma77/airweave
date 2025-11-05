@@ -28,7 +28,8 @@ def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     logger.setLevel(log_level)
 
     # Create rich handler with full terminal width
-    console = Console(width=None, force_terminal=True)
+    # Use explicit large width for CI environments (GitHub Actions defaults to 80 otherwise)
+    console = Console(width=200, force_terminal=True)
     rich_handler = RichHandler(
         console=console, show_time=True, show_path=False, markup=True, rich_tracebacks=True
     )

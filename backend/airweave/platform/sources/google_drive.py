@@ -21,6 +21,7 @@ from tenacity import retry, stop_after_attempt
 
 from airweave.core.exceptions import TokenRefreshError
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.cursors import GoogleDriveCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.entities.google_drive import (
@@ -51,6 +52,7 @@ from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
     labels=["File Storage"],
     supports_continuous=True,
     rate_limit_level=RateLimitLevel.ORG,
+    cursor_class=GoogleDriveCursor,
 )
 class GoogleDriveSource(BaseSource):
     """Google Drive source connector integrates with the Google Drive API to extract files.
@@ -88,42 +90,6 @@ class GoogleDriveSource(BaseSource):
             headers={"Accept": "application/json"},
             timeout=10.0,
         )
-
-    # --- Incremental sync support (cursor field) ---
-    def get_default_cursor_field(self) -> Optional[str]:
-        """Default cursor field name for Google Drive incremental sync.
-
-        We use the Drive Changes API page token. The field stored in `cursor.cursor_data`
-        will be keyed under this name.
-        """
-        return "start_page_token"
-
-    def validate_cursor_field(self, cursor_field: str) -> None:
-        """Validate the cursor field for Google Drive.
-
-        Only the default field name is supported. Users may override but it must equal
-        the expected key so that the system can find the stored token.
-        """
-        valid_field = self.get_default_cursor_field()
-        if cursor_field != valid_field:
-            raise ValueError(
-                f"Invalid cursor field '{cursor_field}' for Google Drive. Use '{valid_field}'."
-            )
-
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        if self.cursor:
-            return self.cursor.cursor_data or {}
-        return {}
-
-    def _update_cursor_data(self, new_token: str) -> None:
-        if not self.cursor:
-            return
-        cursor_field = self.get_effective_cursor_field() or self.get_default_cursor_field()
-        if not cursor_field:
-            return
-        if not self.cursor.cursor_data:
-            self.cursor.cursor_data = {}
-        self.cursor.cursor_data[cursor_field] = new_token
 
     @retry(
         stop=stop_after_attempt(5),  # Increased for aggressive rate limits

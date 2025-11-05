@@ -1,4 +1,4 @@
-"""GitHub source implementation for syncing repositories, directories, and code files."""
+r"""GitHub source implementation for syncing repositories, directories, and code files."""
 
 import base64
 import mimetypes
@@ -11,6 +11,7 @@ from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.configs.auth import GitHubAuthConfig
+from airweave.platform.cursors import GitHubCursor
 from airweave.platform.decorators import source
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.github import (
@@ -41,6 +42,7 @@ from airweave.schemas.source_connection import AuthenticationMethod
     labels=["Code"],
     supports_continuous=True,
     supports_temporal_relevance=False,
+    cursor_class=GitHubCursor,
     rate_limit_level=RateLimitLevel.ORG,
 )
 class GitHubSource(BaseSource):
@@ -203,46 +205,6 @@ class GitHubSource(BaseSource):
         ext = Path(file_path).suffix.lower()
         return get_language_for_extension(ext)
 
-    def _get_cursor_data(self) -> Dict[str, Any]:
-        """Get cursor data from cursor.
-
-        Returns:
-            Cursor data dictionary, empty dict if no cursor exists
-        """
-        if hasattr(self, "cursor") and self.cursor:
-            return getattr(self.cursor, "cursor_data", {})
-        return {}
-
-    def _update_cursor_data(self, pushed_at: str, repo_name: str):
-        """Update cursor data with repository pushed_at timestamp.
-
-        Args:
-            pushed_at: Repository pushed_at timestamp
-            repo_name: Repository name
-        """
-        # Check if cursor exists before updating
-        if not hasattr(self, "cursor") or self.cursor is None:
-            self.logger.debug("No cursor available, skipping cursor update")
-            return
-
-        # Get the cursor field to use
-        cursor_field = self.get_effective_cursor_field()
-        if not cursor_field:
-            # This shouldn't happen as GitHub has a default, but handle gracefully
-            self.logger.warning("No cursor field found, using default")
-            cursor_field = self.get_default_cursor_field()
-
-        self.cursor.cursor_data.update(
-            {
-                cursor_field: pushed_at,
-                "repo_name": repo_name,
-                "branch": getattr(self, "branch", None),
-            }
-        )
-        self.logger.debug(
-            f"Updated cursor data with field '{cursor_field}': {self.cursor.cursor_data}"
-        )
-
     def _check_repository_updates(
         self, repo_name: str, last_pushed_at: str, current_pushed_at: str
     ) -> bool:
@@ -286,26 +248,24 @@ class GitHubSource(BaseSource):
         repo_data = await self._get_with_auth(client, url)
 
         # Check for cursor data and repository updates
-        cursor_data = self._get_cursor_data()
-        cursor_field = self.get_effective_cursor_field()
-        if not cursor_field:
-            cursor_field = self.get_default_cursor_field()
-
-        # Validate the cursor field - will raise ValueError if invalid
-        if cursor_field != self.get_default_cursor_field():
-            self.validate_cursor_field(cursor_field)
+        cursor_data = self.cursor.data if self.cursor else {}
 
         # Get the last sync timestamp from cursor data
         # If None, this is the first sync (full sync)
         # If present, this is an incremental sync
-        last_pushed_at = cursor_data.get(cursor_field)
+        last_pushed_at = cursor_data.get("last_repository_pushed_at")
         current_pushed_at = repo_data["pushed_at"]
 
         # Check for updates and log status
         self._check_repository_updates(repo_name, last_pushed_at, current_pushed_at)
 
         # Update cursor with current repository pushed_at
-        self._update_cursor_data(current_pushed_at, repo_name)
+        if self.cursor:
+            self.cursor.update(
+                last_repository_pushed_at=current_pushed_at,
+                repo_name=repo_name,
+                branch=getattr(self, "branch", None),
+            )
 
         return GitHubRepositoryEntity(
             # Base fields
@@ -839,39 +799,21 @@ class GitHubSource(BaseSource):
         except Exception as e:
             self.logger.error(f"Error processing file {item_path}: {str(e)}")
 
-    def _prepare_sync_context(self) -> tuple[str, str]:
-        """Prepare sync context and return cursor field and last pushed timestamp.
+    def _get_cursor_timestamp(self) -> str:
+        """Get last repository pushed timestamp from cursor.
 
         Returns:
-            Tuple of (cursor_field, last_pushed_at)
+            Last repository pushed_at timestamp, or None if no cursor exists
         """
-        # Get cursor data for incremental sync
-        cursor_data = self._get_cursor_data()
-        cursor_field = self.get_effective_cursor_field()
-        if not cursor_field:
-            cursor_field = self.get_default_cursor_field()
-
-        # Validate the cursor field - will raise ValueError if invalid
-        if cursor_field != self.get_default_cursor_field():
-            self.validate_cursor_field(cursor_field)
-
-        # IMPORTANT: This determines incremental vs full sync
-        # - If cursor_data[cursor_field] is None/missing: FULL SYNC (first time)
-        # - If cursor_data[cursor_field] has a value: INCREMENTAL SYNC (subsequent syncs)
-        last_pushed_at = cursor_data.get(cursor_field)
+        cursor_data = self.cursor.data if self.cursor else {}
+        last_pushed_at = cursor_data.get("last_repository_pushed_at")
 
         if last_pushed_at:
-            self.logger.info(
-                f"Found cursor data for field '{cursor_field}': {last_pushed_at}. "
-                f"Will perform INCREMENTAL sync."
-            )
+            self.logger.info(f"📊 Incremental sync from cursor: {last_pushed_at}")
         else:
-            self.logger.info(
-                f"No cursor data found for field '{cursor_field}'. "
-                f"Will perform FULL sync (first sync or cursor reset)."
-            )
+            self.logger.info("🔄 Full sync (no cursor)")
 
-        return cursor_field, last_pushed_at
+        return last_pushed_at
 
     async def _verify_branch(self, client: httpx.AsyncClient, branch: str) -> None:
         """Verify that the specified branch exists in the repository.
@@ -902,8 +844,8 @@ class GitHubSource(BaseSource):
         if not hasattr(self, "repo_name") or not self.repo_name:
             raise ValueError("Repository name must be specified")
 
-        # Prepare sync context
-        cursor_field, last_pushed_at = self._prepare_sync_context()
+        # Get cursor timestamp for incremental sync
+        last_pushed_at = self._get_cursor_timestamp()
 
         async with self.http_client() as client:
             repo_url = f"{self.BASE_URL}/repos/{self.repo_name}"
@@ -935,17 +877,14 @@ class GitHubSource(BaseSource):
                 # Check if this is an incremental sync (we have a cursor value)
                 if last_pushed_at:
                     self.logger.info(
-                        f"Performing INCREMENTAL sync - changes since {last_pushed_at} "
-                        f"using cursor field '{cursor_field}'"
+                        f"Performing INCREMENTAL sync - changes since {last_pushed_at}"
                     )
                     async for entity in self._traverse_repository_incremental(
                         client, self.repo_name, branch, last_pushed_at
                     ):
                         yield entity
                 else:
-                    self.logger.info(
-                        f"Performing FULL sync - no previous cursor data for field '{cursor_field}'"
-                    )
+                    self.logger.info("Performing FULL sync - no previous cursor data")
                     async for entity in self._traverse_repository(client, self.repo_name, branch):
                         yield entity
             else:

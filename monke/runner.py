@@ -143,7 +143,8 @@ async def event_listener(q: asyncio.Queue, progress: Any, runs: Dict[str, RunSta
 
 async def run_parallel_with_ui(runs: Dict[str, RunState], max_concurrency: int) -> List[RunState]:
     """Run tests in parallel with Rich progress UI."""
-    console = Console(width=None, force_terminal=True)
+    # Use explicit large width for CI environments (GitHub Actions defaults to 80 otherwise)
+    console = Console(width=200, force_terminal=True)
     progress = Progress(
         SpinnerColumn(),
         TextColumn("{task.description}"),

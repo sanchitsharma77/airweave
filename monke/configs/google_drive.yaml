@@ -13,23 +13,23 @@ connector:
   config_fields:
     openai_model: "gpt-4.1-mini"
     file_types: ["document", "spreadsheet", "text"]  # Exclude PDF - requires real binary generation
-    # post_create_sleep_seconds: 7  # Optional: wait N seconds after creation before first sync
+    post_create_sleep_seconds: 20  # Wait for Google Drive API to index new files
 
 test_flow:
   steps:
     - cleanup
     - create
-    - sync
+    - sync                     # First sync: Full sync (no cursor exists yet)
     - verify
     - update
-    - sync
+    - sync                     # Second sync: Incremental with cursor
     - verify
     - partial_delete
-    - sync
+    - force_full_sync          # Third sync: Force full sync to detect deletion
     - verify_partial_deletion
     - verify_remaining_entities
     - complete_delete
-    - sync
+    - force_full_sync          # Fourth sync: Force full sync to detect all deletions
     - verify_complete_deletion
     - cleanup
 

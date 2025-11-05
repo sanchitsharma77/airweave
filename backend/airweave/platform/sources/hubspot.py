@@ -1,5 +1,6 @@
 """HubSpot source implementation."""
 
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
@@ -318,6 +319,9 @@ class HubspotSource(BaseSource):
         all_properties = await self._get_all_properties(client, "contacts")
 
         # Fetch all contact IDs first (without properties to avoid URI length issues)
+        fetch_start = time.time()
+        self.logger.info("🔍 [HUBSPOT] Fetching all contact IDs (paginated)...")
+
         url = f"https://api.hubapi.com/crm/v3/objects/contacts?limit={self.HUBSPOT_API_LIMIT}"
         contact_ids = []
         while url:
@@ -329,7 +333,15 @@ class HubspotSource(BaseSource):
             next_link = paging.get("next", {}).get("link")
             url = next_link if next_link else None
 
+        fetch_duration = time.time() - fetch_start
+        self.logger.info(
+            f"✅ [HUBSPOT] Fetched {len(contact_ids)} contact IDs in {fetch_duration:.2f}s"
+        )
+
         # Batch read contacts with all properties
+        self.logger.info(
+            f"🔍 [HUBSPOT] Batch reading {len(contact_ids)} contacts with properties..."
+        )
         batch_url = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read"
         for i in range(0, len(contact_ids), self.HUBSPOT_BATCH_SIZE):
             chunk = contact_ids[i : i + self.HUBSPOT_BATCH_SIZE]
@@ -391,6 +403,9 @@ class HubspotSource(BaseSource):
         all_properties = await self._get_all_properties(client, "companies")
 
         # Fetch all company IDs first (without properties to avoid URI length issues)
+        fetch_start = time.time()
+        self.logger.info("🔍 [HUBSPOT] Fetching all company IDs (paginated)...")
+
         url = f"https://api.hubapi.com/crm/v3/objects/companies?limit={self.HUBSPOT_API_LIMIT}"
         company_ids = []
         while url:
@@ -402,7 +417,15 @@ class HubspotSource(BaseSource):
             next_link = paging.get("next", {}).get("link")
             url = next_link if next_link else None
 
+        fetch_duration = time.time() - fetch_start
+        self.logger.info(
+            f"✅ [HUBSPOT] Fetched {len(company_ids)} company IDs in {fetch_duration:.2f}s"
+        )
+
         # Batch read companies with all properties
+        self.logger.info(
+            f"🔍 [HUBSPOT] Batch reading {len(company_ids)} companies with properties..."
+        )
         batch_url = "https://api.hubapi.com/crm/v3/objects/companies/batch/read"
         for i in range(0, len(company_ids), self.HUBSPOT_BATCH_SIZE):
             chunk = company_ids[i : i + self.HUBSPOT_BATCH_SIZE]
@@ -449,6 +472,9 @@ class HubspotSource(BaseSource):
         all_properties = await self._get_all_properties(client, "deals")
 
         # Fetch all deal IDs first (without properties to avoid URI length issues)
+        fetch_start = time.time()
+        self.logger.info("🔍 [HUBSPOT] Fetching all deal IDs (paginated)...")
+
         url = f"https://api.hubapi.com/crm/v3/objects/deals?limit={self.HUBSPOT_API_LIMIT}"
         deal_ids = []
         while url:
@@ -460,7 +486,11 @@ class HubspotSource(BaseSource):
             next_link = paging.get("next", {}).get("link")
             url = next_link if next_link else None
 
+        fetch_duration = time.time() - fetch_start
+        self.logger.info(f"✅ [HUBSPOT] Fetched {len(deal_ids)} deal IDs in {fetch_duration:.2f}s")
+
         # Batch read deals with all properties
+        self.logger.info(f"🔍 [HUBSPOT] Batch reading {len(deal_ids)} deals with properties...")
         batch_url = "https://api.hubapi.com/crm/v3/objects/deals/batch/read"
         for i in range(0, len(deal_ids), self.HUBSPOT_BATCH_SIZE):
             chunk = deal_ids[i : i + self.HUBSPOT_BATCH_SIZE]
@@ -508,6 +538,9 @@ class HubspotSource(BaseSource):
         all_properties = await self._get_all_properties(client, "tickets")
 
         # Fetch all ticket IDs first (without properties to avoid URI length issues)
+        fetch_start = time.time()
+        self.logger.info("🔍 [HUBSPOT] Fetching all ticket IDs (paginated)...")
+
         url = f"https://api.hubapi.com/crm/v3/objects/tickets?limit={self.HUBSPOT_API_LIMIT}"
         ticket_ids = []
         while url:
@@ -519,7 +552,13 @@ class HubspotSource(BaseSource):
             next_link = paging.get("next", {}).get("link")
             url = next_link if next_link else None
 
+        fetch_duration = time.time() - fetch_start
+        self.logger.info(
+            f"✅ [HUBSPOT] Fetched {len(ticket_ids)} ticket IDs in {fetch_duration:.2f}s"
+        )
+
         # Batch read tickets with all properties
+        self.logger.info(f"🔍 [HUBSPOT] Batch reading {len(ticket_ids)} tickets with properties...")
         batch_url = "https://api.hubapi.com/crm/v3/objects/tickets/batch/read"
         for i in range(0, len(ticket_ids), self.HUBSPOT_BATCH_SIZE):
             chunk = ticket_ids[i : i + self.HUBSPOT_BATCH_SIZE]

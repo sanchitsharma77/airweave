@@ -21,8 +21,9 @@ def source(
     federated_search: bool = False,
     supports_temporal_relevance: bool = True,
     rate_limit_level: Optional[RateLimitLevel] = None,
+    cursor_class: Optional[Type[BaseModel]] = None,
 ) -> Callable[[type], type]:
-    """Enhanced source decorator with OAuth type tracking.
+    """Enhanced source decorator with OAuth type tracking and typed cursor support.
 
     Args:
         name: Display name for the source
@@ -36,6 +37,7 @@ def source(
         supports_continuous: Whether source supports cursor-based continuous syncing (default False)
         federated_search: Whether source uses federated search instead of syncing (default False)
         supports_temporal_relevance: Whether source entities have timestamps for (default True)
+        cursor_class: Optional Pydantic model class for typed cursor (e.g., GmailCursor)
         rate_limit_level: Rate limiting level (RateLimitLevel.ORG, RateLimitLevel.CONNECTION, or None)
 
     Example:
@@ -63,6 +65,13 @@ def source(
     """
 
     def decorator(cls: type) -> type:
+        # Validate continuous sync configuration
+        if supports_continuous and cursor_class is None:
+            raise ValueError(
+                f"Source '{short_name}' has supports_continuous=True but no cursor_class defined. "
+                f"Continuous syncs require a typed cursor class (e.g., cursor_class=GmailCursor)"
+            )
+
         # Set metadata as class attributes
         cls._is_source = True
         cls._name = name
@@ -76,6 +85,7 @@ def source(
         cls._supports_continuous = supports_continuous
         cls._federated_search = federated_search
         cls._supports_temporal_relevance = supports_temporal_relevance
+        cls._cursor_class = cursor_class
         cls._rate_limit_level = rate_limit_level
 
         # Add validation method if not present
