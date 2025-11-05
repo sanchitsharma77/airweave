@@ -339,7 +339,7 @@ def unique_name() -> str:
 
 
 @pytest_asyncio.fixture
-async def pipedream_auth_provider(api_client: httpx.AsyncClient) -> Dict:
+async def pipedream_rate_limit_auth_provider(api_client: httpx.AsyncClient) -> Dict:
     """Create a Pipedream auth provider for rate limit testing."""
     import os
 
@@ -350,7 +350,47 @@ async def pipedream_auth_provider(api_client: httpx.AsyncClient) -> Dict:
     if not all([pipedream_client_id, pipedream_client_secret]):
         pytest.fail("Pipedream rate limit test credentials not configured")
 
-    provider_id = f"pipedream-test-{uuid.uuid4().hex[:8]}"
+    provider_id = f"pipedream-rate-limit-{uuid.uuid4().hex[:8]}"
+    auth_provider_payload = {
+        "name": "Test Pipedream Provider (Rate Limit)",
+        "short_name": "pipedream",
+        "readable_id": provider_id,
+        "auth_fields": {
+            "client_id": pipedream_client_id,
+            "client_secret": pipedream_client_secret,
+        },
+    }
+
+    response = await api_client.post("/auth-providers/", json=auth_provider_payload)
+
+    if response.status_code != 200:
+        pytest.fail(f"Failed to create Pipedream auth provider: {response.text}")
+
+    provider = response.json()
+
+    # Yield for test to use
+    yield provider
+
+    # Cleanup
+    try:
+        await api_client.delete(f"/auth-providers/{provider['readable_id']}")
+    except:
+        pass  # Best effort cleanup
+
+
+@pytest_asyncio.fixture
+async def pipedream_auth_provider(api_client: httpx.AsyncClient, config) -> Dict:
+    """Create a Pipedream auth provider for regular auth provider tests."""
+    import os
+
+    # Use regular Pipedream credentials (not rate limit specific)
+    pipedream_client_id = config.TEST_PIPEDREAM_CLIENT_ID
+    pipedream_client_secret = config.TEST_PIPEDREAM_CLIENT_SECRET
+
+    if not all([pipedream_client_id, pipedream_client_secret]):
+        pytest.fail("Regular Pipedream test credentials not configured")
+
+    provider_id = f"pipedream-{uuid.uuid4().hex[:8]}"
     auth_provider_payload = {
         "name": "Test Pipedream Provider",
         "short_name": "pipedream",

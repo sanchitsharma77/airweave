@@ -576,7 +576,7 @@ async def test_google_drive_org_level_rate_limiting_aggregated(
 
 @pytest.mark.asyncio
 async def test_pipedream_proxy_rate_limiting_aggregated(
-    api_client: httpx.AsyncClient, collection: Dict, pipedream_auth_provider: Dict, config
+    api_client: httpx.AsyncClient, collection: Dict, pipedream_rate_limit_auth_provider: Dict, config
 ):
     """Test that Pipedream proxy limits are shared across all proxy-mode connections.
 
@@ -608,7 +608,7 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
         "short_name": "notion",
         "readable_collection_id": collection["readable_id"],
         "authentication": {
-            "provider_readable_id": pipedream_auth_provider["readable_id"],
+            "provider_readable_id": pipedream_rate_limit_auth_provider["readable_id"],
             "provider_config": {
                 "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_ACCOUNT_ID,
@@ -629,7 +629,7 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
         "short_name": "google_drive",
         "readable_collection_id": collection["readable_id"],
         "authentication": {
-            "provider_readable_id": pipedream_auth_provider["readable_id"],
+            "provider_readable_id": pipedream_rate_limit_auth_provider["readable_id"],
             "provider_config": {
                 "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID,
@@ -703,7 +703,7 @@ async def test_pipedream_proxy_rate_limiting_aggregated(
 
 @pytest.mark.asyncio
 async def test_dual_rate_limiting_proxy_and_source(
-    api_client: httpx.AsyncClient, collection: Dict, pipedream_auth_provider: Dict, config
+    api_client: httpx.AsyncClient, collection: Dict, pipedream_rate_limit_auth_provider: Dict, config
 ):
     """Test that proxy mode applies both Pipedream proxy limit AND source-specific limit.
 
@@ -734,7 +734,7 @@ async def test_dual_rate_limiting_proxy_and_source(
         "short_name": "google_drive",
         "readable_collection_id": collection["readable_id"],
         "authentication": {
-            "provider_readable_id": pipedream_auth_provider["readable_id"],
+            "provider_readable_id": pipedream_rate_limit_auth_provider["readable_id"],
             "provider_config": {
                 "project_id": config.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID,
                 "account_id": config.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID,
