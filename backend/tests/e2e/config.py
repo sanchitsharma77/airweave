@@ -84,6 +84,54 @@ class TestSettings(BaseSettings):
         default=None, description="Composio account ID for Todoist"
     )
 
+    # Notion Composio configuration (connection-level rate limiting tests)
+    TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_1: Optional[str] = Field(
+        default=None, description="Composio auth config ID for Notion account 1"
+    )
+    TEST_COMPOSIO_NOTION_ACCOUNT_ID_1: Optional[str] = Field(
+        default=None, description="Composio account ID for Notion account 1"
+    )
+    TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_2: Optional[str] = Field(
+        default=None, description="Composio auth config ID for Notion account 2"
+    )
+    TEST_COMPOSIO_NOTION_ACCOUNT_ID_2: Optional[str] = Field(
+        default=None, description="Composio account ID for Notion account 2"
+    )
+
+    # Google Drive Composio configuration (org-level rate limiting tests)
+    TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_1: Optional[str] = Field(
+        default=None, description="Composio auth config ID for Google Drive account 1"
+    )
+    TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_1: Optional[str] = Field(
+        default=None, description="Composio account ID for Google Drive account 1"
+    )
+    TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_2: Optional[str] = Field(
+        default=None, description="Composio auth config ID for Google Drive account 2"
+    )
+    TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_2: Optional[str] = Field(
+        default=None, description="Composio account ID for Google Drive account 2"
+    )
+
+    # Pipedream configuration for proxy testing
+    TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID: Optional[str] = Field(
+        default=None, description="Pipedream account ID for Google Drive (default OAuth - proxy mode)"
+    )
+    TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_EXTERNAL_USER_ID: Optional[str] = Field(
+        default=None, description="External user ID for Google Drive default OAuth"
+    )
+    TEST_PIPEDREAM_GOOGLE_DRIVE_CUSTOM_OAUTH_ACCOUNT_ID: Optional[str] = Field(
+        default=None, description="Pipedream account ID for Google Drive (custom OAuth - direct mode)"
+    )
+    TEST_PIPEDREAM_GOOGLE_DRIVE_CUSTOM_OAUTH_EXTERNAL_USER_ID: Optional[str] = Field(
+        default=None, description="External user ID for Google Drive custom OAuth"
+    )
+    TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_ACCOUNT_ID: Optional[str] = Field(
+        default=None, description="Pipedream account ID for Notion (default OAuth - proxy mode)"
+    )
+    TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_EXTERNAL_USER_ID: Optional[str] = Field(
+        default=None, description="External user ID for Notion default OAuth"
+    )
+
     # Test behavior settings
     SKIP_STARTUP: bool = Field(
         default=False, description="Skip running start.sh and container health checks"

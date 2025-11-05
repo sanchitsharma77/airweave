@@ -391,6 +391,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_composio: tests that require Composio auth provider"
     )
+    config.addinivalue_line(
+        "markers", "rate_limit: tests that consume rate limit quota (run last)"
+    )
 
 
 def pytest_collection_modifyitems(config, items):
