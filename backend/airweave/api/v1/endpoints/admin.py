@@ -49,15 +49,16 @@ async def list_available_feature_flags(
 
 
 def _require_admin(ctx: ApiContext) -> None:
-    """Validate that the user is an admin.
+    """Validate that the user is an admin or superuser.
 
     Args:
         ctx: The API context
 
     Raises:
-        HTTPException: If user is not an admin
+        HTTPException: If user is not an admin or superuser
     """
-    if not ctx.has_user_context or not ctx.user.is_admin:
+    # Allow both explicit admins AND superusers (for system operations and tests)
+    if not ctx.has_user_context or not (ctx.user.is_admin or ctx.user.is_superuser):
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
