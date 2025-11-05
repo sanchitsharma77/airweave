@@ -12,6 +12,7 @@ from uuid import UUID
 
 import httpx
 
+from airweave.core.exceptions import SourceRateLimitExceededException
 from airweave.core.logging import ContextualLogger
 from airweave.core.source_rate_limiter_service import source_rate_limiter
 
