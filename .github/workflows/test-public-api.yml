@@ -157,14 +157,15 @@ jobs:
           BACKEND_IMAGE: test-backend:latest
         run: |
           cd backend
-          # Exclude rate_limit tests from CI/CD - they consume quota and should run separately
-          # To run rate limit tests locally: pytest tests/e2e/smoke -m rate_limit
+          # Exclude api_rate_limit tests (general API rate limiter) from CI
+          # Source rate_limit tests run sequentially after other tests for proper Redis isolation
+          # To run only rate limit tests locally: pytest tests/e2e/smoke -m rate_limit
 
           MAX_RETRIES=2
 
-          # Run all tests first
+          # Run all non-rate-limit tests in parallel first
           set +e
-          pytest tests/e2e/smoke -m "not rate_limit" -n 3 -v --tb=short 2>&1 | tee pytest_output.txt
+          pytest tests/e2e/smoke -m "not rate_limit and not api_rate_limit" -n 3 -v --tb=short 2>&1 | tee pytest_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
@@ -208,6 +209,32 @@ jobs:
           # If we get here, tests failed after retries
           echo "Tests failed after $MAX_RETRIES retry attempts"
           exit 1
+
+      - name: Run Source Rate Limit Tests (Sequential)
+        if: success()
+        env:
+          TEST_ENV: local
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TEST_COMPOSIO_API_KEY: ${{ secrets.TEST_COMPOSIO_API_KEY }}
+          TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_1: ${{ secrets.TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_1 }}
+          TEST_COMPOSIO_NOTION_ACCOUNT_ID_1: ${{ secrets.TEST_COMPOSIO_NOTION_ACCOUNT_ID_1 }}
+          TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_2: ${{ secrets.TEST_COMPOSIO_NOTION_AUTH_CONFIG_ID_2 }}
+          TEST_COMPOSIO_NOTION_ACCOUNT_ID_2: ${{ secrets.TEST_COMPOSIO_NOTION_ACCOUNT_ID_2 }}
+          TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_1: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_1 }}
+          TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_1: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_1 }}
+          TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_2: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_AUTH_CONFIG_ID_2 }}
+          TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_2: ${{ secrets.TEST_COMPOSIO_GOOGLE_DRIVE_ACCOUNT_ID_2 }}
+          TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_CLIENT_ID }}
+          TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_CLIENT_SECRET }}
+          TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID: ${{ secrets.TEST_PIPEDREAM_RATE_LIMIT_PROJECT_ID }}
+          TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID: ${{ secrets.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_ACCOUNT_ID }}
+          TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_EXTERNAL_USER_ID: ${{ secrets.TEST_PIPEDREAM_GOOGLE_DRIVE_DEFAULT_OAUTH_EXTERNAL_USER_ID }}
+          TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_ACCOUNT_ID: ${{ secrets.TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_ACCOUNT_ID }}
+          TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_EXTERNAL_USER_ID: ${{ secrets.TEST_PIPEDREAM_NOTION_DEFAULT_OAUTH_EXTERNAL_USER_ID }}
+        run: |
+          cd backend
+          echo "Running source rate limit tests sequentially (no parallelization for Redis isolation)..."
+          pytest tests/e2e/smoke -m rate_limit -v --tb=short
 
       - name: Print service logs on failure
         if: failure()
