@@ -4,18 +4,19 @@ This client wraps any httpx-compatible client (httpx.AsyncClient or PipedreamPro
 and adds source rate limiting to prevent exhausting customer API quotas.
 """
 
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Optional, Union
 from uuid import UUID
 
 import httpx
 
-from airweave.core.exceptions import SourceRateLimitExceededException
 from airweave.core.logging import ContextualLogger
 from airweave.core.source_rate_limiter_service import source_rate_limiter
 
 if TYPE_CHECKING:
-    from airweave.platform.http_client import PipedreamProxyClient
+    from airweave.platform.http_client.pipedream_proxy import PipedreamProxyClient
 
 
 class AirweaveHttpClient:
