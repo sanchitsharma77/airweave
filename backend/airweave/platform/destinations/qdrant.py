@@ -933,6 +933,7 @@ class QdrantDestination(VectorDBDestination):
         sparse_vector: SparseEmbedding | dict | None,
         search_method: Literal["hybrid", "neural", "keyword"],
         decay_config: Optional[DecayConfig] = None,
+        filter: Optional[rest.Filter] = None,
     ) -> rest.QueryRequest:
         """Create a single QueryRequest consistent with the old method."""
         query_request_params: dict = {}
@@ -980,11 +981,17 @@ class QdrantDestination(VectorDBDestination):
                     pass
 
             prefetch_params = [
-                {"query": query_vector, "using": DEFAULT_VECTOR_NAME, "limit": prefetch_limit},
+                {
+                    "query": query_vector,
+                    "using": DEFAULT_VECTOR_NAME,
+                    "limit": prefetch_limit,
+                    **({"filter": filter} if filter else {}),
+                },
                 {
                     "query": rest.SparseVector(**obj),
                     "using": KEYWORD_VECTOR_NAME,
                     "limit": prefetch_limit,
+                    **({"filter": filter} if filter else {}),
                 },
             ]
             prefetches = [rest.Prefetch(**p) for p in prefetch_params]
@@ -1040,17 +1047,8 @@ class QdrantDestination(VectorDBDestination):
         """Create per-query request objects with automatic tenant filtering."""
         requests: list[rest.QueryRequest] = []
         for i, qv in enumerate(query_vectors):
-            sv = sparse_vectors[i] if sparse_vectors else None
-            req = await self._prepare_query_request(
-                query_vector=qv,
-                limit=limit,
-                sparse_vector=sv,
-                search_method=search_method,
-                decay_config=decay_config,
-            )
-
-            # CRITICAL: Auto-inject tenant filter for multi-tenant isolation
-            # This ensures searches only return results from the correct collection
+            # CRITICAL: Build tenant filter BEFORE preparing query request
+            # This ensures prefetch operations are also filtered by tenant
             tenant_filter = rest.Filter(
                 must=[
                     rest.FieldCondition(
@@ -1065,13 +1063,26 @@ class QdrantDestination(VectorDBDestination):
                 user_filter = rest.Filter.model_validate(filter_conditions[i])
                 # Combine must conditions (tenant filter + user filters)
                 combined_must = tenant_filter.must + (user_filter.must or [])
-                req.filter = rest.Filter(
+                combined_filter = rest.Filter(
                     must=combined_must,
                     should=user_filter.should,
                     must_not=user_filter.must_not,
                 )
             else:
-                req.filter = tenant_filter
+                combined_filter = tenant_filter
+
+            sv = sparse_vectors[i] if sparse_vectors else None
+            req = await self._prepare_query_request(
+                query_vector=qv,
+                limit=limit,
+                sparse_vector=sv,
+                search_method=search_method,
+                decay_config=decay_config,
+                filter=combined_filter,  # Pass filter to prefetch operations!
+            )
+
+            # Filter is already set via _prepare_query_request
+            req.filter = combined_filter
 
             if offset and offset > 0:
                 req.offset = offset
