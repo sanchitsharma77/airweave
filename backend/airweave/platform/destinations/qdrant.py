@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.local.local_collection import DEFAULT_VECTOR_NAME
 
 from airweave.core.config import settings
@@ -482,7 +483,7 @@ class QdrantDestination(VectorDBDestination):
             payload=entity_data,
         )
 
-    async def _upsert_points_with_fallback(
+    async def _upsert_points_with_fallback(  # noqa: C901
         self, points: list[rest.PointStruct], *, min_batch: int = 50
     ) -> None:
         """Upsert points in batches to prevent timeouts and allow heartbeats.
@@ -490,21 +491,11 @@ class QdrantDestination(VectorDBDestination):
         Proactively splits large batches to avoid blocking and timeouts.
         Falls back to smaller batches on errors.
         """
-        # Build exception tuples safely without C408 (use literals)
-        rhex: tuple[type[BaseException], ...] = ()
+        # Import httpx timeout exceptions
         try:
-            from qdrant_client.http.exceptions import ResponseHandlingException  # type: ignore
-
-            rhex = (ResponseHandlingException,)  # type: ignore[assignment]
-        except Exception:  # pragma: no cover
-            rhex = ()
-
-        timeout_errors: tuple[type[BaseException], ...] = ()
-        try:
-            import httpcore  # type: ignore
+            import httpcore
             import httpx
 
-            # Catch both read and write timeouts
             timeout_errors = (
                 httpx.ReadTimeout,
                 httpx.WriteTimeout,
@@ -545,39 +536,106 @@ class QdrantDestination(VectorDBDestination):
             if hasattr(op, "errors") and op.errors:
                 raise Exception(f"Errors during bulk insert: {op.errors}")
 
-            # SUCCESS LOGGING - Critical for confirming split effectiveness
-            self.logger.info(
-                f"[Qdrant] ✅ Upserted {len(points)} points in {duration:.2f}s "
-                f"(collection={self.collection_name})"
-            )
-        except (*timeout_errors, *rhex) as e:  # type: ignore[misc]
-            n = len(points)
-            timeout_duration = asyncio.get_event_loop().time() - start_time
-
-            # Extract underlying error if wrapped
-            underlying_error = None
-            if hasattr(e, "__cause__") and e.__cause__:
-                underlying_error = e.__cause__
-
-            error_details = f"{type(e).__name__}: {e}"
-            if underlying_error:
-                error_details += (
-                    f" | Underlying: {type(underlying_error).__name__}: {underlying_error}"
+            # SUCCESS LOGGING - Critical for diagnosing performance
+            if duration > 10.0:
+                self.logger.warning(
+                    f"[Qdrant] ⚠️ Slow upsert: {len(points)} points took {duration:.2f}s "
+                    f"(collection={self.collection_name}, vector_size={self.vector_size})"
                 )
+            else:
+                self.logger.info(
+                    f"[Qdrant] ✅ Upserted {len(points)} points in {duration:.2f}s "
+                    f"(collection={self.collection_name})"
+                )
+
+        except UnexpectedResponse as e:
+            # Qdrant returned an HTTP error (503, 429, etc.)
+            n = len(points)
+
+            # Extract structured error details from Qdrant
+            error_detail = None
+            try:
+                error_data = e.structured()
+                # Qdrant error format: {"status": {"error": "message"}} or {"status": "message"}
+                if isinstance(error_data.get("status"), dict):
+                    error_detail = error_data["status"].get("error")
+                else:
+                    error_detail = error_data.get("status") or error_data.get("message")
+            except Exception:
+                # Fallback to raw content if JSON parsing fails
+                error_detail = e.content.decode("utf-8")[:200] if e.content else e.reason_phrase
+
+            error_summary = f"HTTP {e.status_code} {e.reason_phrase}" + (
+                f": {error_detail}" if error_detail else ""
+            )
 
             if n <= 1 or n <= min_batch:
                 self.logger.error(
-                    f"[Qdrant] 💥 FATAL: Cannot split further - {n} points ≤ min_batch={min_batch} "
-                    f"after {timeout_duration:.2f}s timeout "
-                    f"(collection={self.collection_name}). Error: {error_details}",
-                    exc_info=True,  # This will log the full traceback
+                    f"[Qdrant] 💥 FATAL rejection: Cannot split further "
+                    f"- {n} points ≤ min_batch={min_batch} "
+                    f"(collection={self.collection_name}, vector_size={self.vector_size}). "
+                    f"Error: {error_summary}",
+                    exc_info=True,
                 )
                 raise
+
             mid = n // 2
             left, right = points[:mid], points[mid:]
             self.logger.warning(
-                f"[Qdrant] ⚠️  Timeout after {timeout_duration:.2f}s for {n} points; "
-                f"splitting into {len(left)} + {len(right)} and retrying..."
+                f"[Qdrant] ⚠️  Rejection for {n} points; "
+                f"splitting into {len(left)} + {len(right)} and retrying... "
+                f"({error_summary})"
+            )
+            await self._upsert_points_with_fallback(left, min_batch=min_batch)
+            await self._upsert_points_with_fallback(right, min_batch=min_batch)
+
+        except ResponseHandlingException as e:
+            # Wrapper for underlying network/parsing errors
+            n = len(points)
+            source_error = e.source
+            error_summary = f"{type(source_error).__name__}: {source_error}"
+
+            if n <= 1 or n <= min_batch:
+                self.logger.error(
+                    f"[Qdrant] 💥 FATAL error: Cannot split further "
+                    f"- {n} points ≤ min_batch={min_batch} "
+                    f"(collection={self.collection_name}, vector_size={self.vector_size}). "
+                    f"Error: {error_summary}",
+                    exc_info=True,
+                )
+                raise
+
+            mid = n // 2
+            left, right = points[:mid], points[mid:]
+            self.logger.warning(
+                f"[Qdrant] ⚠️  Response handling error for {n} points; "
+                f"splitting into {len(left)} + {len(right)} and retrying... "
+                f"({error_summary})"
+            )
+            await self._upsert_points_with_fallback(left, min_batch=min_batch)
+            await self._upsert_points_with_fallback(right, min_batch=min_batch)
+
+        except timeout_errors as e:  # type: ignore[misc]
+            # Network timeout (httpx/httpcore)
+            n = len(points)
+            error_summary = f"{type(e).__name__}: {e}"
+
+            if n <= 1 or n <= min_batch:
+                self.logger.error(
+                    f"[Qdrant] 💥 FATAL timeout: Cannot split further "
+                    f"- {n} points ≤ min_batch={min_batch} "
+                    f"(collection={self.collection_name}, vector_size={self.vector_size}). "
+                    f"Error: {error_summary}",
+                    exc_info=True,
+                )
+                raise
+
+            mid = n // 2
+            left, right = points[:mid], points[mid:]
+            self.logger.warning(
+                f"[Qdrant] ⚠️  Timeout for {n} points; "
+                f"splitting into {len(left)} + {len(right)} and retrying... "
+                f"({error_summary})"
             )
             await self._upsert_points_with_fallback(left, min_batch=min_batch)
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
@@ -607,8 +665,8 @@ class QdrantDestination(VectorDBDestination):
         # Track semaphore contention to understand queueing behavior
         active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
         self.logger.info(
-            f"[Qdrant] 🔒 Semaphore state: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active writes "
-            f"before acquiring lock for {len(point_structs)} points"
+            f"[Qdrant] 🔒 Semaphore state: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} "
+            f"active writes before acquiring lock for {len(point_structs)} points"
         )
 
         async with self._write_sem:
@@ -624,7 +682,8 @@ class QdrantDestination(VectorDBDestination):
         # Track semaphore + timing for delete operations
         active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
         self.logger.info(
-            f"[Qdrant] 🗑️  Delete by db_entity_id: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
+            f"[Qdrant] 🗑️  Delete by db_entity_id: "
+            f"{active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
         )
 
         start_time = asyncio.get_event_loop().time()
@@ -649,10 +708,18 @@ class QdrantDestination(VectorDBDestination):
                 wait=True,
             )
         duration = asyncio.get_event_loop().time() - start_time
-        self.logger.info(
-            f"[Qdrant] 🗑️  ✅ Deleted by db_entity_id in {duration:.2f}s "
-            f"(collection={self.collection_name})"
-        )
+
+        # Log slow deletes to identify if on_disk_payload is causing issues
+        if duration > 5.0:
+            self.logger.warning(
+                f"[Qdrant] 🗑️  ⚠️ Slow delete: {duration:.2f}s by db_entity_id "
+                f"(collection={self.collection_name}, on_disk_payload=True)"
+            )
+        else:
+            self.logger.info(
+                f"[Qdrant] 🗑️  ✅ Deleted by db_entity_id in {duration:.2f}s "
+                f"(collection={self.collection_name})"
+            )
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
         """Delete all points that have the provided sync job id."""
@@ -728,7 +795,8 @@ class QdrantDestination(VectorDBDestination):
 
         active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
         self.logger.info(
-            f"[Qdrant] 🗑️  Delete by parent_id: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
+            f"[Qdrant] 🗑️  Delete by parent_id: "
+            f"{active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} active"
         )
 
         start_time = asyncio.get_event_loop().time()
