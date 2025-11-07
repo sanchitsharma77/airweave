@@ -254,83 +254,30 @@ class EntityPipeline:
     # ------------------------------------------------------------------------------------
 
     def _get_flagged_field_value(self, entity: BaseEntity, flag_name: str) -> Any:
-        """Extract value of field marked with specified flag.
-
-        Args:
-            entity: Entity to extract field from
-            flag_name: Name of the flag to look for (e.g., 'is_entity_id', 'is_name')
-
-        Returns:
-            Value of the flagged field, or None if no field has the flag
-
-        Raises:
-            SyncFailureError: If multiple fields have the same unique flag
-        """
-        # Enforce only one field for unique flags
-        unique_flags = {
-            AirweaveFieldFlag.IS_ENTITY_ID,
-            AirweaveFieldFlag.IS_NAME,
-            AirweaveFieldFlag.IS_CREATED_AT,
-            AirweaveFieldFlag.IS_UPDATED_AT,
-        }
-
-        found_fields = []
-        result_value = None
-
+        """Extract value of field marked with specified flag."""
         # Iterate through entity's model fields
         for field_name, field_info in entity.model_fields.items():
             # Check if field has json_schema_extra with the flag
             json_extra = field_info.json_schema_extra
             if json_extra and isinstance(json_extra, dict):
                 if json_extra.get(flag_name):
-                    found_fields.append(field_name)
-                    result_value = getattr(entity, field_name, None)
+                    return getattr(entity, field_name, None)
 
-        # Enforce uniqueness for certain flags
-        if flag_name in unique_flags and len(found_fields) > 1:
-            raise SyncFailureError(
-                f"Entity {entity.__class__.__name__} has multiple fields marked with "
-                f"{flag_name}={True}: {', '.join(found_fields)}. Only ONE field can have "
-                f"this flag."
-            )
-
-        return result_value
+        return None
 
     def _populate_base_entity_fields_from_flags(self, entity: BaseEntity) -> None:
-        """Populate BaseEntity fields from flagged fields.
-
-        This enables composition over inheritance - sources can use native API field names
-        (e.g., 'gid' in Asana) and mark them with flags. The pipeline extracts and populates
-        the standard BaseEntity fields (entity_id, name, etc.) for uniform access.
-
-        Args:
-            entity: Entity to populate fields for
-
-        Raises:
-            SyncFailureError: If required field (entity_id, name) has no value
-                and no flagged field exists
-        """
+        """Populate BaseEntity fields from flagged fields."""
         # Extract entity_id from is_entity_id flag if not already set
         if not entity.entity_id:
             flagged_value = self._get_flagged_field_value(entity, AirweaveFieldFlag.IS_ENTITY_ID)
-            if flagged_value is None:
-                raise SyncFailureError(
-                    f"Entity {entity.__class__.__name__} has no entity_id and no field "
-                    f"marked with is_entity_id=True. Please flag the ID field with "
-                    f"AirweaveField(..., is_entity_id=True)."
-                )
-            entity.entity_id = str(flagged_value)
+            if flagged_value:
+                entity.entity_id = str(flagged_value)
 
         # Extract name from is_name flag if not already set
         if not entity.name:
             flagged_value = self._get_flagged_field_value(entity, AirweaveFieldFlag.IS_NAME)
-            if flagged_value is None:
-                raise SyncFailureError(
-                    f"Entity {entity.__class__.__name__} has no name and no field "
-                    f"marked with is_name=True. Please flag the name field with "
-                    f"AirweaveField(..., is_name=True)."
-                )
-            entity.name = str(flagged_value)
+            if flagged_value:
+                entity.name = str(flagged_value)
 
         # Extract timestamps (Optional - no error if missing)
         if not entity.created_at:
@@ -342,13 +289,6 @@ class EntityPipeline:
             flagged_value = self._get_flagged_field_value(entity, AirweaveFieldFlag.IS_UPDATED_AT)
             if flagged_value is not None:
                 entity.updated_at = flagged_value
-
-        # Breadcrumbs validation (must exist, can be empty list for root entities)
-        if entity.breadcrumbs is None:
-            raise SyncFailureError(
-                f"Entity {entity.__class__.__name__} has breadcrumbs=None. "
-                f"Breadcrumbs must be a list (can be empty for root entities)."
-            )
 
     async def _enrich_early_metadata(
         self,
@@ -454,7 +394,7 @@ class EntityPipeline:
             }
 
             # Add fields marked with unhashable=True (composition over inheritance)
-            for field_name, field_info in entity.model_fields.items():
+            for field_name, field_info in entity.__class__.model_fields.items():
                 json_extra = field_info.json_schema_extra
                 if json_extra and isinstance(json_extra, dict):
                     if json_extra.get(AirweaveFieldFlag.UNHASHABLE):
@@ -770,7 +710,7 @@ class EntityPipeline:
             Dict mapping field names to their values
         """
         fields = {}
-        for field_name, field_info in entity.model_fields.items():
+        for field_name, field_info in entity.__class__.model_fields.items():
             if field_info.json_schema_extra and isinstance(field_info.json_schema_extra, dict):
                 if field_info.json_schema_extra.get(AirweaveFieldFlag.EMBEDDABLE):
                     value = getattr(entity, field_name, None)
