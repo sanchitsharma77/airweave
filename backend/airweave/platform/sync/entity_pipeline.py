@@ -832,9 +832,23 @@ class EntityPipeline:
             f"**Name**: {entity.name}",
         ]
 
-        # Add breadcrumb path if present (shows hierarchy: Workspace → Project → Task)
+        # Add breadcrumb path if present (shows hierarchy with types)
         if entity.breadcrumbs and len(entity.breadcrumbs) > 0:
-            path_parts = [bc.name for bc in entity.breadcrumbs]
+            # Format: "Type: Name → Type: Name" (strip source prefix and "Entity" suffix)
+            path_parts = []
+            for bc in entity.breadcrumbs:
+                # Clean entity type: "AsanaProjectEntity" → "Project"
+                clean_type = bc.entity_type
+                # Remove "Entity" suffix
+                if clean_type.endswith("Entity"):
+                    clean_type = clean_type[:-6]  # Remove last 6 chars ("Entity")
+                # Remove source prefix (e.g., "Asana", "Jira", "GitHub")
+                # Look for capital letter after first one as delimiter
+                for i in range(1, len(clean_type)):
+                    if clean_type[i].isupper():
+                        clean_type = clean_type[i:]
+                        break
+                path_parts.append(f"{clean_type}: {bc.name}")
             path_str = " → ".join(path_parts)
             lines.append(f"**Path**: {path_str}")
 
