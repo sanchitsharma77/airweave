@@ -7,9 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Breadcrumb(BaseModel):
-    """Breadcrumb for tracking ancestry."""
+    """Breadcrumb for tracking ancestry.
+
+    Tracks the full context of an entity's location in the hierarchy,
+    including the entity ID, human-readable name, and entity type.
+    This enables rich textual representations like "Location: Workspace X → Project Y".
+    """
 
     entity_id: str = Field(..., description="ID of the entity in the source.")
+    name: str = Field(..., description="Display name of the entity.")
+    entity_type: str = Field(..., description="Entity class name (e.g., 'AsanaProjectEntity').")
 
 
 class AirweaveSystemMetadata(BaseModel):
@@ -64,7 +71,10 @@ class BaseEntity(BaseModel):
     entity_id: str = Field(..., description="ID of the entity in the source.")
     breadcrumbs: List[Breadcrumb] = Field(..., description="List of breadcrumbs for this entity.")
 
-    name: str = Field(..., description="Name of the entity.")
+    # Populated from flagged fields by entity pipeline (composition over inheritance)
+    entity_id: Optional[str] = Field(None, description="ID of the entity in the source.")
+    breadcrumbs: Optional[List[Breadcrumb]] = Field(None, description="List of breadcrumbs.")
+    name: Optional[str] = Field(None, description="Name of the entity.")
 
     created_at: Optional[datetime] = Field(
         None, description="Timestamp of when the entity was created."
