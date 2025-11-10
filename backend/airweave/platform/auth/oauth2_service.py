@@ -551,10 +551,11 @@ class OAuth2Service:
         ):
             payload["scope"] = integration_config.scope
             logger.debug(
-                f"Including scope in token refresh (oauth_type=with_refresh): {integration_config.scope}"
+                f"Including scope in token refresh (oauth_type=with_refresh): "
+                f"{integration_config.scope}"
             )
         elif oauth_type == "with_rotating_refresh":
-            logger.debug(f"Skipping scope in token refresh (oauth_type=with_rotating_refresh)")
+            logger.debug("Skipping scope in token refresh (oauth_type=with_rotating_refresh)")
 
         if integration_config.client_credential_location == "header":
             encoded_credentials = OAuth2Service._encode_client_credentials(client_id, client_secret)

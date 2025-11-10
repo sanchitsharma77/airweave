@@ -32,6 +32,7 @@ class EntityPipeline:
     def __init__(self):
         """Initialize pipeline with empty entity tracking."""
         self._entity_ids_encountered_by_type: Dict[str, Set[str]] = {}
+        self._dedupe_lock = asyncio.Lock()
         self._entities_printed_count: int = 0
 
     # ------------------------------------------------------------------------------------
@@ -220,18 +221,25 @@ class EntityPipeline:
         for entity in entities:
             # Track by entity type to allow same IDs across different types
             entity_type = entity.__class__.__name__
-            self._entity_ids_encountered_by_type.setdefault(entity_type, set())
 
-            # Check if we've already seen this entity ID for this type
-            if entity.entity_id in self._entity_ids_encountered_by_type[entity_type]:
+            is_duplicate = False
+            async with self._dedupe_lock:
+                entity_ids = self._entity_ids_encountered_by_type.setdefault(entity_type, set())
+
+                # Check if we've already seen this entity ID for this type
+                if entity.entity_id in entity_ids:
+                    is_duplicate = True
+                else:
+                    # Mark as encountered
+                    entity_ids.add(entity.entity_id)
+
+            if is_duplicate:
                 skipped_count += 1
                 sync_context.logger.debug(
                     f"Skipping duplicate entity: {entity_type}[{entity.entity_id}]"
                 )
                 continue
 
-            # Mark as encountered and add to unique list
-            self._entity_ids_encountered_by_type[entity_type].add(entity.entity_id)
             unique_entities.append(entity)
 
         # Update progress with skip count
@@ -1354,8 +1362,8 @@ class EntityPipeline:
                             f"Deduplicated {len(inserts)} → {len(deduped)} inserts"
                         )
 
-                    # Build create objects
-                    create_objs = []
+                    # Build create objects (with deterministic ordering to avoid deadlock cycles)
+                    ordered_entities: List[Tuple[UUID, BaseEntity]] = []
                     for entity in deduped:
                         entity_def_id = sync_context.entity_map.get(entity.__class__)
                         if not entity_def_id:
@@ -1365,15 +1373,38 @@ class EntityPipeline:
                         if not entity.airweave_system_metadata.hash:
                             raise SyncFailureError(f"Entity {entity.entity_id} missing hash")
 
-                        create_objs.append(
-                            schemas.EntityCreate(
-                                sync_job_id=sync_context.sync_job.id,
-                                sync_id=sync_context.sync.id,
-                                entity_id=entity.entity_id,
-                                entity_definition_id=entity_def_id,
-                                hash=entity.airweave_system_metadata.hash,
-                            )
+                        ordered_entities.append((entity_def_id, entity))
+
+                    if ordered_entities:
+                        ordered_entities.sort(
+                            key=lambda item: (item[0].int if item[0] else 0, item[1].entity_id)
                         )
+
+                    create_objs = [
+                        schemas.EntityCreate(
+                            sync_job_id=sync_context.sync_job.id,
+                            sync_id=sync_context.sync.id,
+                            entity_id=entity.entity_id,
+                            entity_definition_id=entity_def_id,
+                            hash=entity.airweave_system_metadata.hash,
+                        )
+                        for entity_def_id, entity in ordered_entities
+                    ]
+
+                    # Diagnostics: record which worker is performing this DB batch
+                    current_task = asyncio.current_task()
+                    task_name = (
+                        current_task.get_name()
+                        if current_task and current_task.get_name()
+                        else "unknown"
+                    )
+                    sample_ids = [entity.entity_id for _, entity in ordered_entities[:10]]
+                    sync_context.logger.debug(
+                        "[DB] Task %s upserting %d inserts (sample: %s)",
+                        task_name,
+                        len(create_objs),
+                        sample_ids,
+                    )
 
                     # Bulk upsert (handles cross-batch duplicates)
                     await crud.entity.bulk_create(db, objs=create_objs, ctx=sync_context.ctx)
@@ -1381,7 +1412,7 @@ class EntityPipeline:
 
                 # Handle UPDATEs
                 if updates:
-                    update_pairs = []
+                    update_records = []
                     for entity in updates:
                         entity_def_id = sync_context.entity_map[entity.__class__]
                         key = (entity.entity_id, entity_def_id)
@@ -1398,9 +1429,27 @@ class EntityPipeline:
 
                         db_id = existing_map[key].id
                         new_hash = entity.airweave_system_metadata.hash
-                        update_pairs.append((db_id, new_hash))
+                        update_records.append((db_id, new_hash, entity))
 
-                    if update_pairs:
+                    if update_records:
+                        update_records.sort(key=lambda item: item[0])
+                        update_pairs = [(db_id, new_hash) for db_id, new_hash, _ in update_records]
+                        current_task = asyncio.current_task()
+                        task_name = (
+                            current_task.get_name()
+                            if current_task and current_task.get_name()
+                            else "unknown"
+                        )
+                        sample_update_ids = [
+                            entity.entity_id for _, _, entity in update_records[:10]
+                        ]
+                        sync_context.logger.debug(
+                            "[DB] Task %s updating %d hashes (sample: %s)",
+                            task_name,
+                            len(update_pairs),
+                            sample_update_ids,
+                        )
+
                         await crud.entity.bulk_update_hash(db, rows=update_pairs)
                         sync_context.logger.debug(f"Updated {len(update_pairs)} hashes")
 

@@ -56,7 +56,7 @@ class QdrantDestination(VectorDBDestination):
     """Qdrant destination with multi-tenant support and legacy compatibility."""
 
     # Default write concurrency (simple, code-local tuning)
-    DEFAULT_WRITE_CONCURRENCY: int = 32
+    DEFAULT_WRITE_CONCURRENCY: int = 16
 
     def __init__(self):
         """Initialize defaults and placeholders for connection and collection state."""
@@ -75,7 +75,8 @@ class QdrantDestination(VectorDBDestination):
         self.vector_size: int = 384  # Default dense vector size
 
         # Write concurrency control (caps concurrent writes per destination)
-        self._write_sem = asyncio.Semaphore(self.DEFAULT_WRITE_CONCURRENCY)
+        self._write_limit = self._compute_write_concurrency()
+        self._write_sem = asyncio.Semaphore(self._write_limit)
 
         # One-time collection readiness cache
         self._collection_ready: bool = False
@@ -131,6 +132,16 @@ class QdrantDestination(VectorDBDestination):
             # Fall back to settings for native connection
             instance.url = None  # Will use settings.qdrant_url in connect_to_qdrant()
             instance.api_key = None
+
+        # Reconfigure concurrency after we know the true vector size
+        instance._write_limit = instance._compute_write_concurrency()
+        instance._write_sem = asyncio.Semaphore(instance._write_limit)
+        instance.logger.info(
+            "[Qdrant] Write concurrency configured to %s/%s (vector_size=%s)",
+            instance._write_sem._value,
+            instance._write_limit,
+            instance.vector_size,
+        )
 
         await instance.connect_to_qdrant()
         return instance
@@ -207,6 +218,17 @@ class QdrantDestination(VectorDBDestination):
             self.logger.debug("Closing Qdrant client connection...")
             self.client = None
 
+    def _compute_write_concurrency(self) -> int:
+        """Derive write concurrency based on embedding dimensionality."""
+        concurrency = self.DEFAULT_WRITE_CONCURRENCY
+
+        if self.vector_size >= 3000:
+            concurrency = max(2, concurrency // 4)
+        elif self.vector_size >= 1024:
+            concurrency = max(4, concurrency // 2)
+
+        return concurrency
+
     # ----------------------------------------------------------------------------------
     # Collection management
     # ----------------------------------------------------------------------------------
@@ -234,6 +256,8 @@ class QdrantDestination(VectorDBDestination):
         """
         if vector_size:
             self.vector_size = vector_size
+            self._write_limit = self._compute_write_concurrency()
+            self._write_sem = asyncio.Semaphore(self._write_limit)
 
         await self.ensure_client_readiness()
 
@@ -483,6 +507,14 @@ class QdrantDestination(VectorDBDestination):
             payload=entity_data,
         )
 
+    def _max_points_per_batch(self) -> int:
+        """Determine the maximum points to send in a single upsert request."""
+        if self.vector_size >= 3000:
+            return 40
+        if self.vector_size >= 1024:
+            return 60
+        return 100
+
     async def _upsert_points_with_fallback(  # noqa: C901
         self, points: list[rest.PointStruct], *, min_batch: int = 50
     ) -> None:
@@ -506,12 +538,12 @@ class QdrantDestination(VectorDBDestination):
             timeout_errors = ()
 
         # Proactively batch large upserts to prevent timeouts and allow heartbeats
-        MAX_BATCH_SIZE = 100
+        MAX_BATCH_SIZE = self._max_points_per_batch()
 
         if len(points) > MAX_BATCH_SIZE:
             self.logger.debug(
                 f"[Qdrant] Batching {len(points)} points into chunks of {MAX_BATCH_SIZE} "
-                f"to prevent timeout and allow heartbeats"
+                f"(vector_size={self.vector_size}) to prevent timeout and allow heartbeats"
             )
             for i in range(0, len(points), MAX_BATCH_SIZE):
                 batch = points[i : i + MAX_BATCH_SIZE]
@@ -616,7 +648,9 @@ class QdrantDestination(VectorDBDestination):
                 f"({error_summary})",
                 extra={"error_context": error_context},
             )
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(left, min_batch=min_batch)
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
 
         except ResponseHandlingException as e:
@@ -669,7 +703,9 @@ class QdrantDestination(VectorDBDestination):
                 f"({error_summary})",
                 extra={"error_context": error_context},
             )
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(left, min_batch=min_batch)
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
 
         except timeout_errors as e:  # type: ignore[misc]
@@ -728,7 +764,9 @@ class QdrantDestination(VectorDBDestination):
                 f"({error_summary})",
                 extra={"error_context": error_context},
             )
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(left, min_batch=min_batch)
+            await asyncio.sleep(0.2)
             await self._upsert_points_with_fallback(right, min_batch=min_batch)
 
     # ----------------------------------------------------------------------------------
@@ -754,14 +792,19 @@ class QdrantDestination(VectorDBDestination):
 
         # Try once with the whole payload; fall back to halving on failure
         # Track semaphore contention to understand queueing behavior
-        active_writes = self.DEFAULT_WRITE_CONCURRENCY - self._write_sem._value
+        available_slots = self._write_sem._value
+        total_slots = self._write_limit
+        active_writes = max(0, total_slots - available_slots)
         self.logger.info(
-            f"[Qdrant] 🔒 Semaphore state: {active_writes}/{self.DEFAULT_WRITE_CONCURRENCY} "
+            f"[Qdrant] 🔒 Semaphore state: {active_writes}/{total_slots} "
             f"active writes before acquiring lock for {len(point_structs)} points"
         )
 
+        max_batch = self._max_points_per_batch()
+        adaptive_min_batch = max(2, min(8, max_batch // 8 if max_batch >= 8 else max_batch))
+
         async with self._write_sem:
-            await self._upsert_points_with_fallback(point_structs, min_batch=10)
+            await self._upsert_points_with_fallback(point_structs, min_batch=adaptive_min_batch)
 
     # ----------------------------------------------------------------------------------
     # Deletes (by parent/sync/etc.)

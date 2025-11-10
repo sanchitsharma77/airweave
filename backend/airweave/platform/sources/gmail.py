@@ -842,6 +842,8 @@ class GmailSource(BaseSource):
             "maxResults": 500,
         }
         latest_history_id: Optional[str] = None
+        processed_message_ids: Set[str] = set()
+        lock = asyncio.Lock()
 
         while True:
             data = await self._get_with_auth(client, base_url, params=params)
@@ -851,7 +853,9 @@ class GmailSource(BaseSource):
                 yield deletion
 
             # Additions: potentially heavy (network per message); support concurrency
-            async for addition in self._yield_history_additions(client, data):
+            async for addition in self._yield_history_additions(
+                client, data, processed_message_ids, lock
+            ):
                 yield addition
 
             latest_history_id = data.get("historyId") or latest_history_id
@@ -891,7 +895,11 @@ class GmailSource(BaseSource):
                 )
 
     async def _yield_history_additions(  # noqa: C901
-        self, client: httpx.AsyncClient, data: Dict[str, Any]
+        self,
+        client: httpx.AsyncClient,
+        data: Dict[str, Any],
+        processed_message_ids: Set[str],
+        lock: asyncio.Lock,
     ) -> AsyncGenerator[BaseEntity, None]:
         """Yield entities for added/changed messages from a history page.
 
@@ -914,6 +922,9 @@ class GmailSource(BaseSource):
             msg_id = item["msg_id"]
             thread_id = item.get("thread_id") or "unknown"
             try:
+                if await self._should_skip_message(msg_id, processed_message_ids, lock):
+                    return
+
                 detail_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
                 try:
                     message_data = await self._get_with_auth(client, detail_url)

@@ -98,7 +98,8 @@ class ConfluenceSource(BaseSource):
                 return resources
             except httpx.HTTPStatusError as e:
                 self.logger.error(
-                    f"HTTP error getting accessible resources: {e.response.status_code} - {e.response.text}"
+                    f"HTTP error getting accessible resources: "
+                    f"{e.response.status_code} - {e.response.text}"
                 )
                 return []
             except Exception as e:
