@@ -25,6 +25,7 @@ from tenacity import retry, stop_after_attempt
 from airweave.core.exceptions import TokenRefreshError
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.decorators import source
+from airweave.platform.downloader import FileSkippedException
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.confluence import (
     ConfluenceBlogPostEntity,
@@ -73,7 +74,7 @@ class ConfluenceSource(BaseSource):
 
         Uses token manager to ensure fresh access token.
         """
-        self.logger.info("Retrieving accessible Atlassian resources")
+        self.logger.debug("Retrieving accessible Atlassian resources")
 
         # Get fresh access token (will refresh if needed)
         access_token = await self.get_access_token()
@@ -93,7 +94,7 @@ class ConfluenceSource(BaseSource):
                 )
                 response.raise_for_status()
                 resources = response.json()
-                self.logger.info(f"Found {len(resources)} accessible Atlassian resources")
+                self.logger.debug(f"Found {len(resources)} accessible Atlassian resources")
                 self.logger.debug(f"Resources: {resources}")
                 return resources
             except httpx.HTTPStatusError as e:
@@ -149,7 +150,7 @@ class ConfluenceSource(BaseSource):
 
                     if refreshed:
                         # Retry with new token (the retry decorator will handle this)
-                        self.logger.info("✅ Token refreshed successfully, retrying request")
+                        self.logger.debug("✅ Token refreshed successfully, retrying request")
                         raise  # Let tenacity retry with the refreshed token
                 except TokenRefreshError as refresh_error:
                     # Token refresh failed - provide clear error message
@@ -290,6 +291,11 @@ class ConfluenceSource(BaseSource):
 
                     self.logger.debug(f"Successfully saved page HTML: {file_entity.name}")
                     yield file_entity
+
+                except FileSkippedException as e:
+                    # File intentionally skipped (unsupported type, too large, etc.) - not an error
+                    self.logger.debug(f"Skipping file: {e.reason}")
+                    continue
 
                 except Exception as e:
                     self.logger.warning(f"Failed to save page {page_title}: {e}")
@@ -461,7 +467,7 @@ class ConfluenceSource(BaseSource):
                 self.logger.error("Confluence validation failed: no accessible resources found")
                 return False
 
-            self.logger.info("✅ Confluence validation successful")
+            self.logger.debug("✅ Confluence validation successful")
             return True
 
         except Exception as e:
@@ -470,7 +476,7 @@ class ConfluenceSource(BaseSource):
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:  # noqa: C901
         """Generate all Confluence content."""
-        self.logger.info("Starting Confluence entity generation process")
+        self.logger.debug("Starting Confluence entity generation process")
 
         resources = await self._get_accessible_resources()
         if not resources:
