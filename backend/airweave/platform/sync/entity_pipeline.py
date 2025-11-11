@@ -192,11 +192,22 @@ class EntityPipeline:
 
         chunk_entities = await self._chunk_entities(entities_to_process, sync_context)
 
+        # Release large textual bodies on parent entities once chunks are created
+        for entity in entities_to_process:
+            entity.textual_representation = None
+
         # Embed chunk entities (sets vectors field)
         await self._embed_entities(chunk_entities, sync_context)
 
         # Persist to destinations (COMMIT POINT)
         await self._persist_to_destinations(chunk_entities, partitions, sync_context)
+
+        # Drop chunk payloads/vectors ASAP to minimise concurrent memory footprint
+        for chunk in chunk_entities:
+            chunk.textual_representation = None
+            if chunk.airweave_system_metadata:
+                chunk.airweave_system_metadata.vectors = None
+        chunk_entities.clear()
 
         # Persist to database (only after destination success)
         await self._persist_to_database(partitions, sync_context)
