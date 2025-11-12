@@ -19,6 +19,7 @@ from tenacity import (
 )
 
 from airweave import crud, models
+from airweave.core.shared_models import ActionType
 from airweave.db.session import get_db_context
 from airweave.platform.entities._base import BaseEntity, CodeFileEntity, FileEntity
 from airweave.platform.sync.context import SyncContext
@@ -1458,6 +1459,16 @@ class EntityPipeline:
 
         # Execute with deadlock retry
         await _with_deadlock_retry(_execute_db_operations)
+
+        # Increment guard rail usage for synced entities (inserts + updates)
+        # Both count as "entities synced" since they represent work done
+        total_synced = len(inserts) + len(updates)
+        if total_synced > 0:
+            await sync_context.guard_rail.increment(ActionType.ENTITIES, amount=total_synced)
+            sync_context.logger.debug(
+                f"Incremented guard_rail ENTITIES usage by {total_synced} "
+                f"({len(inserts)} inserts + {len(updates)} updates)"
+            )
 
         # Update entity state tracker for real-time UI updates via pubsub
         if hasattr(sync_context, "entity_state_tracker") and sync_context.entity_state_tracker:
