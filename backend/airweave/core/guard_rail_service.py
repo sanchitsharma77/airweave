@@ -16,6 +16,7 @@ from airweave.core.shared_models import ActionType
 from airweave.db.session import get_db_context
 from airweave.models.user_organization import UserOrganization
 from airweave.schemas.billing_period import BillingPeriodStatus
+from airweave.models.source_connection import SourceConnection
 from airweave.schemas.organization_billing import BillingPlan
 from airweave.schemas.usage import Usage, UsageLimit
 
@@ -29,7 +30,6 @@ class GuardRailService:
     FLUSH_THRESHOLDS = {
         ActionType.ENTITIES: 100,
         ActionType.QUERIES: 1,
-        ActionType.SOURCE_CONNECTIONS: 1,
     }
 
     # Cache TTL - refresh usage data after this duration
@@ -98,11 +98,9 @@ class GuardRailService:
         self.usage_limit: Optional[UsageLimit] = None
         self.usage_fetched_at: Optional[datetime] = None
         self._has_billing: Optional[bool] = None  # Cache whether org has billing
-        # Track pending increments in memory (team_members not included - it's counted dynamically)
         self.pending_increments = {
             ActionType.ENTITIES: 0,
             ActionType.QUERIES: 0,
-            ActionType.SOURCE_CONNECTIONS: 0,
         }
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
@@ -191,6 +189,10 @@ class GuardRailService:
             if action_type == ActionType.TEAM_MEMBERS:
                 return await self._check_team_members_allowed(amount)
 
+            # Special handling for source connections - count from source_connection table
+            if action_type == ActionType.SOURCE_CONNECTIONS:
+                return await self._check_source_connections_allowed(amount)
+
             # Check if we need to refresh usage (TTL expired or never fetched)
             should_refresh = (
                 self.usage is None
@@ -247,10 +249,10 @@ class GuardRailService:
             action_type: The type of action to increment
             amount: The amount to increment by (default 1)
         """
-        # Team members are not tracked as cumulative usage - they're counted dynamically
-        if action_type == ActionType.TEAM_MEMBERS:
+        # Team members and source connections are counted dynamically from DB
+        if action_type in (ActionType.TEAM_MEMBERS, ActionType.SOURCE_CONNECTIONS):
             self.logger.debug(
-                "Team members are tracked dynamically, not incrementing usage counter"
+                f"{action_type.value} tracked dynamically from DB, not incrementing usage counter"
             )
             return
 
@@ -281,10 +283,10 @@ class GuardRailService:
 
     async def decrement(self, action_type: ActionType, amount: int = 1) -> None:
         """Decrement the usage for the action."""
-        # Team members are not tracked as cumulative usage
-        if action_type == ActionType.TEAM_MEMBERS:
+        # Team members and source connections are counted dynamically from DB
+        if action_type in (ActionType.TEAM_MEMBERS, ActionType.SOURCE_CONNECTIONS):
             self.logger.debug(
-                "Team members are tracked dynamically, not decrementing usage counter"
+                f"{action_type.value} tracked dynamically from DB, not decrementing usage counter"
             )
             return
 
@@ -496,6 +498,17 @@ class GuardRailService:
             result = await db.execute(stmt)
             return int(result.scalar_one() or 0)
 
+    async def _count_source_connections(self) -> int:
+        """Count current source connections in the organization."""
+        async with get_db_context() as db:
+            stmt = (
+                select(func.count())
+                .select_from(SourceConnection)
+                .where(SourceConnection.organization_id == self.organization_id)
+            )
+            result = await db.execute(stmt)
+            return int(result.scalar_one() or 0)
+
     async def _check_team_members_allowed(self, amount: int) -> bool:
         """Check if adding team members is allowed.
 
@@ -536,6 +549,49 @@ class GuardRailService:
         self.logger.info(
             f"Team member check: current={current_count}, "
             f"requested={amount}, limit={max_team_members}"
+        )
+        return True
+
+    async def _check_source_connections_allowed(self, amount: int) -> bool:
+        """Check if adding source connections is allowed.
+
+        Args:
+            amount: Number of source connections to add
+
+        Returns:
+            True if allowed
+
+        Raises:
+            UsageLimitExceededException: If limit would be exceeded
+        """
+        current_count = await self._count_source_connections()
+
+        # Get limit from usage limit or plan limits
+        if self.usage_limit is None:
+            self.usage_limit = await self._infer_usage_limit()
+
+        max_source_connections = getattr(self.usage_limit, "max_source_connections", None)
+
+        # If no limit (None), it's unlimited - always allowed
+        if max_source_connections is None:
+            self.logger.debug("Source connections have unlimited usage")
+            return True
+
+        # Check if adding the requested amount would exceed the limit
+        if current_count + amount > max_source_connections:
+            self.logger.warning(
+                f"Source connection limit exceeded: current={current_count}, "
+                f"requested={amount}, limit={max_source_connections}"
+            )
+            raise UsageLimitExceededException(
+                action_type="source_connections",
+                limit=max_source_connections,
+                current_usage=current_count,
+            )
+
+        self.logger.info(
+            f"Source connection check: current={current_count}, "
+            f"requested={amount}, limit={max_source_connections}"
         )
         return True
 
