@@ -353,8 +353,9 @@ class GuardRailService:
                 # Update in-memory usage with the fresh database values
                 if updated_usage_record:
                     self.usage = Usage.model_validate(updated_usage_record)
-                    # Populate team_members field (not stored in database)
+                    # Populate computed fields (not stored in database)
                     self.usage.team_members = await self._count_team_members()
+                    self.usage.source_connections = await self._count_source_connections()
                     self.usage_fetched_at = datetime.utcnow()
                     self.logger.info(
                         f"Updated in-memory usage from database: "
@@ -410,8 +411,9 @@ class GuardRailService:
             if usage_record:
                 # Convert SQLAlchemy model to Pydantic schema
                 usage = Usage.model_validate(usage_record)
-                # Populate team_members field (not stored in database)
+                # Populate computed fields (not stored in database)
                 usage.team_members = await self._count_team_members()
+                usage.source_connections = await self._count_source_connections()
                 self.logger.info(
                     f"\n\nRetrieved current usage: entities={usage.entities}, "
                     f"queries={usage.queries}, "
@@ -486,6 +488,16 @@ class GuardRailService:
             Current number of team members
         """
         return await self._count_team_members()
+
+    async def get_source_connection_count(self) -> int:
+        """Get the current number of source connections in the organization.
+
+        Public method for retrieving source connection count for usage reporting.
+
+        Returns:
+            Current number of source connections
+        """
+        return await self._count_source_connections()
 
     async def _count_team_members(self) -> int:
         """Count current team members in the organization."""
