@@ -109,7 +109,8 @@ async def list_all_organizations(
 
     # For usage-based sorting, we need to join Usage and BillingPeriod
     # Only add these joins if sorting by usage fields
-    usage_sort_fields = ["entity_count", "source_connection_count", "query_count"]
+    # Note: source_connection_count excluded - computed dynamically, not in Usage table
+    usage_sort_fields = ["entity_count", "query_count"]
     if sort_by in usage_sort_fields:
         now = datetime.utcnow()
         query = query.outerjoin(
@@ -160,8 +161,6 @@ async def list_all_organizations(
         sort_column = OrganizationBilling.billing_status
     elif sort_by == "entity_count":
         sort_column = Usage.entities
-    elif sort_by == "source_connection_count":
-        sort_column = Usage.source_connections
     elif sort_by == "query_count":
         sort_column = Usage.queries
     elif sort_by == "last_active_at":
