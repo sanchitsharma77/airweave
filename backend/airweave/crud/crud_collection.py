@@ -5,7 +5,7 @@
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud
@@ -184,16 +184,81 @@ class CRUDCollection(CRUDBaseOrganization[Collection, CollectionCreate, Collecti
         return collection
 
     async def get_multi(
-        self, db: AsyncSession, *, skip: int = 0, limit: int = 100, ctx: ApiContext
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        ctx: ApiContext,
+        search_query: Optional[str] = None,
     ) -> List[Collection]:
-        """Get multiple collections with computed ephemeral statuses."""
-        # Get collections using the parent method
-        collections = await super().get_multi(db, skip=skip, limit=limit, ctx=ctx)
+        """Get multiple collections with computed ephemeral statuses and search.
+
+        Args:
+            db: Database session
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            ctx: API context
+            search_query: Optional search term to filter by name or readable_id
+
+        Returns:
+            List of collections with computed statuses
+        """
+        # Build query with org scope
+        query = select(Collection).where(Collection.organization_id == ctx.organization.id)
+
+        # Apply search filter if provided
+        if search_query:
+            search_pattern = f"%{search_query.lower()}%"
+            query = query.where(
+                (func.lower(Collection.name).like(search_pattern))
+                | (func.lower(Collection.readable_id).like(search_pattern))
+            )
+
+        # Apply sorting (always by created_at desc)
+        query = query.order_by(Collection.created_at.desc())
+
+        # Apply pagination
+        query = query.offset(skip).limit(limit)
+
+        # Execute query
+        result = await db.execute(query)
+        collections = list(result.scalars().all())
 
         # Compute and set the ephemeral status for each collection
         collections = await self._attach_ephemeral_status(db, collections, ctx)
 
         return collections
+
+    async def count(
+        self, db: AsyncSession, ctx: ApiContext, search_query: Optional[str] = None
+    ) -> int:
+        """Get total count of collections for the organization.
+
+        Args:
+            db: Database session
+            ctx: API context
+            search_query: Optional search term to filter by name or readable_id
+
+        Returns:
+            Count of collections matching criteria
+        """
+        query = (
+            select(func.count())
+            .select_from(Collection)
+            .where(Collection.organization_id == ctx.organization.id)
+        )
+
+        # Apply search filter if provided
+        if search_query:
+            search_pattern = f"%{search_query.lower()}%"
+            query = query.where(
+                (func.lower(Collection.name).like(search_pattern))
+                | (func.lower(Collection.readable_id).like(search_pattern))
+            )
+
+        result = await db.execute(query)
+        return result.scalar_one()
 
 
 collection = CRUDCollection(Collection)
