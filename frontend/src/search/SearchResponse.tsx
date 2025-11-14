@@ -1390,8 +1390,10 @@ export const SearchResponse: React.FC<SearchResponseProps> = ({
                 <div
                     className={cn(
                         "absolute inset-0 h-1.5 bg-gradient-to-r",
-                        hasError && !isTransientError
-                            ? "from-red-500 to-red-600"
+                        hasError
+                            ? isTransientError
+                                ? "from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600"
+                                : "from-red-500 to-red-600"
                             : "from-green-500 to-emerald-500"
                     )}
                 ></div>
