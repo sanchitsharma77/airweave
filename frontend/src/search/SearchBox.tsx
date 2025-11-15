@@ -444,10 +444,19 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                 const endTime = performance.now();
                 const responseTime = Math.round(endTime - startTime);
                 console.error("Search stream failed:", error);
-                onSearch({
-                    error: error instanceof Error ? error.message : "An unexpected error occurred",
-                    errorIsTransient: false,
-                }, currentResponseType, responseTime);
+                const fallbackMessage =
+                    error instanceof Error ? error.message : "Search connection interrupted. Please try again.";
+                setTransientIssue({
+                    message: fallbackMessage,
+                });
+                onSearch(
+                    {
+                        error: "Something went wrong, please try again.",
+                        errorIsTransient: true,
+                    },
+                    currentResponseType,
+                    responseTime
+                );
             }
         } finally {
             // Only end if this is still the active stream
