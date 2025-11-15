@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from airweave.platform.entities._airweave_field import AirweaveField
 from airweave.platform.entities._base import BaseEntity, FileEntity
@@ -24,7 +24,7 @@ class AsanaWorkspaceEntity(BaseEntity):
         unhashable=True,
     )
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for this workspace."""
         return f"https://app.asana.com/0/{self.gid}/list"
@@ -119,7 +119,7 @@ class AsanaProjectEntity(BaseEntity):
         unhashable=True,
     )
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for this project."""
         return f"https://app.asana.com/0/{self.gid}"
@@ -144,7 +144,7 @@ class AsanaSectionEntity(BaseEntity):
         embeddable=True,
     )
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for this section's project."""
         # Sections don't have direct URLs, return project URL
@@ -269,7 +269,7 @@ class AsanaTaskEntity(BaseEntity):
         None, description="The workspace this task is associated with", embeddable=True
     )
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for this task."""
         return f"https://app.asana.com/0/{self.project_gid}/{self.gid}"
@@ -311,7 +311,7 @@ class AsanaCommentEntity(BaseEntity):
         default_factory=list, description="Previews of attachments referenced in the comment"
     )
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for the parent task (comments don't have direct URLs)."""
         # Comments don't have direct URLs, return parent task URL
@@ -349,7 +349,7 @@ class AsanaFileEntity(FileEntity):
     )
     permanent: bool = Field(False, description="Whether this is a permanent attachment")
 
-    @property
+    @computed_field(return_type=str)
     def web_url(self) -> str:
         """Construct clickable web URL for the parent task."""
         # Files don't have direct URLs, return parent task URL if project_gid available

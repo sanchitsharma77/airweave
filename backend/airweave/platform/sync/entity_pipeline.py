@@ -149,6 +149,10 @@ class EntityPipeline:
         sync_context: SyncContext,
     ) -> None:
         """Process a list of entities."""
+        # Populate BaseEntity fields from flagged fields BEFORE duplicate detection
+        for entity in entities:
+            self._populate_base_entity_fields_from_flags(entity)
+
         unique_entities = await self._filter_duplicates(entities, sync_context)
 
         if not unique_entities:
@@ -322,9 +326,6 @@ class EntityPipeline:
     ) -> None:
         """Set early metadata fields from sync_context."""
         from airweave.platform.entities._base import AirweaveSystemMetadata
-
-        for entity in entities:
-            self._populate_base_entity_fields_from_flags(entity)
 
         for entity in entities:
             # Initialize metadata if not present
