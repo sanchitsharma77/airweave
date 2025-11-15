@@ -19,9 +19,15 @@ from tenacity import (
 )
 
 from airweave import crud, models
+from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
 from airweave.core.shared_models import ActionType, AirweaveFieldFlag
 from airweave.db.session import get_db_context
-from airweave.platform.entities._base import BaseEntity, CodeFileEntity, FileEntity
+from airweave.platform.entities._base import (
+    BaseEntity,
+    CodeFileEntity,
+    FileEntity,
+    PolymorphicEntity,
+)
 from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailureError
 from airweave.platform.sync.file_types import SUPPORTED_FILE_EXTENSIONS
@@ -543,7 +549,7 @@ class EntityPipeline:
         # Step 2: Build entity requests with definition IDs
         entity_requests = []
         for entity in non_deletes:
-            entity_definition_id = sync_context.entity_map.get(entity.__class__)
+            entity_definition_id = self._resolve_entity_definition_id(entity, sync_context)
             if entity_definition_id is None:
                 # Entity type not in map → fatal error
                 sync_context.logger.error(
@@ -556,7 +562,7 @@ class EntityPipeline:
 
         # Also add deletes to lookup (need existing_map for _handle_deletes)
         for entity in deletes:
-            entity_definition_id = sync_context.entity_map.get(entity.__class__)
+            entity_definition_id = self._resolve_entity_definition_id(entity, sync_context)
             if entity_definition_id is None:
                 raise SyncFailureError(
                     f"DELETE entity type {entity.__class__.__name__} not in entity_map"
@@ -613,7 +619,11 @@ class EntityPipeline:
             entity_hash = entity.airweave_system_metadata.hash
 
             # Get entity_definition_id (already validated in Step 2)
-            entity_definition_id = sync_context.entity_map[entity.__class__]
+            entity_definition_id = self._resolve_entity_definition_id(entity, sync_context)
+            if entity_definition_id is None:
+                raise SyncFailureError(
+                    f"Entity type {entity.__class__.__name__} not in sync_context.entity_map"
+                )
 
             # Get existing DB record using composite key
             db_key = (entity.entity_id, entity_definition_id)
@@ -637,6 +647,21 @@ class EntityPipeline:
         )
 
         return partitions
+
+    def _resolve_entity_definition_id(
+        self, entity: BaseEntity, sync_context: SyncContext
+    ) -> Optional[UUID]:
+        """Resolve entity definition ID with polymorphic fallback."""
+        entity_class = entity.__class__
+
+        definition_id = sync_context.entity_map.get(entity_class)
+        if definition_id:
+            return definition_id
+
+        if issubclass(entity_class, PolymorphicEntity):
+            return RESERVED_TABLE_ENTITY_ID
+
+        return None
 
     # ------------------------------------------------------------------------------------
     # Delete Handling
@@ -678,7 +703,7 @@ class EntityPipeline:
         db_ids = []
 
         for entity in deletes:
-            entity_def_id = sync_context.entity_map.get(entity.__class__)
+            entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
             if not entity_def_id:
                 raise SyncFailureError(
                     f"PROGRAMMING ERROR: DELETE entity {entity.entity_id} type "
@@ -703,7 +728,7 @@ class EntityPipeline:
             if hasattr(sync_context, "entity_state_tracker") and sync_context.entity_state_tracker:
                 counts_by_def: Dict[UUID, int] = defaultdict(int)
                 for entity in deletes:
-                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
                     key = (entity.entity_id, entity_def_id) if entity_def_id else None
                     if key and key in existing_map:
                         counts_by_def[entity_def_id] += 1
@@ -1445,7 +1470,7 @@ class EntityPipeline:
                     # Build create objects (with deterministic ordering to avoid deadlock cycles)
                     ordered_entities: List[Tuple[UUID, BaseEntity]] = []
                     for entity in deduped:
-                        entity_def_id = sync_context.entity_map.get(entity.__class__)
+                        entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
                         if not entity_def_id:
                             raise SyncFailureError(
                                 f"Entity type {entity.__class__.__name__} not in entity_map"
@@ -1494,7 +1519,12 @@ class EntityPipeline:
                 if updates:
                     update_records = []
                     for entity in updates:
-                        entity_def_id = sync_context.entity_map[entity.__class__]
+                        entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
+                        if entity_def_id is None:
+                            raise SyncFailureError(
+                                f"PROGRAMMING ERROR: UPDATE entity {entity.entity_id} "
+                                f"type {entity.__class__.__name__} not in entity_map"
+                            )
                         key = (entity.entity_id, entity_def_id)
 
                         if key not in existing_map:
@@ -1556,7 +1586,7 @@ class EntityPipeline:
                 counts_by_def: Dict[UUID, int] = defaultdict(int)
                 sample_name_by_def: Dict[UUID, str] = {}
                 for entity in inserts:
-                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
                     if entity_def_id:
                         counts_by_def[entity_def_id] += 1
                         sample_name_by_def.setdefault(entity_def_id, entity.__class__.__name__)
@@ -1574,7 +1604,7 @@ class EntityPipeline:
             if updates:
                 counts_by_def_updates: Dict[UUID, int] = defaultdict(int)
                 for entity in updates:
-                    entity_def_id = sync_context.entity_map.get(entity.__class__)
+                    entity_def_id = self._resolve_entity_definition_id(entity, sync_context)
                     if entity_def_id:
                         counts_by_def_updates[entity_def_id] += 1
 
