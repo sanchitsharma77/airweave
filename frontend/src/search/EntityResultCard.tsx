@@ -339,12 +339,12 @@ const EntityResultCardComponent: React.FC<EntityResultCardProps> = ({
                             </div>
                             <div className="flex-1 min-w-0 pt-0.5">
                                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                                    <h3 className={cn(
+                                <h3 className={cn(
                                         "text-[14px] font-semibold break-words leading-snug tracking-tight",
-                                        isDark ? "text-gray-50" : "text-gray-900"
-                                    )}>
-                                        {title}
-                                    </h3>
+                                    isDark ? "text-gray-50" : "text-gray-900"
+                                )}>
+                                    {title}
+                                </h3>
                                     {openUrl && (
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <a
