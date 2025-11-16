@@ -604,7 +604,7 @@ class GmailSource(BaseSource):
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_html.encode("utf-8"),
-                    filename_with_extension=message_entity.name + ".html",  # Has .html extension
+                    filename_with_extension=message_entity.subject + ".html",  # Has .html extension
                     logger=self.logger,
                 )
             elif body_plain:
@@ -612,7 +612,7 @@ class GmailSource(BaseSource):
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_plain.encode("utf-8"),
-                    filename_with_extension=message_entity.name + ".txt",  # Plain text
+                    filename_with_extension=message_entity.subject + ".txt",  # Plain text
                     logger=self.logger,
                 )
                 # Update file metadata to match plain text
