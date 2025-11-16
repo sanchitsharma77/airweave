@@ -381,7 +381,12 @@ class NotionSource(BaseSource):
 
                         try:
                             # Create breadcrumbs for child database pages
-                            page_breadcrumbs = breadcrumbs + [Breadcrumb(entity_id=database_id)]
+                            db_breadcrumb = Breadcrumb(
+                                entity_id=database_id,
+                                name=database_entity.title,
+                                entity_type=NotionDatabaseEntity.__name__,
+                            )
+                            page_breadcrumbs = breadcrumbs + [db_breadcrumb]
 
                             # Eagerly build page and files for child database page
                             page_entity, files = await self._create_comprehensive_page_entity(
@@ -462,7 +467,15 @@ class NotionSource(BaseSource):
                     parent_page = await self._get_with_auth(
                         client, f"https://api.notion.com/v1/pages/{parent_id}"
                     )
-                    breadcrumbs.insert(0, Breadcrumb(entity_id=parent_id))
+                    parent_title = self._extract_page_title(parent_page) or "Untitled Page"
+                    breadcrumbs.insert(
+                        0,
+                        Breadcrumb(
+                            entity_id=parent_id,
+                            name=parent_title,
+                            entity_type=NotionPageEntity.__name__,
+                        ),
+                    )
                     current_page = parent_page
                 except Exception as e:
                     self.logger.warning(f"Could not fetch parent page {parent_id}: {str(e)}")
@@ -514,18 +527,24 @@ class NotionSource(BaseSource):
 
         # Generate human-readable properties text
         properties_text = self._generate_properties_text_for_page(formatted_properties, title)
+        created_time = self._parse_datetime(page.get("created_time"))
+        updated_time = self._parse_datetime(page.get("last_edited_time"))
+        page_url = page.get("url", "")
 
         page_entity = NotionPageEntity(
             # Base fields
             entity_id=page_id,
             breadcrumbs=breadcrumbs,
             name=title,
-            created_at=self._parse_datetime(page.get("created_time")),
-            updated_at=self._parse_datetime(page.get("last_edited_time")),
+            created_at=created_time,
+            updated_at=updated_time,
             # API fields
+            page_id=page_id,
             parent_id=parent.get("page_id") or parent.get("database_id") or "",
             parent_type=parent.get("type", "workspace"),
             title=title,
+            created_time=created_time,
+            updated_time=updated_time,
             content=content_result["content"],
             properties=formatted_properties,  # Use formatted properties instead of raw
             properties_text=properties_text,  # Add formatted text for embedding
@@ -535,7 +554,7 @@ class NotionSource(BaseSource):
             cover=page.get("cover"),
             archived=page.get("archived", False),
             in_trash=page.get("in_trash", False),
-            url=page.get("url", ""),
+            url=page_url,
             content_blocks_count=content_result["blocks_count"],
             max_depth=content_result["max_depth"],
         )
@@ -948,6 +967,9 @@ class NotionSource(BaseSource):
         database_id = database["id"]
         title = self._extract_rich_text_plain(database.get("title", []))
         description = self._extract_rich_text_plain(database.get("description", []))
+        created_time = self._parse_datetime(database.get("created_time"))
+        updated_time = self._parse_datetime(database.get("last_edited_time"))
+        database_url = database.get("url", "")
 
         parent = database.get("parent", {})
 
@@ -962,10 +984,13 @@ class NotionSource(BaseSource):
             entity_id=database_id,
             breadcrumbs=[],
             name=title or "Untitled Database",
-            created_at=self._parse_datetime(database.get("created_time")),
-            updated_at=self._parse_datetime(database.get("last_edited_time")),
+            created_at=created_time,
+            updated_at=updated_time,
             # API fields
+            database_id=database_id,
             title=title or "Untitled Database",
+            created_time=created_time,
+            updated_time=updated_time,
             description=description,
             properties=formatted_schema,  # Use formatted schema
             properties_text=properties_text,  # Add formatted text for embedding
@@ -975,7 +1000,7 @@ class NotionSource(BaseSource):
             cover=database.get("cover"),
             archived=database.get("archived", False),
             is_inline=database.get("is_inline", False),
-            url=database.get("url", ""),
+            url=database_url,
         )
 
     def _format_database_schema(self, properties: dict) -> Dict[str, Any]:
@@ -1045,16 +1070,19 @@ class NotionSource(BaseSource):
         """Create a property entity from page property data."""
         prop_type = prop_value.get("type", "")
         formatted_value = self._format_property_value(prop_value, prop_type)
+        schema_prop_id = schema_prop.get("id", prop_name)
+        property_key = f"{page_id}_{schema_prop_id}"
 
         return NotionPropertyEntity(
             # Base fields
-            entity_id=f"{page_id}_{schema_prop.get('id', prop_name)}",
+            entity_id=property_key,
             breadcrumbs=[],
             name=prop_name,
             created_at=None,  # Properties don't have timestamps
             updated_at=None,  # Properties don't have timestamps
             # API fields
-            property_id=schema_prop.get("id", ""),
+            property_key=property_key,
+            property_id=schema_prop_id,
             property_name=prop_name,
             property_type=prop_type,
             page_id=page_id,
@@ -1100,6 +1128,7 @@ class NotionSource(BaseSource):
             name = parsed_url.path.split("/")[-1] if parsed_url.path else "Untitled File"
 
         caption = self._extract_rich_text_plain(block_content.get("caption", []))
+        display_name = name or "Untitled File"
 
         # Determine MIME type based on file extension or block type
         mime_type = None
@@ -1149,7 +1178,7 @@ class NotionSource(BaseSource):
             # Base fields
             entity_id=f"file_{parent_id}_{hash(file_id)}",
             breadcrumbs=[],
-            name=name or "Untitled File",
+            name=display_name,
             created_at=None,  # Notion files don't have timestamps in block content
             updated_at=None,  # Notion files don't have timestamps in block content
             # File fields
@@ -1160,8 +1189,10 @@ class NotionSource(BaseSource):
             local_path=None,
             # API fields (Notion-specific)
             file_id=file_id,
+            file_name=display_name,
             expiry_time=expiry_time,
             caption=caption,
+            web_url_value=url,
         )
 
     # Utility Methods
@@ -1469,7 +1500,13 @@ class NotionSource(BaseSource):
                 if page_id in self._processed_pages:
                     continue
                 try:
-                    breadcrumbs = [Breadcrumb(entity_id=database_id)]
+                    breadcrumbs = [
+                        Breadcrumb(
+                            entity_id=database_id,
+                            name=database_title or "Untitled Database",
+                            entity_type=NotionDatabaseEntity.__name__,
+                        )
+                    ]
                     page_entity, files = await self._create_comprehensive_page_entity(
                         client, page, breadcrumbs, database_id, schema
                     )
