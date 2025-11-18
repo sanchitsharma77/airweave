@@ -650,7 +650,7 @@ class TeamsSource(BaseSource):
                     yield team_entity
 
                     # Create team breadcrumb
-                    team_id = team_entity.entity_id
+                    team_id = team_entity.id
                     team_name = team_entity.display_name
                     team_breadcrumb = Breadcrumb(
                         entity_id=team_id,
@@ -670,7 +670,7 @@ class TeamsSource(BaseSource):
                         yield channel_entity
 
                         # Create channel breadcrumb
-                        channel_id = channel_entity.entity_id
+                        channel_id = channel_entity.id
                         channel_name = channel_entity.display_name
                         channel_breadcrumb = Breadcrumb(
                             entity_id=channel_id,
@@ -689,7 +689,7 @@ class TeamsSource(BaseSource):
                             channel_breadcrumb,
                         ):
                             entity_count += 1
-                            msg_id = message_entity.entity_id
+                            msg_id = message_entity.id
                             self.logger.debug(
                                 f"Yielding entity #{entity_count}: ChannelMessage - {msg_id}"
                             )
@@ -705,7 +705,7 @@ class TeamsSource(BaseSource):
                     yield chat_entity
 
                     # Create chat breadcrumb
-                    chat_id = chat_entity.entity_id
+                    chat_id = chat_entity.id
                     chat_breadcrumb = Breadcrumb(
                         entity_id=chat_id,
                         name=chat_entity.name,
@@ -717,7 +717,7 @@ class TeamsSource(BaseSource):
                         client, chat_id, chat_entity.topic, chat_breadcrumb
                     ):
                         entity_count += 1
-                        msg_id = message_entity.entity_id
+                        msg_id = message_entity.id
                         self.logger.debug(
                             f"Yielding entity #{entity_count}: ChatMessage - {msg_id}"
                         )
