@@ -198,8 +198,8 @@ class TodoistCommentEntity(BaseEntity):
     task_id: str = AirweaveField(
         ..., description="ID of the task this comment belongs to", embeddable=False
     )
-    content: Optional[str] = AirweaveField(
-        None, description="The comment content", embeddable=True, is_name=True
+    content: str = AirweaveField(
+        ..., description="The comment content", embeddable=True, is_name=True
     )
     posted_at: datetime = AirweaveField(
         ..., description="When the comment was posted", is_created_at=True

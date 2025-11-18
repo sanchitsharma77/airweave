@@ -292,10 +292,12 @@ class MondaySource(BaseSource):
 
         groups = boards_data[0].get("groups", [])
         for group in groups:
-            group_id = group["id"]
-            group_title = group.get("title") or f"Group {group_id}"
-            group_entity_id = f"{board_id}-{group_id}"
-            group_url = self._build_group_url(board_id, group_id)
+            native_group_id = str(group["id"])
+            group_title = group.get("title") or f"Group {native_group_id}"
+            # Use a composite entity_id for uniqueness but keep the native Monday
+            # group ID in the API-facing group_id field for downstream consumers.
+            group_entity_id = f"{board_id}-{native_group_id}"
+            group_url = self._build_group_url(board_id, native_group_id)
             yield MondayGroupEntity(
                 # Base fields
                 entity_id=group_entity_id,
@@ -304,7 +306,7 @@ class MondaySource(BaseSource):
                 created_at=None,  # Groups don't have creation timestamp
                 updated_at=None,  # Groups don't have update timestamp
                 # API fields
-                group_id=group_entity_id,
+                group_id=native_group_id,
                 board_id=board_id,
                 title=group_title,
                 color=group.get("color"),
@@ -342,18 +344,19 @@ class MondaySource(BaseSource):
 
         columns = boards_data[0].get("columns", [])
         for col in columns:
-            column_id = f"{board_id}-{col['id']}"
-            column_title = col.get("title") or f"Column {col['id']}"
+            native_column_id = str(col["id"])
+            column_entity_id = f"{board_id}-{native_column_id}"
+            column_title = col.get("title") or f"Column {native_column_id}"
             column_url = self._build_board_url(board_id)
             yield MondayColumnEntity(
                 # Base fields
-                entity_id=column_id,
+                entity_id=column_entity_id,
                 breadcrumbs=[board_breadcrumb],
                 name=column_title,
                 created_at=None,  # Columns don't have creation timestamp
                 updated_at=None,  # Columns don't have update timestamp
                 # API fields
-                column_id=column_id,
+                column_id=native_column_id,
                 board_id=board_id,
                 title=column_title,
                 column_type=col.get("type"),

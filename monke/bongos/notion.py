@@ -71,9 +71,9 @@ class NotionBongo(BaseBongo):
             elif method == "PATCH":
                 response = await client.patch(url, headers=headers, json=json_data)
             elif method == "DELETE":
-                # Notion uses PATCH with in_trash=true to trash pages
-                # Setting in_trash also sets archived automatically
-                json_data = {"in_trash": True}
+                # Notion uses PATCH with archived=true to archive (trash) pages.
+                # There is no dedicated DELETE for pages; we standardize on archived.
+                json_data = {"archived": True}
                 response = await client.patch(url, headers=headers, json=json_data)
 
             self._last_request_time = time.time()
@@ -473,23 +473,14 @@ class NotionBongo(BaseBongo):
         try:
             # Search for all pages in the workspace (including archived)
             # NOTE: Notion search API does NOT return trashed pages by default!
-            # This is a limitation we need to work around
-            search_payload = {
+            # We paginate using has_more/next_cursor to ensure we see all pages.
+            base_search_payload = {
                 "filter": {
                     "property": "object",
                     "value": "page",
                 },
                 "page_size": 100,
             }
-
-            self.logger.info(
-                f"🔍 _find_monke_test_pages: Making search request with payload: {search_payload}"
-            )
-            response = await self._make_request("POST", "search", search_payload)
-            results = response.get("results", [])
-            self.logger.info(
-                f"🔍 _find_monke_test_pages: Search returned {len(results)} total pages"
-            )
 
             current_page_ids = {p["id"] for p in self._pages}
             self.logger.info(
@@ -500,62 +491,86 @@ class NotionBongo(BaseBongo):
             pages_in_container = 0
             pages_with_token = 0
 
-            for page in results:
-                pages_checked += 1
-                page_id = page.get("id", "unknown")
+            has_more = True
+            next_cursor: Optional[str] = None
 
-                # Check if page is a child of the Monke Test Container
-                parent = page.get("parent", {})
-                parent_type = parent.get("type")
-                parent_page_id = parent.get("page_id")
+            while has_more:
+                search_payload = dict(base_search_payload)
+                if next_cursor:
+                    search_payload["start_cursor"] = next_cursor
 
-                if parent_type == "page_id" and parent_page_id == self._parent_page_id:
-                    pages_in_container += 1
+                self.logger.info(
+                    f"🔍 _find_monke_test_pages: Making search request with payload: {search_payload}"
+                )
+                response = await self._make_request("POST", "search", search_payload)
+                results = response.get("results", [])
+                has_more = response.get("has_more", False)
+                next_cursor = response.get("next_cursor")
 
-                    # Extract title
-                    title_prop = page.get("properties", {}).get("title", {})
-                    title_content = title_prop.get("title", [])
+                self.logger.info(
+                    f"🔍 _find_monke_test_pages: Search page returned {len(results)} pages "
+                    f"(has_more={has_more})"
+                )
+
+                for page in results:
+                    pages_checked += 1
+                    page_id = page.get("id", "unknown")
+
+                    # Check if page is a child of the Monke Test Container
+                    parent = page.get("parent", {})
+                    parent_type = parent.get("type")
+                    parent_page_id = parent.get("page_id")
+
                     if (
-                        title_content
-                        and isinstance(title_content, list)
-                        and len(title_content) > 0
+                        parent_type == "page_id"
+                        and parent_page_id == self._parent_page_id
                     ):
-                        title = title_content[0].get("text", {}).get("content", "")
+                        pages_in_container += 1
 
-                        # Check if starts with 8-char hex pattern
-                        if len(title) >= 8:
-                            prefix = title[:8].lower()
-                            if all(c in "0123456789abcdef" for c in prefix):
-                                pages_with_token += 1
+                        # Extract title
+                        title_prop = page.get("properties", {}).get("title", {})
+                        title_content = title_prop.get("title", [])
+                        if (
+                            title_content
+                            and isinstance(title_content, list)
+                            and len(title_content) > 0
+                        ):
+                            title = title_content[0].get("text", {}).get("content", "")
 
-                                # Skip if it's already in our current session pages
-                                if page["id"] not in current_page_ids:
-                                    is_archived = page.get("archived", False)
-                                    is_trashed = page.get("in_trash", False)
+                            # Check if starts with 8-char hex pattern
+                            if len(title) >= 8:
+                                prefix = title[:8].lower()
+                                if all(c in "0123456789abcdef" for c in prefix):
+                                    pages_with_token += 1
 
-                                    monke_pages.append(
-                                        {
-                                            "id": page["id"],
-                                            "title": title,
-                                            "archived": is_archived,
-                                            "in_trash": is_trashed,
-                                        }
-                                    )
-                                    status = []
-                                    if is_archived:
-                                        status.append("archived")
-                                    if is_trashed:
-                                        status.append("trashed")
-                                    status_str = (
-                                        f" ({', '.join(status)})" if status else ""
-                                    )
-                                    self.logger.info(
-                                        f"   ✅ Found orphaned monke page: {title}{status_str} [{page_id}]"
-                                    )
-                                else:
-                                    self.logger.debug(
-                                        f"   ⏭️  Skipping current session page: {title} [{page_id}]"
-                                    )
+                                    # Skip if it's already in our current session pages
+                                    if page["id"] not in current_page_ids:
+                                        is_archived = page.get("archived", False)
+                                        is_trashed = page.get("in_trash", False)
+
+                                        monke_pages.append(
+                                            {
+                                                "id": page["id"],
+                                                "title": title,
+                                                "archived": is_archived,
+                                                "in_trash": is_trashed,
+                                            }
+                                        )
+                                        status = []
+                                        if is_archived:
+                                            status.append("archived")
+                                        if is_trashed:
+                                            status.append("trashed")
+                                        status_str = (
+                                            f" ({', '.join(status)})" if status else ""
+                                        )
+                                        self.logger.info(
+                                            f"   ✅ Found orphaned monke page: {title}{status_str} [{page_id}]"
+                                        )
+                                    else:
+                                        self.logger.debug(
+                                            f"   ⏭️  Skipping current session page: {title} [{page_id}]"
+                                        )
 
             self.logger.info(
                 f"🔍 _find_monke_test_pages: Checked {pages_checked} pages, "

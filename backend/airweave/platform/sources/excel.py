@@ -398,8 +398,12 @@ class ExcelSource(BaseSource):
                     worksheet_name = worksheet_data.get("name", "Unknown Worksheet")
                     worksheet_web_url = None
                     if workbook_web_url and worksheet_name:
+                        # Excel sheet names escape single quotes by doubling them inside the
+                        # quoted sheet reference, e.g. "Bob's Sheet" -> 'Bob''s Sheet'!A1.
+                        # We must perform this escaping before URL-encoding the activeCell.
+                        safe_worksheet_name = worksheet_name.replace("'", "''")
                         worksheet_web_url = (
-                            f"{workbook_web_url}&activeCell='{quote(worksheet_name)}'!A1"
+                            f"{workbook_web_url}&activeCell='{quote(safe_worksheet_name)}'!A1"
                         )
 
                     # Handle exceptions from content fetch

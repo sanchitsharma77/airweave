@@ -355,4 +355,7 @@ class TeamsMessageEntity(BaseEntity):
         """Return best-effort link to open the message."""
         if self.web_url_override:
             return self.web_url_override
-        return f"https://teams.microsoft.com/message/{self.id}"
+        # Fallback to generic Teams URL when Graph doesn't provide a deep link.
+        # We don't have enough context here (chat/conversation IDs) to construct
+        # a valid per-message deep link, and the /message/{id} path is invalid.
+        return "https://teams.microsoft.com/"

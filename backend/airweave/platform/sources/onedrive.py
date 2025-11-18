@@ -433,7 +433,8 @@ class OneDriveSource(BaseSource):
 
             # 2) Generate file entities for the drive
             drive_id = drive_entity.id
-            drive_name = drive_entity.drive_type or "OneDrive"
+            # Use the human-friendly drive name for breadcrumbs; fall back to drive_type/name.
+            drive_name = drive_entity.name or drive_entity.drive_type or "OneDrive"
 
             self.logger.debug(f"Starting to process files from drive: {drive_id} ({drive_name})")
 
