@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
-from tenacity import retry, stop_after_attempt
+from tenacity import retry, retry_if_exception, stop_after_attempt
 
 from airweave.core.logging import logger
 from airweave.core.shared_models import RateLimitLevel
@@ -177,7 +177,7 @@ class OutlookMailSource(BaseSource):
 
     @retry(
         stop=stop_after_attempt(5),
-        retry=_should_retry_outlook_request,
+        retry=retry_if_exception(_should_retry_outlook_request),
         wait=wait_rate_limit_with_backoff,
         reraise=True,
     )
@@ -264,9 +264,7 @@ class OutlookMailSource(BaseSource):
     ) -> None:
         """Initialize the per-folder message delta link and store it in the cursor."""
         try:
-            delta_url = (
-                f"{self.GRAPH_BASE_URL}/me/mailFolders/{folder_entity.id}/messages/delta"
-            )
+            delta_url = f"{self.GRAPH_BASE_URL}/me/mailFolders/{folder_entity.id}/messages/delta"
             self.logger.debug(f"Calling delta endpoint: {delta_url}")
             delta_data = await self._get_with_auth(client, delta_url)
 
