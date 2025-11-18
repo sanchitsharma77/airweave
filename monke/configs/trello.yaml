@@ -8,7 +8,7 @@ connector:
   composio_config:
     # UPDATE THESE with the new Composio connection that uses Airweave's consumer credentials
     # Consumer key: 88e61134b0cbdbced53c8b652a1461bf (from dev.integrations.yaml)
-    # Consumer secret: ddc6b96b7c9f0854a05dd291bfac082d2a553630cda92c216073d6d39b94f775
+    # Consumer secret: <redacted – see dev.integrations.yaml or secure store>
     account_id: ca_CQdfhfNklfWg
     auth_config_id: ac_05-vmn6Uv6_s
   config_fields:
