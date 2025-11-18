@@ -98,6 +98,16 @@ class BaseEntity(BaseModel):
         """
         from airweave.core.shared_models import AirweaveFieldFlag
 
+        # Polymorphic entities (e.g. PostgreSQL table entities) are generated dynamically
+        # and populate BaseEntity fields directly in the source connector instead of using
+        # AirweaveField flags. For these, we skip strict flag enforcement while still
+        # requiring basic BaseEntity invariants (like breadcrumbs being a list).
+        if any(cls.__name__ == "PolymorphicEntity" for cls in self.__class__.__mro__):
+            if self.breadcrumbs is None:
+                # Root polymorphic entities are allowed to have an empty breadcrumb list
+                self.breadcrumbs = []
+            return self
+
         # Define which flags must be unique (and validate their presence)
         unique_flags = [
             AirweaveFieldFlag.IS_ENTITY_ID,
@@ -105,25 +115,27 @@ class BaseEntity(BaseModel):
         ]
 
         for flag in unique_flags:
+            flag_key = flag.value if hasattr(flag, "value") else flag
+            flag_label = flag.value if hasattr(flag, "value") else str(flag)
             flagged_fields = []
 
             # Find all fields with this flag
             for field_name, field_info in self.__class__.model_fields.items():
                 json_extra = field_info.json_schema_extra
                 if json_extra and isinstance(json_extra, dict):
-                    if json_extra.get(flag):
+                    if json_extra.get(flag_key):
                         flagged_fields.append(field_name)
 
             # Validate exactly one field has this flag
             if len(flagged_fields) == 0:
                 raise ValueError(
                     f"{self.__class__.__name__} must have exactly ONE field marked with "
-                    f"{flag}. Found 0. Please add AirweaveField(..., {flag}=True) to the "
+                    f"{flag_label}. Found 0. Please add AirweaveField(..., {flag_label}=True) to the "
                     f"appropriate field (e.g., 'gid', 'id', 'name')."
                 )
             elif len(flagged_fields) > 1:
                 raise ValueError(
-                    f"{self.__class__.__name__} has multiple fields marked with {flag}: "
+                    f"{self.__class__.__name__} has multiple fields marked with {flag_label}: "
                     f"{', '.join(flagged_fields)}. Only ONE field can have this flag."
                 )
 
@@ -132,16 +144,16 @@ class BaseEntity(BaseModel):
             field_info = self.model_fields[flagged_field_name]
             if field_info.is_required() is False:
                 raise ValueError(
-                    f"{self.__class__.__name__}.{flagged_field_name} is marked with {flag} "
+                    f"{self.__class__.__name__}.{flagged_field_name} is marked with {flag_label} "
                     f"but is defined as Optional. Required flagged fields must not be Optional. "
-                    f"Change to: {flagged_field_name}: str = AirweaveField(..., {flag}=True)"
+                    f"Change to: {flagged_field_name}: str = AirweaveField(..., {flag_label}=True)"
                 )
 
             # Validate the flagged field has a value
             flagged_value = getattr(self, flagged_field_name, None)
             if flagged_value is None:
                 raise ValueError(
-                    f"{self.__class__.__name__}.{flagged_field_name} is marked with {flag} "
+                    f"{self.__class__.__name__}.{flagged_field_name} is marked with {flag_label} "
                     f"but has no value. Required flagged fields must not be None."
                 )
 
@@ -152,19 +164,21 @@ class BaseEntity(BaseModel):
         ]
 
         for flag in optional_flags:
+            flag_key = flag.value if hasattr(flag, "value") else flag
+            flag_label = flag.value if hasattr(flag, "value") else str(flag)
             flagged_fields = []
 
             # Find all fields with this flag
             for field_name, field_info in self.__class__.model_fields.items():
                 json_extra = field_info.json_schema_extra
                 if json_extra and isinstance(json_extra, dict):
-                    if json_extra.get(flag):
+                    if json_extra.get(flag_key):
                         flagged_fields.append(field_name)
 
             # Validate at most one field has this flag
             if len(flagged_fields) > 1:
                 raise ValueError(
-                    f"{self.__class__.__name__} has multiple fields marked with {flag}: "
+                    f"{self.__class__.__name__} has multiple fields marked with {flag_label}: "
                     f"{', '.join(flagged_fields)}. Only ONE field can have this flag."
                 )
 

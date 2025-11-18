@@ -284,12 +284,15 @@ class EntityPipeline:
 
     def _get_flagged_field_value(self, entity: BaseEntity, flag_name: str) -> Any:
         """Extract value of field marked with specified flag."""
+        # Support both raw string keys ("is_entity_id") and AirweaveFieldFlag enum values
+        flag_key = flag_name.value if hasattr(flag_name, "value") else flag_name
+
         # Iterate through entity's model fields
         for field_name, field_info in entity.model_fields.items():
             # Check if field has json_schema_extra with the flag
             json_extra = field_info.json_schema_extra
             if json_extra and isinstance(json_extra, dict):
-                if json_extra.get(flag_name):
+                if json_extra.get(flag_key):
                     return getattr(entity, field_name, None)
 
         return None
@@ -423,7 +426,11 @@ class EntityPipeline:
             for field_name, field_info in entity.__class__.model_fields.items():
                 json_extra = field_info.json_schema_extra
                 if json_extra and isinstance(json_extra, dict):
-                    if json_extra.get(AirweaveFieldFlag.UNHASHABLE):
+                    if json_extra.get(
+                        AirweaveFieldFlag.UNHASHABLE.value
+                        if hasattr(AirweaveFieldFlag.UNHASHABLE, "value")
+                        else AirweaveFieldFlag.UNHASHABLE
+                    ):
                         excluded_fields.add(field_name)
 
             content_dict = {k: v for k, v in entity_dict.items() if k not in excluded_fields}
@@ -756,8 +763,13 @@ class EntityPipeline:
         """
         fields = {}
         for field_name, field_info in entity.__class__.model_fields.items():
-            if field_info.json_schema_extra and isinstance(field_info.json_schema_extra, dict):
-                if field_info.json_schema_extra.get(AirweaveFieldFlag.EMBEDDABLE):
+            json_extra = field_info.json_schema_extra
+            if json_extra and isinstance(json_extra, dict):
+                if json_extra.get(
+                    AirweaveFieldFlag.EMBEDDABLE.value
+                    if hasattr(AirweaveFieldFlag.EMBEDDABLE, "value")
+                    else AirweaveFieldFlag.EMBEDDABLE
+                ):
                     value = getattr(entity, field_name, None)
                     if value is not None:
                         fields[field_name] = value
