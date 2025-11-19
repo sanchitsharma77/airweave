@@ -420,7 +420,7 @@ class ClickUpSource(BaseSource):
                 assignee=comment.get("assignee"),
                 assigned_by=comment.get("assigned_by"),
                 reactions=comment.get("reactions", []),
-                )
+            )
 
     async def _generate_file_entities(
         self,

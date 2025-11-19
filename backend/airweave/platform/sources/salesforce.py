@@ -185,9 +185,7 @@ class SalesforceSource(BaseSource):
                 account_id = account["Id"]
                 account_name = account.get("Name") or f"Account {account_id}"
                 created_time = self._parse_datetime(account.get("CreatedDate")) or datetime.utcnow()
-                updated_time = (
-                    self._parse_datetime(account.get("LastModifiedDate")) or created_time
-                )
+                updated_time = self._parse_datetime(account.get("LastModifiedDate")) or created_time
                 web_url = self._build_record_url("Account", account_id)
 
                 yield SalesforceAccountEntity(
@@ -280,9 +278,7 @@ class SalesforceSource(BaseSource):
                 contact_id = contact["Id"]
                 contact_name = contact.get("Name") or f"Contact {contact_id}"
                 created_time = self._parse_datetime(contact.get("CreatedDate")) or datetime.utcnow()
-                updated_time = (
-                    self._parse_datetime(contact.get("LastModifiedDate")) or created_time
-                )
+                updated_time = self._parse_datetime(contact.get("LastModifiedDate")) or created_time
                 account_id = contact.get("AccountId")
                 account_obj = contact.get("Account") or {}
                 account_name = account_obj.get("Name")

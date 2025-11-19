@@ -13,9 +13,7 @@ from airweave.platform.entities._base import BaseEntity, FileEntity
 class NotionDatabaseEntity(BaseEntity):
     """Schema for a Notion database."""
 
-    database_id: str = AirweaveField(
-        ..., description="The ID of the database.", is_entity_id=True
-    )
+    database_id: str = AirweaveField(..., description="The ID of the database.", is_entity_id=True)
     title: str = AirweaveField(
         ..., description="The title of the database", embeddable=True, is_name=True
     )
@@ -232,9 +230,7 @@ class NotionPropertyEntity(BaseEntity):
         embeddable=False,
         is_entity_id=True,
     )
-    property_id: str = AirweaveField(
-        ..., description="The ID of the property", embeddable=False
-    )
+    property_id: str = AirweaveField(..., description="The ID of the property", embeddable=False)
     property_name: str = AirweaveField(
         ..., description="The name of the property", embeddable=True, is_name=True
     )

@@ -201,6 +201,8 @@ class ConfluenceSource(BaseSource):
                     created_at=space.get("createdAt"),
                     updated_at=space.get("updatedAt"),
                     # API fields
+                    space_id=space["id"],
+                    space_name=space["name"],
                     space_key=space["key"],
                     space_type=space.get("type"),
                     description=space.get("description"),
@@ -369,6 +371,7 @@ class ConfluenceSource(BaseSource):
                     created_at=comment.get("createdAt"),
                     updated_at=comment.get("updatedAt"),
                     # API fields
+                    comment_id=comment["id"],
                     parent_content_id=comment.get("container", {}).get("id"),
                     text=comment_text,
                     created_by=comment.get("createdBy"),
@@ -392,10 +395,12 @@ class ConfluenceSource(BaseSource):
                     # Base fields
                     entity_id=label_obj["id"],
                     breadcrumbs=[],
-                    name=label_obj.get("name", ""),
+                    name=label_obj.get("name"),
                     created_at=None,  # Labels don't have creation timestamp
                     updated_at=None,  # Labels don't have update timestamp
                     # API fields
+                    label_id=label_obj["id"],
+                    label_name=label_obj["name"],
                     label_type=label_obj.get("type"),
                     owner_id=label_obj.get("ownerId"),
                 )
@@ -490,7 +495,11 @@ class ConfluenceSource(BaseSource):
             async for space_entity in self._generate_space_entities(client):
                 yield space_entity
 
-                space_breadcrumb = Breadcrumb(entity_id=space_entity.entity_id)
+                space_breadcrumb = Breadcrumb(
+                    entity_id=space_entity.entity_id,
+                    name=space_entity.space_name or space_entity.space_key,
+                    entity_type=ConfluenceSpaceEntity.__name__,
+                )
 
                 # 2) For each space, yield pages and their children
                 async for page_entity in self._generate_page_entities(
@@ -506,7 +515,11 @@ class ConfluenceSource(BaseSource):
 
                     page_breadcrumbs = [
                         space_breadcrumb,
-                        Breadcrumb(entity_id=page_entity.entity_id),
+                        Breadcrumb(
+                            entity_id=page_entity.entity_id,
+                            name=page_entity.title or page_entity.name or "Untitled Page",
+                            entity_type=ConfluencePageEntity.__name__,
+                        ),
                     ]
                     # 3) For each page, yield comments
                     async for comment_entity in self._generate_comment_entities(
