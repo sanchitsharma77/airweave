@@ -722,7 +722,7 @@ class OutlookMailSource(BaseSource):
 
             # Save bytes using file downloader
             self.logger.debug(f"Saving attachment {attachment_name} to disk")
-            safe_name = safe_filename(attachment_name)
+            safe_name = safe_filename(attachment_name, default_ext="")
             await self.file_downloader.save_bytes(
                 entity=file_entity,
                 content=binary_data,
