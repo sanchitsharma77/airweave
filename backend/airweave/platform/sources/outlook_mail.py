@@ -16,6 +16,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt
 
 from airweave.core.logging import logger
+from airweave.platform.utils.filename_utils import safe_filename
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.cursors import OutlookMailCursor
 from airweave.platform.decorators import source
@@ -585,10 +586,11 @@ class OutlookMailSource(BaseSource):
         try:
             if body_content:
                 file_extension = ".txt" if is_plain_text else ".html"
+                filename = safe_filename(message_entity.name, file_extension)
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_content.encode("utf-8"),
-                    filename_with_extension=message_entity.name + file_extension,
+                    filename_with_extension=filename,
                     logger=self.logger,
                 )
         except FileSkippedException as e:
@@ -720,10 +722,11 @@ class OutlookMailSource(BaseSource):
 
             # Save bytes using file downloader
             self.logger.debug(f"Saving attachment {attachment_name} to disk")
+            safe_name = safe_filename(attachment_name, default_ext="")
             await self.file_downloader.save_bytes(
                 entity=file_entity,
                 content=binary_data,
-                filename_with_extension=attachment_name,  # Attachment name from API
+                filename_with_extension=safe_name,
                 logger=self.logger,
             )
 
