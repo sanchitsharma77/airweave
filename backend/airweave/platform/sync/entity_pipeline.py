@@ -25,6 +25,7 @@ from airweave.db.session import get_db_context
 from airweave.platform.entities._base import (
     BaseEntity,
     CodeFileEntity,
+    DeletionEntity,
     FileEntity,
     PolymorphicEntity,
 )
@@ -661,6 +662,11 @@ class EntityPipeline:
     ) -> Optional[UUID]:
         """Resolve entity definition ID with polymorphic fallback."""
         entity_class = entity.__class__
+
+        if issubclass(entity_class, DeletionEntity):
+            target_class = getattr(entity_class, "deletes_entity_class", None)
+            if target_class:
+                entity_class = target_class
 
         definition_id = sync_context.entity_map.get(entity_class)
         if definition_id:

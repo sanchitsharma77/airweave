@@ -28,6 +28,7 @@ from airweave.platform.downloader import FileSkippedException
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.google_drive import (
     GoogleDriveDriveEntity,
+    GoogleDriveFileDeletionEntity,
     GoogleDriveFileEntity,
 )
 from airweave.platform.sources._base import BaseSource
@@ -298,6 +299,99 @@ class GoogleDriveSource(BaseSource):
 
         # Persist for caller
         self._latest_new_start_page_token = latest_new_start
+
+    def _get_cursor_start_page_token(self) -> Optional[str]:
+        """Return the stored startPageToken if available."""
+        if not self.cursor:
+            return None
+        token = self.cursor.data.get("start_page_token")
+        if not token:
+            return None
+        return token
+
+    async def _emit_changes_since_token(
+        self, client: httpx.AsyncClient, start_token: str
+    ) -> AsyncGenerator[BaseEntity, None]:
+        """Emit change entities (currently deletions) since the given token."""
+        self.logger.info(
+            f"📊 Processing Drive changes since token {start_token} to capture deletions"
+        )
+        # Reset token tracker before iterating
+        self._latest_new_start_page_token = None
+        try:
+            async for change in self._iterate_changes(client, start_token):
+                entity = await self._build_entity_from_change(change)
+                if entity:
+                    yield entity
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 410:
+                # Token expired or invalid
+                self.logger.warning(
+                    "Stored startPageToken is no longer valid (410). Fetching a fresh token."
+                )
+                if self.cursor:
+                    try:
+                        fresh_token = await self._get_start_page_token(client)
+                        if fresh_token:
+                            self.cursor.update(start_page_token=fresh_token)
+                    except Exception as token_error:
+                        self.logger.error(
+                            f"Failed to refresh startPageToken after 410: {token_error}"
+                        )
+            else:
+                raise
+
+    async def _build_entity_from_change(
+        self, change: Dict
+    ) -> Optional[GoogleDriveFileDeletionEntity]:
+        """Convert a Drive change object into an entity (currently deletions only)."""
+        file_obj = change.get("file") or {}
+        removed = change.get("removed", False)
+        trashed = bool(file_obj.get("trashed")) or bool(file_obj.get("explicitlyTrashed"))
+        change_type = change.get("changeType")
+
+        is_deletion = removed or trashed or (change_type and change_type.lower() == "removed")
+        if not is_deletion:
+            return None
+
+        file_id = change.get("fileId") or file_obj.get("id")
+        if not file_id:
+            self.logger.debug(
+                "Drive change marked as deletion but missing fileId. Raw change: %s", change
+            )
+            return None
+
+        label = file_obj.get("name") or file_id
+
+        drive_id = file_obj.get("driveId") or change.get("driveId")
+        parents = file_obj.get("parents") or []
+        if not drive_id and parents:
+            drive_id = parents[0]
+
+        return GoogleDriveFileDeletionEntity(
+            breadcrumbs=[],
+            file_id=file_id,
+            label=f"Deleted file {label}",
+            drive_id=drive_id,
+            deletion_status="removed",
+        )
+
+    async def _store_next_start_page_token(self, client: httpx.AsyncClient) -> None:
+        """Persist the next startPageToken for future incremental runs."""
+        if not self.cursor:
+            return
+
+        next_token = getattr(self, "_latest_new_start_page_token", None)
+        if not next_token:
+            try:
+                next_token = await self._get_start_page_token(client)
+            except Exception as exc:
+                self.logger.error(f"Failed to fetch startPageToken: {exc}")
+                return
+
+        if next_token:
+            self.cursor.update(start_page_token=next_token)
+            self.logger.debug(f"Saved startPageToken for next run: {next_token}")
 
     async def _list_files(
         self,
@@ -802,9 +896,7 @@ class GoogleDriveSource(BaseSource):
             file_entity = self._build_file_entity(file_obj, parent_breadcrumb)
             if not file_entity:
                 return None
-            self.logger.debug(
-                f"Processing file entity: {file_entity.file_id} '{file_entity.name}'"
-            )
+            self.logger.debug(f"Processing file entity: {file_entity.file_id} '{file_entity.name}'")
 
             # Download file using downloader
             try:
@@ -920,6 +1012,12 @@ class GoogleDriveSource(BaseSource):
           deletion entities for removed files and upsert entities for changed files.
         """
         try:
+            start_page_token = self._get_cursor_start_page_token()
+            if start_page_token:
+                self.logger.debug(f"📊 Incremental sync using startPageToken={start_page_token}")
+            else:
+                self.logger.debug("🔄 Full sync (no stored startPageToken)")
+
             async with self.http_client() as client:
                 patterns: List[str] = getattr(self, "include_patterns", []) or []
                 self.logger.debug(f"Include patterns: {patterns}")
@@ -978,7 +1076,6 @@ class GoogleDriveSource(BaseSource):
                             yield mydrive_file_entity
                     except Exception as e:
                         self.logger.error(f"Error processing My Drive files: {str(e)}")
-                    return
 
                 # INCLUDE MODE: Resolve patterns and traverse only matched subtrees
                 # Shared drives first
@@ -1319,6 +1416,14 @@ class GoogleDriveSource(BaseSource):
 
                 except Exception as e:
                     self.logger.error(f"Include mode error for My Drive: {str(e)}")
+
+                if start_page_token:
+                    async for change_entity in self._emit_changes_since_token(
+                        client, start_page_token
+                    ):
+                        yield change_entity
+
+                await self._store_next_start_page_token(client)
 
         except Exception as e:
             self.logger.error(f"Critical error in generate_entities: {str(e)}")
