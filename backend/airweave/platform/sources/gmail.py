@@ -16,6 +16,7 @@ import httpx
 from tenacity import retry, stop_after_attempt
 
 from airweave.core.logging import logger
+from airweave.platform.utils.filename_utils import safe_filename
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.cursors import GmailCursor
 from airweave.platform.decorators import source
@@ -241,7 +242,7 @@ class GmailSource(BaseSource):
     # HTTP helpers
     # -----------------------
     @retry(
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(10),
         retry=_should_retry_gmail_request,
         wait=wait_rate_limit_with_backoff,
         reraise=True,
@@ -597,18 +598,20 @@ class GmailSource(BaseSource):
         # Email content is only in the local file for conversion
         try:
             if body_html:
+                filename = safe_filename(message_entity.name, ".html")
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_html.encode("utf-8"),
-                    filename_with_extension=message_entity.name + ".html",  # Has .html extension
+                    filename_with_extension=filename,
                     logger=self.logger,
                 )
             elif body_plain:
                 # Save plain-text emails as .txt files for conversion
+                filename = safe_filename(message_entity.name, ".txt")
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_plain.encode("utf-8"),
-                    filename_with_extension=message_entity.name + ".txt",  # Plain text
+                    filename_with_extension=filename,
                     logger=self.logger,
                 )
                 # Update file metadata to match plain text
@@ -833,12 +836,6 @@ class GmailSource(BaseSource):
         ):
             if ent is not None:
                 yield ent
-
-    def _safe_filename(self, filename: str) -> str:
-        """Create a safe version of a filename."""
-        # Replace potentially problematic characters
-        safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")
-        return safe_name.strip()
 
     # -----------------------
     # Incremental sync
