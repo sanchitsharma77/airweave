@@ -45,9 +45,7 @@ class HubspotContactEntity(BaseEntity):
         https://developers.hubspot.com/docs/api/crm/contacts
     """
 
-    contact_id: str = AirweaveField(
-        ..., description="The HubSpot contact ID.", is_entity_id=True
-    )
+    contact_id: str = AirweaveField(..., description="The HubSpot contact ID.", is_entity_id=True)
     display_name: str = AirweaveField(
         ...,
         description="Display name derived from first/last name or email.",

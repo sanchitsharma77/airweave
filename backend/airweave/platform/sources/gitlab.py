@@ -310,9 +310,7 @@ class GitLabSource(BaseSource):
             breadcrumbs=[],
             project_id=project_data["id"],
             name=project_data["name"],
-            created_at=self._require_datetime(
-                project_data.get("created_at"), "project.created_at"
-            ),
+            created_at=self._require_datetime(project_data.get("created_at"), "project.created_at"),
             last_activity_at=self._require_datetime(
                 project_data.get("last_activity_at")
                 or project_data.get("updated_at")
@@ -396,9 +394,7 @@ class GitLabSource(BaseSource):
                 breadcrumbs=project_breadcrumbs,
                 merge_request_id=mr["id"],
                 title=mr["title"],
-                created_at=self._require_datetime(
-                    mr.get("created_at"), "merge_request.created_at"
-                ),
+                created_at=self._require_datetime(mr.get("created_at"), "merge_request.created_at"),
                 updated_at=self._require_datetime(
                     mr.get("updated_at") or mr.get("created_at"),
                     "merge_request.updated_at",
@@ -722,9 +718,7 @@ class GitLabSource(BaseSource):
 
         # Get issues
         try:
-            async for issue in self._get_project_issues(
-                client, project_id, project_breadcrumbs
-            ):
+            async for issue in self._get_project_issues(client, project_id, project_breadcrumbs):
                 yield issue
         except Exception as e:
             self.logger.warning(f"Failed to get issues for {project.path_with_namespace}: {e}")

@@ -224,7 +224,7 @@ class GitLabCodeFileEntity(CodeFileEntity):
         """Clickable file URL."""
         return self.web_url_value or (
             f"https://gitlab.com/{self.project_path}/-/blob/{self.branch}/{self.path_in_repo}"
-    )
+        )
 
 
 class GitLabIssueEntity(BaseEntity):
@@ -291,7 +291,10 @@ class GitLabIssueEntity(BaseEntity):
     @computed_field(return_type=str)
     def web_url(self) -> str:
         """Clickable issue URL."""
-        return self.web_url_value or f"https://gitlab.com/projects/{self.project_id}/-/issues/{self.iid}"
+        return (
+            self.web_url_value
+            or f"https://gitlab.com/projects/{self.project_id}/-/issues/{self.iid}"
+        )
 
 
 class GitLabMergeRequestEntity(BaseEntity):

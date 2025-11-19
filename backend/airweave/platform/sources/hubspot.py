@@ -329,7 +329,9 @@ class HubspotSource(BaseSource):
         """Build a HubSpot UI URL for the given object."""
         if not self._portal_id:
             return None
-        return f"https://app.hubspot.com/contacts/{self._portal_id}/record/{object_type}/{object_id}"
+        return (
+            f"https://app.hubspot.com/contacts/{self._portal_id}/record/{object_type}/{object_id}"
+        )
 
     async def _generate_contact_entities(
         self, client: httpx.AsyncClient
@@ -401,9 +403,7 @@ class HubspotSource(BaseSource):
                     contact_name = f"Contact {contact['id']}"
 
                 created_time = parse_hubspot_datetime(contact.get("createdAt")) or datetime.utcnow()
-                updated_time = (
-                    parse_hubspot_datetime(contact.get("updatedAt")) or created_time
-                )
+                updated_time = parse_hubspot_datetime(contact.get("updatedAt")) or created_time
                 yield HubspotContactEntity(
                     entity_id=contact["id"],
                     breadcrumbs=[],
@@ -479,9 +479,7 @@ class HubspotSource(BaseSource):
                 company_name = cleaned_properties.get("name") or f"Company {company['id']}"
 
                 created_time = parse_hubspot_datetime(company.get("createdAt")) or datetime.utcnow()
-                updated_time = (
-                    parse_hubspot_datetime(company.get("updatedAt")) or created_time
-                )
+                updated_time = parse_hubspot_datetime(company.get("updatedAt")) or created_time
                 yield HubspotCompanyEntity(
                     entity_id=company["id"],
                     breadcrumbs=[],
@@ -623,9 +621,7 @@ class HubspotSource(BaseSource):
                 ticket_name = cleaned_properties.get("subject") or f"Ticket {ticket['id']}"
 
                 created_time = parse_hubspot_datetime(ticket.get("createdAt")) or datetime.utcnow()
-                updated_time = (
-                    parse_hubspot_datetime(ticket.get("updatedAt")) or created_time
-                )
+                updated_time = parse_hubspot_datetime(ticket.get("updatedAt")) or created_time
                 yield HubspotTicketEntity(
                     entity_id=ticket["id"],
                     breadcrumbs=[],
