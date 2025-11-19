@@ -1076,7 +1076,6 @@ class GoogleDriveSource(BaseSource):
                             yield mydrive_file_entity
                     except Exception as e:
                         self.logger.error(f"Error processing My Drive files: {str(e)}")
-                    return
 
                 # INCLUDE MODE: Resolve patterns and traverse only matched subtrees
                 # Shared drives first
