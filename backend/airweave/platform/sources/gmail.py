@@ -776,8 +776,8 @@ class GmailSource(BaseSource):
                 # Create stable entity_id using message_id + filename
                 # Note: attachment_id is ephemeral and changes between API calls
                 # Using filename ensures same attachment has same entity_id across syncs
-                safe_filename = self._safe_filename(filename)
-                stable_entity_id = f"attach_{message_id}_{safe_filename}"
+                sanitized_filename = safe_filename(filename)
+                stable_entity_id = f"attach_{message_id}_{sanitized_filename}"
 
                 # Create FileEntity wrapper
                 attachment_name = filename or f"Attachment {attachment_id}"
