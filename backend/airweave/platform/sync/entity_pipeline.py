@@ -919,6 +919,8 @@ class EntityPipeline:
             ".swift": converters.code_converter,
             ".kt": converters.code_converter,
             ".kts": converters.code_converter,
+            ".tf": converters.code_converter,
+            ".tfvars": converters.code_converter,
         }
 
         converter = converter_map.get(ext)
