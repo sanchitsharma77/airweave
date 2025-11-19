@@ -3,7 +3,7 @@ import os
 import unicodedata
 
 
-def safe_filename(name: str, default_ext: str = ".html") -> str:
+def safe_filename(name: str, default_ext: str = "") -> str:
     """Return a Unicode-normalized, filesystem-safe filename with a valid extension.
 
     Falls back to 'untitled' if sanitization removes all characters.
