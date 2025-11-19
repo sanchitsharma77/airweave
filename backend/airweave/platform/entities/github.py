@@ -281,6 +281,8 @@ class GitHubFileDeletionEntity(DeletionEntity):
     and should be deleted from the destination.
     """
 
+    deletes_entity_class = GitHubCodeFileEntity
+
     full_path: str = AirweaveField(
         ...,
         description="Repository-qualified file path (owner/repo/path)",

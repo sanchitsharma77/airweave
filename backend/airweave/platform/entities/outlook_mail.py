@@ -181,6 +181,8 @@ class OutlookMessageDeletionEntity(DeletionEntity):
     so downstream deletion can target the correct parent/children.
     """
 
+    deletes_entity_class = OutlookMessageEntity
+
     message_id: str = AirweaveField(
         ...,
         description="ID of the deleted message",
@@ -200,6 +202,8 @@ class OutlookMailFolderDeletionEntity(DeletionEntity):
     Emitted when the Graph delta API reports a folder was removed.
     The `entity_id` (derived from `folder_id`) matches the original folder's id.
     """
+
+    deletes_entity_class = OutlookMailFolderEntity
 
     folder_id: str = AirweaveField(
         ...,

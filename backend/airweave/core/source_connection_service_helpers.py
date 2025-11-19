@@ -1525,17 +1525,26 @@ class SourceConnectionHelpers:
                     else payload.get("cron_schedule")
                 )
                 if cron_schedule is None:
-                    # Generate default daily schedule
-                    from datetime import timezone
-
-                    now_utc = datetime.now(timezone.utc)
-                    minute = now_utc.minute
-                    hour = now_utc.hour
-                    cron_schedule = f"{minute} {hour} * * *"
-                    ctx.logger.info(
-                        f"No cron schedule provided, defaulting to daily at "
-                        f"{hour:02d}:{minute:02d} UTC"
-                    )
+                    if getattr(source_class, "_supports_continuous", False):
+                        # Continuous connectors should default to fast incremental syncs
+                        cron_schedule = "*/5 * * * *"
+                        ctx.logger.info(
+                            "No cron schedule provided for continuous source '%s', "
+                            "defaulting to 5-minute incremental syncs",
+                            source.short_name,
+                        )
+                    else:
+                        # Generate default daily schedule anchored to current UTC time
+                        now_utc = datetime.now(timezone.utc)
+                        minute = now_utc.minute
+                        hour = now_utc.hour
+                        cron_schedule = f"{minute} {hour} * * *"
+                        ctx.logger.info(
+                            "No cron schedule provided, defaulting to daily full sync "
+                            "at %02d:%02d UTC",
+                            hour,
+                            minute,
+                        )
 
                 sync, sync_job = await self.create_sync_without_schedule(
                     uow.session,

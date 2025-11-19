@@ -163,6 +163,8 @@ class GoogleDriveFileEntity(FileEntity):
 class GoogleDriveFileDeletionEntity(DeletionEntity):
     """Deletion signal for a Google Drive file."""
 
+    deletes_entity_class = GoogleDriveFileEntity
+
     file_id: str = AirweaveField(
         ...,
         description="ID of the file that was deleted.",

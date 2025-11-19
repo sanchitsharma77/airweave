@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, ClassVar, Dict, List, Optional, Type
 from uuid import UUID
 
 from fastembed import SparseEmbedding
@@ -272,6 +272,8 @@ class EmailEntity(FileEntity):
 
 class DeletionEntity(BaseEntity):
     """Base entity that supports deletion tracking."""
+
+    deletes_entity_class: ClassVar[Optional[Type["BaseEntity"]]] = None
 
     deletion_status: str = Field(
         ...,

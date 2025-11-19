@@ -25,6 +25,7 @@ from airweave.db.session import get_db_context
 from airweave.platform.entities._base import (
     BaseEntity,
     CodeFileEntity,
+    DeletionEntity,
     FileEntity,
     PolymorphicEntity,
 )
@@ -662,6 +663,11 @@ class EntityPipeline:
         """Resolve entity definition ID with polymorphic fallback."""
         entity_class = entity.__class__
 
+        if issubclass(entity_class, DeletionEntity):
+            target_class = getattr(entity_class, "deletes_entity_class", None)
+            if target_class:
+                entity_class = target_class
+
         definition_id = sync_context.entity_map.get(entity_class)
         if definition_id:
             return definition_id
@@ -919,8 +925,6 @@ class EntityPipeline:
             ".swift": converters.code_converter,
             ".kt": converters.code_converter,
             ".kts": converters.code_converter,
-            ".tf": converters.code_converter,
-            ".tfvars": converters.code_converter,
         }
 
         converter = converter_map.get(ext)

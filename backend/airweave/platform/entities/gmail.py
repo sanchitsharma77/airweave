@@ -169,6 +169,8 @@ class GmailMessageDeletionEntity(DeletionEntity):
     correct parent/children.
     """
 
+    deletes_entity_class = GmailMessageEntity
+
     message_key: str = AirweaveField(
         ...,
         description="Stable Airweave message key (msg_<gmail_id>)",
