@@ -170,7 +170,7 @@ class ConfluenceSource(BaseSource):
             raise
 
     async def _generate_space_entities(
-        self, client: httpx.AsyncClient
+        self, client: httpx.AsyncClient, site_url: str
     ) -> AsyncGenerator[ConfluenceSpaceEntity, None]:
         """Generate ConfluenceSpaceEntity objects.
 
@@ -208,6 +208,7 @@ class ConfluenceSource(BaseSource):
                     description=space.get("description"),
                     status=space.get("status"),
                     homepage_id=space.get("homepageId"),
+                    site_url=site_url,
                 )
 
             # Cursor-based pagination (check for next link)
@@ -215,7 +216,12 @@ class ConfluenceSource(BaseSource):
             url = f"{self.base_url}{next_link}" if next_link else None
 
     async def _generate_page_entities(
-        self, client: httpx.AsyncClient, space_id: str, space_breadcrumb: Breadcrumb
+        self,
+        client: httpx.AsyncClient,
+        space_id: str,
+        space_key: str,
+        space_breadcrumb: Breadcrumb,
+        site_url: str,
     ) -> AsyncGenerator[ConfluencePageEntity, None]:
         """Generate ConfluencePageEntity objects for a space."""
         limit = 50
@@ -257,11 +263,13 @@ class ConfluenceSource(BaseSource):
                     local_path=None,  # Will be set after saving HTML content
                     # API fields
                     content_id=page["id"],
-                    title=page_details.get("title"),
+                    title=page_details.get("title", "Untitled"),
                     space_id=page_details.get("space", {}).get("id"),
+                    space_key=space_key,
                     body=body_content,
                     version=page_details.get("version", {}).get("number"),
                     status=page_details.get("status"),
+                    site_url=site_url,
                 )
 
                 # Create HTML file content with full body
@@ -337,7 +345,12 @@ class ConfluenceSource(BaseSource):
             url = f"{self.base_url}{next_link}" if next_link else None
 
     async def _generate_comment_entities(
-        self, client: httpx.AsyncClient, page_id: str, parent_breadcrumbs: List[Breadcrumb]
+        self,
+        client: httpx.AsyncClient,
+        page_id: str,
+        parent_breadcrumbs: List[Breadcrumb],
+        parent_space_key: str,
+        site_url: str,
     ) -> AsyncGenerator[BaseEntity, None]:
         """Generate ConfluenceCommentEntity objects for a given content (page, blog, etc.).
 
@@ -487,12 +500,14 @@ class ConfluenceSource(BaseSource):
         if not resources:
             raise ValueError("No accessible resources found")
         cloud_id = resources[0]["id"]
+        site_url = resources[0].get("url", "")  # e.g., https://your-domain.atlassian.net
 
         self.base_url = f"https://api.atlassian.com/ex/confluence/{cloud_id}"
         self.logger.debug(f"Base URL set to: {self.base_url}")
+        self.logger.debug(f"Site URL: {site_url}")
         async with httpx.AsyncClient() as client:
             # 1) Yield all spaces (top-level)
-            async for space_entity in self._generate_space_entities(client):
+            async for space_entity in self._generate_space_entities(client, site_url):
                 yield space_entity
 
                 space_breadcrumb = Breadcrumb(
@@ -505,7 +520,9 @@ class ConfluenceSource(BaseSource):
                 async for page_entity in self._generate_page_entities(
                     client,
                     space_id=space_entity.entity_id,
+                    space_key=space_entity.space_key,
                     space_breadcrumb=space_breadcrumb,
+                    site_url=site_url,
                 ):
                     # Skip if page_entity is None (failed to process)
                     if page_entity is None:
@@ -526,6 +543,8 @@ class ConfluenceSource(BaseSource):
                         client,
                         page_id=page_entity.content_id,
                         parent_breadcrumbs=page_breadcrumbs,
+                        parent_space_key=space_entity.space_key,
+                        site_url=site_url,
                     ):
                         yield comment_entity
 

@@ -24,6 +24,8 @@ Reference:
 
 from typing import Any, Dict, Optional
 
+from pydantic import computed_field
+
 from airweave.platform.entities._airweave_field import AirweaveField
 from airweave.platform.entities._base import BaseEntity, FileEntity
 
@@ -62,6 +64,16 @@ class ConfluenceSpaceEntity(BaseEntity):
     homepage_id: Optional[str] = AirweaveField(
         None, description="ID of the homepage for this space.", embeddable=False
     )
+    site_url: Optional[str] = AirweaveField(
+        None, description="Base Confluence site URL.", embeddable=False, unhashable=True
+    )
+
+    @computed_field(return_type=str)
+    def web_url(self) -> str:
+        """Construct clickable web URL for this space."""
+        if self.site_url:
+            return f"{self.site_url}/wiki/spaces/{self.space_key}"
+        return f"https://your-domain.atlassian.net/wiki/spaces/{self.space_key}"
 
 
 class ConfluencePageEntity(FileEntity):
@@ -96,6 +108,9 @@ class ConfluencePageEntity(FileEntity):
     space_id: Optional[str] = AirweaveField(
         None, description="ID of the space this page belongs to.", embeddable=False
     )
+    space_key: Optional[str] = AirweaveField(
+        None, description="Key of the space this page belongs to.", embeddable=False
+    )
     body: Optional[str] = AirweaveField(
         None, description="HTML body or excerpt of the page.", embeddable=True
     )
@@ -105,6 +120,16 @@ class ConfluencePageEntity(FileEntity):
     status: Optional[str] = AirweaveField(
         None, description="Status of the page (e.g., 'current').", embeddable=False
     )
+    site_url: Optional[str] = AirweaveField(
+        None, description="Base Confluence site URL.", embeddable=False, unhashable=True
+    )
+
+    @computed_field(return_type=str)
+    def web_url(self) -> str:
+        """Construct clickable web URL for this page."""
+        if self.site_url and self.space_key:
+            return f"{self.site_url}/wiki/spaces/{self.space_key}/pages/{self.content_id}"
+        return f"https://your-domain.atlassian.net/wiki/spaces/SPACE/pages/{self.content_id}"
 
 
 class ConfluenceBlogPostEntity(BaseEntity):
@@ -131,6 +156,9 @@ class ConfluenceBlogPostEntity(BaseEntity):
     space_id: Optional[str] = AirweaveField(
         None, description="ID of the space this blog post is in.", embeddable=False
     )
+    space_key: Optional[str] = AirweaveField(
+        None, description="Key of the space this blog post is in.", embeddable=False
+    )
     body: Optional[str] = AirweaveField(
         None, description="HTML body of the blog post.", embeddable=True
     )
@@ -140,6 +168,16 @@ class ConfluenceBlogPostEntity(BaseEntity):
     status: Optional[str] = AirweaveField(
         None, description="Status of the blog post (e.g., 'current').", embeddable=False
     )
+    site_url: Optional[str] = AirweaveField(
+        None, description="Base Confluence site URL.", embeddable=False, unhashable=True
+    )
+
+    @computed_field(return_type=str)
+    def web_url(self) -> str:
+        """Construct clickable web URL for this blog post."""
+        if self.site_url and self.space_key:
+            return f"{self.site_url}/wiki/spaces/{self.space_key}/blog/{self.content_id}"
+        return f"https://your-domain.atlassian.net/wiki/spaces/SPACE/blog/{self.content_id}"
 
 
 class ConfluenceCommentEntity(BaseEntity):
@@ -163,6 +201,9 @@ class ConfluenceCommentEntity(BaseEntity):
     parent_content_id: Optional[str] = AirweaveField(
         None, description="ID of the content this comment is attached to.", embeddable=False
     )
+    parent_space_key: Optional[str] = AirweaveField(
+        None, description="Key of the space the parent content belongs to.", embeddable=False
+    )
     text: str = AirweaveField(
         ..., description="Text/HTML body of the comment.", embeddable=True, is_name=True
     )
@@ -172,6 +213,16 @@ class ConfluenceCommentEntity(BaseEntity):
     status: Optional[str] = AirweaveField(
         None, description="Status of the comment (e.g., 'current').", embeddable=False
     )
+    site_url: Optional[str] = AirweaveField(
+        None, description="Base Confluence site URL.", embeddable=False, unhashable=True
+    )
+
+    @computed_field(return_type=str)
+    def web_url(self) -> str:
+        """Construct clickable web URL for the parent page (comments don't have direct URLs)."""
+        if self.site_url and self.parent_space_key and self.parent_content_id:
+            return f"{self.site_url}/wiki/spaces/{self.parent_space_key}/pages/{self.parent_content_id}#comment-{self.comment_id}"
+        return f"https://your-domain.atlassian.net/wiki/spaces/SPACE/pages/PAGE#comment-{self.comment_id}"
 
 
 class ConfluenceDatabaseEntity(BaseEntity):
@@ -260,6 +311,16 @@ class ConfluenceLabelEntity(BaseEntity):
     owner_id: Optional[str] = AirweaveField(
         None, description="ID of the user or content that owns label.", embeddable=False
     )
+    site_url: Optional[str] = AirweaveField(
+        None, description="Base Confluence site URL.", embeddable=False, unhashable=True
+    )
+
+    @computed_field(return_type=str)
+    def web_url(self) -> str:
+        """Construct clickable web URL for searching this label."""
+        if self.site_url:
+            return f"{self.site_url}/wiki/label/{self.label_name}"
+        return f"https://your-domain.atlassian.net/wiki/label/{self.label_name}"
 
 
 class ConfluenceTaskEntity(BaseEntity):
