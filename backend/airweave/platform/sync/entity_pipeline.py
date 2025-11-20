@@ -1014,6 +1014,18 @@ class EntityPipeline:
                 except SyncFailureError:
                     # Infrastructure failure from converter - propagate to fail entire sync
                     raise
+                except EntityProcessingError as e:
+                    # Recoverable converter issue - skip sub-batch without error log
+                    converter_name = converter.__class__.__name__
+                    sync_context.logger.warning(
+                        f"Batch conversion skipped for {converter_name} sub-batch: {e}"
+                    )
+                    failed_entities.extend(sub_batch)
+                    for entity in sub_batch:
+                        sync_context.logger.warning(
+                            f"Skipping {entity.__class__.__name__}[{entity.entity_id}] "
+                            f"due to recoverable converter error"
+                        )
                 except Exception as e:
                     # Unexpected errors - mark entire sub-batch as failed but continue
                     converter_name = converter.__class__.__name__
