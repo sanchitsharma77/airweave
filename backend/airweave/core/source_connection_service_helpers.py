@@ -915,6 +915,12 @@ class SourceConnectionHelpers:
         validated_auth = await self.validate_auth_fields(
             db, source_conn.short_name, auth_fields, ctx
         )
+        if hasattr(validated_auth, "model_dump"):
+            serializable_auth = validated_auth.model_dump()
+        elif hasattr(validated_auth, "dict"):
+            serializable_auth = validated_auth.dict()
+        else:
+            serializable_auth = validated_auth
 
         connection = await crud.connection.get(db, id=source_conn.connection_id, ctx=ctx)
         if connection and connection.integration_credential_id:
@@ -923,7 +929,7 @@ class SourceConnectionHelpers:
             )
             if credential:
                 credential_update = schemas.IntegrationCredentialUpdate(
-                    encrypted_credentials=credentials.encrypt(validated_auth)
+                    encrypted_credentials=credentials.encrypt(serializable_auth)
                 )
                 await crud.integration_credential.update(
                     db, db_obj=credential, obj_in=credential_update, ctx=ctx, uow=uow
