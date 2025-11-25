@@ -29,6 +29,27 @@ class AsyncWorkerPool:
         # Simple flag to prevent submissions after cancellation
         self._cancelled = False
 
+    @property
+    def active_workers_count(self) -> int:
+        """Number of workers currently executing tasks.
+
+        Returns:
+            Number of active workers (max_workers - available semaphore slots)
+
+        Implementation Note:
+            Uses asyncio.Semaphore._value (private attribute) to access the
+            internal counter tracking available permits. While this is a private
+            API, it's a stable implementation detail across Python 3.7+.
+
+            Alternative approaches (manual counter tracking) introduce race
+            conditions and complexity. The semaphore itself is the source of
+            truth for active tasks.
+
+            Formula: active = max_workers - available_permits
+            Example: max=20, available=18 → 2 tasks actively running
+        """
+        return self.max_workers - self.semaphore._value
+
     async def submit(self, coro: Callable, *args, **kwargs) -> asyncio.Task:
         """Submit a coroutine to be executed by the worker pool.
 

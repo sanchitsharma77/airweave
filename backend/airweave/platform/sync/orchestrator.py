@@ -62,6 +62,25 @@ class SyncOrchestrator:
         """Execute the synchronization process."""
         final_status = SyncJobStatus.FAILED  # Default to failed, will be updated based on outcome
         error_message: Optional[str] = None  # Track error message for finalization
+
+        # Register worker pool for metrics tracking (using sync_id and sync_job_id)
+        # Format: sync_{sync_id}_job_{sync_job_id} for easier parsing in metrics
+        pool_id = f"sync_{self.sync_context.sync.id}_job_{self.sync_context.sync_job.id}"
+        try:
+            from airweave.platform.temporal.worker_metrics import worker_metrics
+
+            worker_metrics.register_worker_pool(pool_id, self.worker_pool)
+        except Exception as e:
+            self.sync_context.logger.warning(
+                f"Failed to register worker pool for metrics: {e}",
+                extra={
+                    "pool_id": pool_id,
+                    "sync_id": str(self.sync_context.sync.id),
+                    "sync_job_id": str(self.sync_context.sync_job.id),
+                    "error_type": type(e).__name__,
+                },
+            )
+
         try:
             # Phase 1: Start sync
             phase_start = time.time()
@@ -101,6 +120,25 @@ class SyncOrchestrator:
             final_status = SyncJobStatus.FAILED
             raise
         finally:
+            # Note: Removed aggregate metrics recording (histograms/counters)
+            # Real-time visibility via Gauge metrics (airweave_worker_active_sync_info) which clear on completion
+
+            # Unregister worker pool from metrics
+            try:
+                from airweave.platform.temporal.worker_metrics import worker_metrics
+
+                worker_metrics.unregister_worker_pool(pool_id)
+            except Exception as e:
+                self.sync_context.logger.warning(
+                    f"Failed to unregister worker pool from metrics: {e}",
+                    extra={
+                        "pool_id": pool_id,
+                        "sync_id": str(self.sync_context.sync.id),
+                        "sync_job_id": str(self.sync_context.sync_job.id),
+                        "error_type": type(e).__name__,
+                    },
+                )
+
             # Always finalize progress and trackers with error message if available
             await self._finalize_progress_and_trackers(final_status, error_message)
 
