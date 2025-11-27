@@ -36,6 +36,9 @@ class WebConverter(BaseTextConverter):
     - Infrastructure failures: Raises SyncFailureError (fails entire sync)
     """
 
+    # Batch size from Firecrawl Growth plan (100 concurrent browsers)
+    BATCH_SIZE = FirecrawlRateLimiter.FIRECRAWL_CONCURRENT_BROWSERS
+
     def __init__(self):
         """Initialize the web converter with lazy Firecrawl client."""
         self.rate_limiter = FirecrawlRateLimiter()  # Singleton - shared across pod

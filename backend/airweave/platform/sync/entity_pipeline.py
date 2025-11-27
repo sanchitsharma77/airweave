@@ -982,12 +982,15 @@ class EntityPipeline:
                 failed_entities.append(entity)
 
         # Step 3: Batch convert each partition and append content to entities
-        # Process in smaller sub-batches for progressive completion
-        CONVERTER_BATCH_SIZE = 10
+        # Default batch size for converters without specific config
+        DEFAULT_CONVERTER_BATCH_SIZE = 10
 
         for converter, entity_key_pairs in converter_groups.items():
-            for i in range(0, len(entity_key_pairs), CONVERTER_BATCH_SIZE):
-                sub_batch = entity_key_pairs[i : i + CONVERTER_BATCH_SIZE]
+            # Use converter-specific batch size if available, otherwise default
+            batch_size = getattr(converter, "BATCH_SIZE", DEFAULT_CONVERTER_BATCH_SIZE)
+
+            for i in range(0, len(entity_key_pairs), batch_size):
+                sub_batch = entity_key_pairs[i : i + batch_size]
 
                 # Extract keys from pre-computed tuples
                 keys = [key for _, key in sub_batch]

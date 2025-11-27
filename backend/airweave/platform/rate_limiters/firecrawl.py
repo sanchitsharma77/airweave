@@ -23,6 +23,7 @@ class FirecrawlRateLimiter(BaseRateLimiter):
     # Firecrawl workspace limits (Growth plan)
     FIRECRAWL_WORKSPACE_RPM = 2500  # Requests per minute for batch endpoints
     FIRECRAWL_WORKSPACE_RPS = 42  # ~2500/60
+    FIRECRAWL_CONCURRENT_BROWSERS = 100  # Growth plan concurrent browser limit
 
     # Deployment configuration
     NUM_SYNC_WORKER_PODS = 6  # Number of K8s sync worker pods
