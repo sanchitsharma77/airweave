@@ -1300,7 +1300,7 @@ class EntityPipeline:
 
             tokenizer = tiktoken.get_encoding("cl100k_base")
             token_counts = [
-                len(tokenizer.encode(chunk_entity.textual_representation))
+                len(tokenizer.encode(chunk_entity.textual_representation, allowed_special="all"))
                 for chunk_entity in all_chunk_entities
             ]
 
