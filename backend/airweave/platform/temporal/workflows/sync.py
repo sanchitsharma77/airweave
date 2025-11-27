@@ -114,13 +114,9 @@ class RunSourceConnectionWorkflow:
             return  # Exit gracefully without error
 
         try:
-            # Import settings to check for local development mode
-            from airweave.core.config import settings
-
             # Use longer heartbeat timeout in local development for debugging
-            heartbeat_timeout = (
-                timedelta(hours=1) if settings.LOCAL_DEVELOPMENT else timedelta(seconds=30)
-            )
+            local_development = ctx_dict.get("local_development", False)
+            heartbeat_timeout = timedelta(hours=1) if local_development else timedelta(minutes=5)
 
             await workflow.execute_activity(
                 run_sync_activity,
@@ -134,7 +130,7 @@ class RunSourceConnectionWorkflow:
                     force_full_sync,
                 ],
                 start_to_close_timeout=timedelta(days=7),
-                heartbeat_timeout=heartbeat_timeout,  # longer in local dev for debugging
+                heartbeat_timeout=heartbeat_timeout,
                 cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                 retry_policy=RetryPolicy(
                     maximum_attempts=1,  # NO RETRIES - fail fast

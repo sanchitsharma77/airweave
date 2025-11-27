@@ -161,7 +161,7 @@ class WebConverter(BaseTextConverter):
                 urls,
                 formats=["markdown"],
                 poll_interval=POLL_INTERVAL_SECONDS,
-                timeout=POLL_TIMEOUT_SECONDS,
+                wait_timeout=POLL_TIMEOUT_SECONDS,
             )
 
         return await _call()
@@ -233,14 +233,20 @@ class WebConverter(BaseTextConverter):
         if not hasattr(doc, "metadata") or not doc.metadata:
             return None
 
+        # Firecrawl v4 uses snake_case: source_url
         # Try attribute access first (for typed objects)
+        source_url = getattr(doc.metadata, "source_url", None)
+        if source_url:
+            return source_url
+
+        # Fallback: try camelCase for older SDK versions
         source_url = getattr(doc.metadata, "sourceURL", None)
         if source_url:
             return source_url
 
         # Try dict access (for untyped dicts)
         if isinstance(doc.metadata, dict):
-            return doc.metadata.get("sourceURL")
+            return doc.metadata.get("source_url") or doc.metadata.get("sourceURL")
 
         return None
 
