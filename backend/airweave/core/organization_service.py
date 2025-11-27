@@ -12,6 +12,7 @@ from airweave.api.context import ApiContext
 
 # Import billing dependencies only if Stripe is enabled
 from airweave.core.config import settings
+from airweave.core.context_cache_service import context_cache
 from airweave.core.logging import logger
 from airweave.core.shared_models import AuthMethod
 from airweave.db.unit_of_work import UnitOfWork
@@ -242,6 +243,13 @@ class OrganizationService:
                 # Commit the transaction
                 await uow.commit()
                 logger.info("Successfully created local organization.")
+
+                # Invalidate user cache so subsequent requests see the new organization
+                # membership. Without this, the cached user_organizations list won't
+                # include the newly created organization, causing 403 errors.
+                await context_cache.invalidate_user(owner_user.email)
+                logger.debug(f"Invalidated user cache for {owner_user.email}")
+
                 return organization
 
         except Exception as e:
@@ -577,13 +585,29 @@ class OrganizationService:
             organization_id: ID of the organization
             org_name: Name of the organization (for logging)
         """
-        from sqlalchemy import delete
+        from sqlalchemy import delete, select
 
+        # First, get all users in this organization so we can invalidate their cache
+        user_query = (
+            select(User.email)
+            .join(UserOrganization, User.id == UserOrganization.user_id)
+            .where(UserOrganization.organization_id == organization_id)
+        )
+        result = await db.execute(user_query)
+        user_emails = [row[0] for row in result.fetchall()]
+
+        # Delete the relationships
         delete_user_org_stmt = delete(UserOrganization).where(
             UserOrganization.organization_id == organization_id
         )
         await db.execute(delete_user_org_stmt)
         logger.info(f"Deleted user-organization relationships for organization {org_name}")
+
+        # Invalidate cache for all affected users
+        for email in user_emails:
+            await context_cache.invalidate_user(email)
+        if user_emails:
+            logger.debug(f"Invalidated user cache for {len(user_emails)} users")
 
     async def _delete_qdrant_collections(
         self, db: AsyncSession, organization_id: UUID, org_name: str
@@ -785,6 +809,10 @@ class OrganizationService:
         )
         await db.execute(delete_stmt)
         await db.commit()
+
+        # Invalidate user cache so subsequent requests reflect the membership change
+        await context_cache.invalidate_user(user_schema.email)
+        logger.debug(f"Invalidated user cache for {user_schema.email}")
 
         logger.info(
             f"Successfully removed user {user_schema.email} from organization {org_schema.name}"
