@@ -577,13 +577,17 @@ class OrganizationService:
 
     async def _delete_user_organization_relationships(
         self, db: AsyncSession, organization_id: UUID, org_name: str
-    ) -> None:
+    ) -> List[str]:
         """Delete all user-organization relationships.
 
         Args:
             db: Database session
             organization_id: ID of the organization
             org_name: Name of the organization (for logging)
+
+        Returns:
+            List of user emails whose memberships were deleted (for cache invalidation
+            after transaction commit)
         """
         from sqlalchemy import delete, select
 
@@ -603,11 +607,8 @@ class OrganizationService:
         await db.execute(delete_user_org_stmt)
         logger.info(f"Deleted user-organization relationships for organization {org_name}")
 
-        # Invalidate cache for all affected users
-        for email in user_emails:
-            await context_cache.invalidate_user(email)
-        if user_emails:
-            logger.debug(f"Invalidated user cache for {len(user_emails)} users")
+        # Return emails for cache invalidation after commit
+        return user_emails
 
     async def _delete_qdrant_collections(
         self, db: AsyncSession, organization_id: UUID, org_name: str
@@ -730,14 +731,25 @@ class OrganizationService:
             # Delete billing subscription if Stripe is enabled
             await self._delete_billing_subscription(db, organization_id, org.name)
 
-            # Delete user-organization relationships
-            await self._delete_user_organization_relationships(db, organization_id, org.name)
+            # Delete user-organization relationships (returns emails for cache invalidation)
+            affected_user_emails = await self._delete_user_organization_relationships(
+                db, organization_id, org.name
+            )
 
             # Delete all Qdrant collections for this organization before SQL cascade
             await self._delete_qdrant_collections(db, organization_id, org.name)
 
             # Delete the organization from database (CASCADE will delete collections from SQL)
+            # This commits the transaction
             await self._delete_organization_from_db(db, organization_id, org.name)
+
+            # Invalidate user caches AFTER the transaction is committed
+            # This prevents race conditions where another request could repopulate
+            # the cache with stale data before the commit
+            for email in affected_user_emails:
+                await context_cache.invalidate_user(email)
+            if affected_user_emails:
+                logger.debug(f"Invalidated user cache for {len(affected_user_emails)} users")
 
             logger.info(f"Successfully deleted organization: {org.name}")
             return True
