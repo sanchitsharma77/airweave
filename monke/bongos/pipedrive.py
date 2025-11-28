@@ -49,11 +49,12 @@ class PipedriveBongo(BaseBongo):
             for token, p in gen_results:
                 await self._pace()
 
-                # Build payload - embed token in org_name for vector search
+                # Build payload - embed token in name for vector search
+                # Note: org_name is not a valid create field in Pipedrive API
+                name_with_token = f"{p.name} [{token}]"
                 payload = {
-                    "name": p.name,
+                    "name": name_with_token,
                     "email": [{"value": p.email, "primary": True, "label": "work"}],
-                    "org_name": p.org_name,  # Token is embedded here
                 }
                 if p.phone:
                     payload["phone"] = [{"value": p.phone, "primary": True, "label": "work"}]
@@ -103,12 +104,12 @@ class PipedriveBongo(BaseBongo):
                 token = ent.get("token", "")
                 url = f"{PIPEDRIVE_API}/persons/{ent['id']}?api_token={self.api_token}"
 
-                # Update with preserved token
+                # Update with preserved token in name
                 r = await client.put(
                     url,
                     json={
+                        "name": f"Updated Person [{token}]",  # Preserve token in name
                         "phone": [{"value": "+1-555-0100", "primary": True, "label": "work"}],
-                        "org_name": f"Monke QA Updated [{token}]",  # Preserve token
                     },
                 )
                 r.raise_for_status()
@@ -185,19 +186,17 @@ class PipedriveBongo(BaseBongo):
 
                     for person in persons:
                         name = (person.get("name") or "").lower()
-                        org_name = (person.get("org_name") or "").lower()
                         email = ""
                         if person.get("email"):
                             emails = person["email"]
                             if isinstance(emails, list) and emails:
                                 email = (emails[0].get("value") or "").lower()
 
-                        # Check if this looks like a test person
+                        # Check if this looks like a test person (token in name or monke email)
                         if (
                             "monke" in name
-                            or "monke" in org_name
                             or "monke-test.com" in email
-                            or "[" in org_name  # Token pattern
+                            or "[" in name  # Token pattern in name
                         ):
                             test_persons.append(person)
 

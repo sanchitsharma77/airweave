@@ -4,12 +4,12 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
-from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt
 
 from airweave.core.shared_models import RateLimitLevel
+from airweave.platform.configs.auth import PipedriveAuthConfig
 from airweave.platform.decorators import source
-from airweave.platform.entities._base import BaseEntity
+from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.pipedrive import (
     PipedriveActivityEntity,
     PipedriveDealEntity,
@@ -26,12 +26,6 @@ from airweave.platform.sources.retry_helpers import (
     wait_rate_limit_with_backoff,
 )
 from airweave.schemas.source_connection import AuthenticationMethod
-
-
-class PipedriveAuthConfig(BaseModel):
-    """Authentication configuration for Pipedrive API token auth."""
-
-    api_token: str = Field(..., description="Pipedrive API token")
 
 
 @source(
@@ -64,24 +58,19 @@ class PipedriveSource(BaseSource):
 
     @classmethod
     async def create(
-        cls, access_token: str = None, config: Optional[Dict[str, Any]] = None
+        cls, credentials: PipedriveAuthConfig, config: Optional[Dict[str, Any]] = None
     ) -> "PipedriveSource":
         """Create a new Pipedrive source instance.
 
         Args:
-            access_token: Not used (kept for interface compatibility)
-            config: Configuration dict containing api_token
+            credentials: PipedriveAuthConfig instance containing api_token
+            config: Optional source configuration parameters
 
         Returns:
             Configured PipedriveSource instance
         """
         instance = cls()
-
-        if config and config.get("api_token"):
-            instance._api_token = config["api_token"]
-        else:
-            raise ValueError("api_token is required in config")
-
+        instance._api_token = credentials.api_token
         return instance
 
     @retry(
@@ -179,7 +168,7 @@ class PipedriveSource(BaseSource):
         """Build a Pipedrive UI URL for the given record.
 
         Args:
-            record_type: Type of record (person, organization, deal, etc.)
+            record_type: Type of record (person, organization, deal, activity, product, lead)
             record_id: ID of the record
 
         Returns:
@@ -187,7 +176,20 @@ class PipedriveSource(BaseSource):
         """
         if not self._company_domain:
             return None
-        return f"https://{self._company_domain}.pipedrive.com/{record_type}/{record_id}"
+
+        base = f"https://{self._company_domain}.pipedrive.com"
+
+        # Different record types have different URL patterns in Pipedrive UI
+        url_patterns = {
+            "person": f"{base}/person/{record_id}",
+            "organization": f"{base}/organization/{record_id}",
+            "deal": f"{base}/deal/{record_id}",
+            "activity": f"{base}/activities/list/user/everyone/filter/all/activity/{record_id}",
+            "product": f"{base}/settings/products",  # Products don't have direct URLs
+            "lead": f"{base}/leads/inbox/{record_id}",
+        }
+
+        return url_patterns.get(record_type, f"{base}/{record_type}/{record_id}")
 
     async def _paginate(
         self, client: httpx.AsyncClient, endpoint: str
@@ -267,9 +269,20 @@ class PipedriveSource(BaseSource):
             created_time = parse_pipedrive_datetime(person.get("add_time")) or datetime.utcnow()
             updated_time = parse_pipedrive_datetime(person.get("update_time")) or created_time
 
+            # Build breadcrumbs - include organization if linked
+            breadcrumbs = []
+            if org_id and org_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(org_id),
+                        name=org_name,
+                        entity_type="PipedriveOrganizationEntity",
+                    )
+                )
+
             yield PipedrivePersonEntity(
                 entity_id=person_id,
-                breadcrumbs=[],
+                breadcrumbs=breadcrumbs,
                 name=name,
                 created_at=created_time,
                 updated_at=updated_time,
@@ -378,9 +391,28 @@ class PipedriveSource(BaseSource):
             updated_time = parse_pipedrive_datetime(deal.get("update_time")) or created_time
             expected_close = parse_pipedrive_datetime(deal.get("expected_close_date"))
 
+            # Build breadcrumbs - include organization and/or person if linked
+            breadcrumbs = []
+            if org_id and org_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(org_id),
+                        name=org_name,
+                        entity_type="PipedriveOrganizationEntity",
+                    )
+                )
+            if person_id and person_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(person_id),
+                        name=person_name,
+                        entity_type="PipedrivePersonEntity",
+                    )
+                )
+
             yield PipedriveDealEntity(
                 entity_id=deal_id,
-                breadcrumbs=[],
+                breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,
                 updated_at=updated_time,
@@ -443,9 +475,36 @@ class PipedriveSource(BaseSource):
             updated_time = parse_pipedrive_datetime(activity.get("update_time")) or created_time
             due_date = parse_pipedrive_datetime(activity.get("due_date"))
 
+            # Build breadcrumbs - include org, person, and/or deal if linked
+            breadcrumbs = []
+            if org_id and org_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(org_id),
+                        name=org_name,
+                        entity_type="PipedriveOrganizationEntity",
+                    )
+                )
+            if person_id and person_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(person_id),
+                        name=person_name,
+                        entity_type="PipedrivePersonEntity",
+                    )
+                )
+            if deal_id and deal_title:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(deal_id),
+                        name=deal_title,
+                        entity_type="PipedriveDealEntity",
+                    )
+                )
+
             yield PipedriveActivityEntity(
                 entity_id=activity_id,
-                breadcrumbs=[],
+                breadcrumbs=breadcrumbs,
                 name=subject,
                 created_at=created_time,
                 updated_at=updated_time,
@@ -468,7 +527,7 @@ class PipedriveSource(BaseSource):
                 owner_id=activity.get("user_id"),
                 properties=self._clean_properties(activity),
                 active_flag=activity.get("active_flag", True),
-                web_url_value=self._build_record_url("activities", activity_id),
+                web_url_value=self._build_record_url("activity", activity_id),
             )
             count += 1
 
@@ -526,7 +585,7 @@ class PipedriveSource(BaseSource):
                 prices=prices,
                 properties=self._clean_properties(product),
                 active_flag=product.get("active_flag", True),
-                web_url_value=self._build_record_url("products", product_id),
+                web_url_value=self._build_record_url("product", product_id),
             )
             count += 1
 
@@ -570,9 +629,28 @@ class PipedriveSource(BaseSource):
             updated_time = parse_pipedrive_datetime(lead.get("update_time")) or created_time
             expected_close = parse_pipedrive_datetime(lead.get("expected_close_date"))
 
+            # Build breadcrumbs - include organization and/or person if linked
+            breadcrumbs = []
+            if org_id and org_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(org_id),
+                        name=org_name,
+                        entity_type="PipedriveOrganizationEntity",
+                    )
+                )
+            if person_id and person_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(person_id),
+                        name=person_name,
+                        entity_type="PipedrivePersonEntity",
+                    )
+                )
+
             yield PipedriveLeadEntity(
                 entity_id=lead_id,
-                breadcrumbs=[],
+                breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,
                 updated_at=updated_time,
@@ -592,7 +670,7 @@ class PipedriveSource(BaseSource):
                 label_ids=lead.get("label_ids"),
                 properties=self._clean_properties(lead),
                 is_archived=lead.get("is_archived", False),
-                web_url_value=self._build_record_url("leads/inbox", lead_id),
+                web_url_value=self._build_record_url("lead", lead_id),
             )
             count += 1
 
@@ -639,9 +717,36 @@ class PipedriveSource(BaseSource):
             created_time = parse_pipedrive_datetime(note.get("add_time")) or datetime.utcnow()
             updated_time = parse_pipedrive_datetime(note.get("update_time")) or created_time
 
+            # Build breadcrumbs - include org, person, and/or deal if linked
+            breadcrumbs = []
+            if org_id and org_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(org_id),
+                        name=org_name,
+                        entity_type="PipedriveOrganizationEntity",
+                    )
+                )
+            if person_id and person_name:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(person_id),
+                        name=person_name,
+                        entity_type="PipedrivePersonEntity",
+                    )
+                )
+            if deal_id and deal_title:
+                breadcrumbs.append(
+                    Breadcrumb(
+                        entity_id=str(deal_id),
+                        name=deal_title,
+                        entity_type="PipedriveDealEntity",
+                    )
+                )
+
             yield PipedriveNoteEntity(
                 entity_id=note_id,
-                breadcrumbs=[],
+                breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,
                 updated_at=updated_time,
