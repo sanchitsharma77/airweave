@@ -8,7 +8,6 @@ import asyncio
 import os
 import re
 import socket
-import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
@@ -22,8 +21,7 @@ class WorkerMetricsRegistry:
         """Initialize the metrics registry."""
         self._active_activities: Dict[str, Dict[str, Any]] = {}
         self._worker_pools: Dict[str, Any] = {}  # Store worker pool references by pool_id
-        self._lock = asyncio.Lock()  # For async operations on _active_activities
-        self._pool_lock = threading.Lock()  # For sync operations on _worker_pools
+        self._lock = asyncio.Lock()  # Single async lock (no nesting, safe from deadlocks)
         self._worker_start_time = datetime.now(timezone.utc)
         self._worker_id = self._generate_worker_id()
 
@@ -105,6 +103,7 @@ class WorkerMetricsRegistry:
         activity_id = f"{activity_name}-{sync_job_id or 'unknown'}"
         start_time = datetime.now(timezone.utc)
 
+        # Single lock for all operations (no nesting, safe from deadlocks)
         async with self._lock:
             self._active_activities[activity_id] = {
                 "activity_name": activity_name,
@@ -115,19 +114,16 @@ class WorkerMetricsRegistry:
                 "metadata": metadata or {},
             }
 
-            # Store worker pool reference if provided (separate lock for thread safety)
+            # Store worker pool reference if provided
             if worker_pool is not None:
-                with self._pool_lock:
-                    self._worker_pools[activity_id] = worker_pool
+                self._worker_pools[activity_id] = worker_pool
 
         try:
             yield
         finally:
+            # Clean up on completion
             async with self._lock:
                 self._active_activities.pop(activity_id, None)
-
-            # Remove from worker pools (separate lock)
-            with self._pool_lock:
                 self._worker_pools.pop(activity_id, None)
 
     async def get_active_activities(self) -> List[Dict[str, Any]]:
@@ -203,31 +199,33 @@ class WorkerMetricsRegistry:
 
             return sync_metrics
 
-    async def get_total_active_workers(self) -> int:
-        """Get total number of active workers across all worker pools.
+    async def get_total_active_and_pending_workers(self) -> int:
+        """Get total number of active and pending workers across all worker pools.
 
         Returns:
-            Sum of active workers across all tracked worker pools
+            Sum of active+pending workers across all tracked worker pools.
+            Includes both executing tasks and tasks waiting for a worker slot.
         """
-        with self._pool_lock:
+        async with self._lock:
             total = 0
             for pool in self._worker_pools.values():
-                if pool is not None and hasattr(pool, "active_workers_count"):
-                    total += pool.active_workers_count
+                if pool is not None and hasattr(pool, "active_and_pending_count"):
+                    total += pool.active_and_pending_count
             return total
 
     async def get_per_sync_worker_counts(self) -> List[Dict[str, Any]]:
         """Get worker count for each active sync.
 
         Returns:
-            List of dicts with sync_id and active_worker_count
+            List of dicts with sync_id and active_and_pending_worker_count.
+            Count includes both executing and waiting tasks.
 
         Note:
             If multiple jobs of the same sync run concurrently (shouldn't happen
             due to checks in trigger_sync_run), their counts will be aggregated.
             This reduces metric cardinality from ~4.5M to ~300 time series.
         """
-        with self._pool_lock:
+        async with self._lock:
             # Use dict to aggregate by sync_id
             results_by_sync: Dict[str, int] = {}
 
@@ -236,7 +234,7 @@ class WorkerMetricsRegistry:
                 if not pool_id.startswith("sync_"):
                     continue
 
-                if pool is None or not hasattr(pool, "active_workers_count"):
+                if pool is None or not hasattr(pool, "active_and_pending_count"):
                     continue
 
                 try:
@@ -247,7 +245,7 @@ class WorkerMetricsRegistry:
                         continue
 
                     sync_id = parts[0].replace("sync_", "")
-                    count = pool.active_workers_count
+                    count = pool.active_and_pending_count
 
                     # Aggregate if sync_id already exists (handles rare concurrent runs)
                     if sync_id in results_by_sync:
@@ -264,7 +262,7 @@ class WorkerMetricsRegistry:
 
             # Convert to list of dicts
             return [
-                {"sync_id": sync_id, "active_worker_count": count}
+                {"sync_id": sync_id, "active_and_pending_worker_count": count}
                 for sync_id, count in results_by_sync.items()
             ]
 
@@ -279,40 +277,46 @@ class WorkerMetricsRegistry:
             ValueError: If pool_id already registered with different pool instance
 
         Note:
-            Thread-safe via _pool_lock for concurrent access from async and sync contexts.
+            Uses asyncio.Lock internally. Safe to call from sync context but registration
+            happens without lock protection (acceptable since called during setup phase).
         """
         import logging
 
-        with self._pool_lock:
-            if pool_id in self._worker_pools:
-                existing_pool = self._worker_pools[pool_id]
+        # Simple direct assignment without lock (called during orchestrator setup)
+        # Lock not needed here as this is called before concurrent access begins
+        if pool_id in self._worker_pools:
+            existing_pool = self._worker_pools[pool_id]
 
-                # Same pool, same ID = duplicate registration (warn but allow)
-                if existing_pool is worker_pool:
-                    logging.warning(
-                        f"Worker pool '{pool_id}' already registered (duplicate call). "
-                        f"This may indicate redundant registration logic that should be removed."
-                    )
-                    return
+            # Same pool, same ID = duplicate registration (warn but allow)
+            if existing_pool is worker_pool:
+                logging.warning(
+                    f"Worker pool '{pool_id}' already registered (duplicate call). "
+                    f"This may indicate redundant registration logic that should be removed."
+                )
+                return
 
-                # Different pool, same ID = collision (ERROR)
-                else:
-                    raise ValueError(
-                        f"Pool ID '{pool_id}' collision detected! "
-                        f"A different pool instance is already registered with this ID. "
-                        f"Existing pool: {existing_pool}, New pool: {worker_pool}"
-                    )
+            # Different pool, same ID = collision (ERROR)
+            else:
+                raise ValueError(
+                    f"Pool ID '{pool_id}' collision detected! "
+                    f"A different pool instance is already registered with this ID. "
+                    f"Existing pool: {existing_pool}, New pool: {worker_pool}"
+                )
 
-            self._worker_pools[pool_id] = worker_pool
+        self._worker_pools[pool_id] = worker_pool
 
     def unregister_worker_pool(self, pool_id: str) -> None:
         """Unregister a worker pool from metrics tracking (synchronous).
 
         Args:
             pool_id: Unique identifier for the pool
+
+        Note:
+            Safe to call from sync context. Simple dict.pop() without lock protection
+            (acceptable since called during cleanup phase).
         """
-        with self._pool_lock:
-            self._worker_pools.pop(pool_id, None)
+        # Simple removal without lock (called during orchestrator cleanup)
+        self._worker_pools.pop(pool_id, None)
 
     async def get_per_connector_metrics(self) -> Dict[str, Dict[str, int]]:
         """Aggregate metrics by connector type for low-cardinality Prometheus metrics.
@@ -320,12 +324,12 @@ class WorkerMetricsRegistry:
         Returns:
             Dict mapping connector_type to metrics:
             {
-                "slack": {"active_syncs": 3, "active_workers": 25},
-                "notion": {"active_syncs": 2, "active_workers": 10},
+                "slack": {"active_syncs": 3, "active_and_pending_workers": 25},
+                "notion": {"active_syncs": 2, "active_and_pending_workers": 10},
                 ...
             }
         """
-        # Acquire both locks (async first, then sync)
+        # Single lock for all operations (no nesting, safe from deadlocks)
         async with self._lock:
             connector_stats: Dict[str, Dict[str, int]] = {}
 
@@ -337,26 +341,32 @@ class WorkerMetricsRegistry:
                 connector = info.get("metadata", {}).get("source_type", "unknown")
 
                 if connector not in connector_stats:
-                    connector_stats[connector] = {"active_syncs": 0, "active_workers": 0}
+                    connector_stats[connector] = {
+                        "active_syncs": 0,
+                        "active_and_pending_workers": 0,
+                    }
 
                 connector_stats[connector]["active_syncs"] += 1
 
-            # Add worker counts per connector (acquire pool lock)
-            # Group worker pools by connector (parse from activity metadata)
-            with self._pool_lock:
-                for activity_id, pool in self._worker_pools.items():
-                    if pool is None or not hasattr(pool, "active_workers_count"):
-                        continue
+            # Add worker counts per connector (same lock, no nesting)
+            for activity_id, pool in self._worker_pools.items():
+                if pool is None or not hasattr(pool, "active_and_pending_count"):
+                    continue
 
-                    # Get connector type from corresponding activity
-                    activity_info = self._active_activities.get(activity_id)
-                    if activity_info:
-                        connector = activity_info.get("metadata", {}).get("source_type", "unknown")
+                # Get connector type from corresponding activity
+                activity_info = self._active_activities.get(activity_id)
+                if activity_info:
+                    connector = activity_info.get("metadata", {}).get("source_type", "unknown")
 
-                        if connector not in connector_stats:
-                            connector_stats[connector] = {"active_syncs": 0, "active_workers": 0}
+                    if connector not in connector_stats:
+                        connector_stats[connector] = {
+                            "active_syncs": 0,
+                            "active_and_pending_workers": 0,
+                        }
 
-                        connector_stats[connector]["active_workers"] += pool.active_workers_count
+                    connector_stats[connector]["active_and_pending_workers"] += (
+                        pool.active_and_pending_count
+                    )
 
             return connector_stats
 

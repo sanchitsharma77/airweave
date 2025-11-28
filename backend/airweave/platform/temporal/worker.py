@@ -7,7 +7,6 @@ from typing import Any
 
 from aiohttp import web
 from temporalio.worker import Worker
-from temporalio.runtime import Runtime, TelemetryConfig, PrometheusConfig
 
 from airweave.core.config import settings
 from airweave.core.logging import logger
@@ -200,7 +199,9 @@ class TemporalWorker:
 
             # Get connector-aggregated metrics (low cardinality)
             connector_metrics = await worker_metrics.get_per_connector_metrics()
-            worker_pool_active_count = await worker_metrics.get_total_active_workers()
+            worker_pool_active_and_pending_count = (
+                await worker_metrics.get_total_active_and_pending_workers()
+            )
 
             # Get thread pool metrics
             from airweave.platform.sync.async_helpers import get_active_thread_count
@@ -215,7 +216,7 @@ class TemporalWorker:
                 active_activities_count=metrics["active_activities_count"],
                 active_sync_jobs_count=len(metrics["active_sync_jobs"]),
                 task_queue=settings.TEMPORAL_TASK_QUEUE,
-                worker_pool_active_count=worker_pool_active_count,
+                worker_pool_active_and_pending_count=worker_pool_active_and_pending_count,
                 connector_metrics=connector_metrics,  # Connector-type aggregated data
                 sync_max_workers=settings.SYNC_MAX_WORKERS,
                 thread_pool_size=settings.SYNC_THREAD_POOL_SIZE,
@@ -256,7 +257,9 @@ class TemporalWorker:
             per_sync_workers = await worker_metrics.get_per_sync_worker_counts()
 
             # Merge worker counts into detailed_syncs
-            worker_counts_map = {s["sync_id"]: s["active_worker_count"] for s in per_sync_workers}
+            worker_counts_map = {
+                s["sync_id"]: s["active_and_pending_worker_count"] for s in per_sync_workers
+            }
 
             for sync in detailed_syncs:
                 sync["workers_allocated"] = worker_counts_map.get(sync["sync_id"], 0)
@@ -299,7 +302,7 @@ class TemporalWorker:
                 "active_syncs": detailed_syncs,  # NEW: detailed sync info with org, connector
                 "metrics": {  # NEW: resource metrics
                     "total_workers": settings.SYNC_MAX_WORKERS,
-                    "active_workers": await worker_metrics.get_total_active_workers(),
+                    "active_and_pending_workers": await worker_metrics.get_total_active_and_pending_workers(),
                     "total_threads": settings.SYNC_THREAD_POOL_SIZE,
                     "active_threads": thread_pool_active,
                     "cpu_percent": round(cpu_percent, 1),

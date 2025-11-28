@@ -30,25 +30,25 @@ class AsyncWorkerPool:
         self._cancelled = False
 
     @property
-    def active_workers_count(self) -> int:
-        """Number of workers currently executing tasks.
+    def active_and_pending_count(self) -> int:
+        """Number of workers with tasks active or pending.
 
         Returns:
-            Number of active workers (max_workers - available semaphore slots)
+            Total number of submitted tasks (executing + waiting for semaphore).
+            This represents the total load on the worker pool.
 
         Implementation Note:
-            Uses asyncio.Semaphore._value (private attribute) to access the
-            internal counter tracking available permits. While this is a private
-            API, it's a stable implementation detail across Python 3.7+.
+            pending_tasks includes:
+            - Tasks currently executing (inside semaphore)
+            - Tasks waiting for a semaphore slot
 
-            Alternative approaches (manual counter tracking) introduce race
-            conditions and complexity. The semaphore itself is the source of
-            truth for active tasks.
+            This is a more accurate representation of system load than
+            just counting executing tasks.
 
-            Formula: active = max_workers - available_permits
-            Example: max=20, available=18 → 2 tasks actively running
+            Example: max=20, pending_tasks=35
+            → 20 executing, 15 waiting
         """
-        return self.max_workers - self.semaphore._value
+        return len(self.pending_tasks)
 
     async def submit(self, coro: Callable, *args, **kwargs) -> asyncio.Task:
         """Submit a coroutine to be executed by the worker pool.
