@@ -246,7 +246,11 @@ class CodeChunker(BaseChunker):
         for chunks in code_results:
             for chunk in chunks:
                 # Recount with tiktoken (actual chunk text may be larger than reported)
-                chunk.token_count = len(self._tiktoken_tokenizer.encode(chunk.text))
+                # Use allowed_special="all" to handle special tokens like <|endoftext|>
+                # that may appear in code comments or strings
+                chunk.token_count = len(
+                    self._tiktoken_tokenizer.encode(chunk.text, allowed_special="all")
+                )
 
         return code_results
 
