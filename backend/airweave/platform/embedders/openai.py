@@ -103,7 +103,11 @@ class DenseEmbedder(BaseEmbedder):
                 )
 
         # Count tokens for the entire batch
-        total_tokens = sum(len(self._tokenizer.encode(text)) for text in texts)
+        # Use allowed_special="all" to handle special tokens like <|endoftext|>
+        # that may appear in user content
+        total_tokens = sum(
+            len(self._tokenizer.encode(text, allowed_special="all")) for text in texts
+        )
 
         sync_context.logger.debug(f"Embedding {len(texts)} texts with {total_tokens} total tokens")
 

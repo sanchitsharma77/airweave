@@ -214,7 +214,11 @@ class SemanticChunker(BaseChunker):
         for chunks in semantic_results:
             for chunk in chunks:
                 # Recount with tiktoken
-                chunk.token_count = len(self._tiktoken_tokenizer.encode(chunk.text))
+                # Use allowed_special="all" to handle special tokens like <|endoftext|>
+                # that may appear in user content (e.g., AI-generated text pasted into Linear)
+                chunk.token_count = len(
+                    self._tiktoken_tokenizer.encode(chunk.text, allowed_special="all")
+                )
 
         return semantic_results
 
