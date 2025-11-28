@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Union
 import asyncpg
 
 from airweave.platform.configs.auth import CTTIAuthConfig
+from airweave.platform.cursors import CTTICursor
 from airweave.platform.decorators import source
 from airweave.platform.entities.ctti import CTTIWebEntity
 from airweave.platform.sources._base import BaseSource
@@ -25,7 +26,8 @@ from airweave.schemas.source_connection import AuthenticationMethod
     auth_config_class="CTTIAuthConfig",
     config_class="CTTIConfig",
     labels=["Clinical Trials", "Database"],
-    supports_continuous=False,
+    supports_continuous=True,
+    cursor_class=CTTICursor,
 )
 class CTTISource(BaseSource):
     """CTTI source connector integrates with the AACT PostgreSQL database to extract trials.
@@ -59,8 +61,14 @@ class CTTISource(BaseSource):
                 - username: Username for AACT database
                 - password: Password for AACT database
             config: Optional configuration parameters:
-                - limit: Maximum number of studies to fetch (default: 10000)
-                - skip: Number of studies to skip for pagination (default: 0)
+                - limit: Maximum TOTAL number of studies to sync (default: 10000).
+                         This is enforced across all sync runs - once reached,
+                         subsequent syncs will be skipped until the limit is increased.
+
+        Note:
+            This source uses cursor-based pagination for incremental sync. The cursor
+            tracks both the last processed NCT_ID and the total count synced, ensuring
+            the configured limit is respected across all sync runs.
         """
         instance = cls()
         instance.credentials = credentials
@@ -181,28 +189,79 @@ class CTTISource(BaseSource):
             self.pool = None
 
     async def generate_entities(self) -> AsyncGenerator[CTTIWebEntity, None]:
-        """Generate WebEntity instances for each nct_id in the AACT studies table."""
+        """Generate WebEntity instances for each nct_id in the AACT studies table.
+
+        Supports incremental sync using cursor-based pagination. NCT_IDs are strictly
+        increasing alphanumeric identifiers, making them ideal for cursor-based sync.
+
+        The `limit` config enforces the TOTAL number of records to sync across all runs,
+        not the number per sync. Once the limit is reached, subsequent syncs will be skipped.
+        """
         try:
+            # Read cursor data for incremental sync
+            cursor_data = self.cursor.data if self.cursor else {}
+            last_nct_id = cursor_data.get("last_nct_id", "")
+            total_synced = cursor_data.get("total_synced", 0)
+
+            # Get configured limit (total records to sync, not per-sync)
+            limit = self.config.get("limit", 10000)
+
+            # Calculate how many more records we can sync
+            remaining = limit - total_synced
+
+            # Check if we've already reached the limit
+            if remaining <= 0:
+                self.logger.info(
+                    f"✅ Limit reached: {total_synced}/{limit} records already synced. "
+                    f"Skipping sync. To sync more, increase the limit configuration."
+                )
+                return
+
+            # Log sync mode
+            if last_nct_id:
+                self.logger.debug(
+                    f"📊 Incremental sync from NCT_ID > {last_nct_id} "
+                    f"({total_synced}/{limit} synced, {remaining} remaining)"
+                )
+            else:
+                self.logger.debug(f"🔄 Full sync (no cursor), limit={limit}")
+
             pool = await self._ensure_pool()
 
-            limit = self.config.get("limit", 10000)
-            skip = self.config.get("skip", 0)
-
-            query = f"""
-                SELECT nct_id
-                FROM "{self.AACT_SCHEMA}"."{self.AACT_TABLE}"
-                WHERE nct_id IS NOT NULL
-                ORDER BY nct_id
-                LIMIT {limit}
-                OFFSET {skip}
-            """
+            # Build query with cursor-based filtering
+            # Use parameterized query to prevent SQL injection
+            # Use 'remaining' as the limit to enforce total limit across syncs
+            if last_nct_id:
+                query = f"""
+                    SELECT nct_id
+                    FROM "{self.AACT_SCHEMA}"."{self.AACT_TABLE}"
+                    WHERE nct_id IS NOT NULL AND nct_id > $1
+                    ORDER BY nct_id ASC
+                    LIMIT {remaining}
+                """
+                query_args = [last_nct_id]
+            else:
+                query = f"""
+                    SELECT nct_id
+                    FROM "{self.AACT_SCHEMA}"."{self.AACT_TABLE}"
+                    WHERE nct_id IS NOT NULL
+                    ORDER BY nct_id ASC
+                    LIMIT {remaining}
+                """
+                query_args = []
 
             async def _execute_query():
                 async with pool.acquire() as conn:
-                    self.logger.debug(
-                        f"Fetching up to {limit} clinical trials from AACT (offset: {skip})"
-                    )
-                    records = await conn.fetch(query)
+                    if last_nct_id:
+                        self.logger.debug(
+                            f"Fetching up to {remaining} clinical trials from AACT "
+                            f"(NCT_ID > {last_nct_id})"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Fetching up to {remaining} clinical trials from AACT (full sync)"
+                        )
+                    records = await conn.fetch(query, *query_args)
                     self.logger.debug(f"Fetched {len(records)} clinical trial records")
                     return records
 
@@ -237,7 +296,18 @@ class CTTISource(BaseSource):
 
                 yield entity
 
-            self.logger.debug(f"Completed creating {entities_created} CTTI entities")
+                # Update cursor incrementally for crash resilience
+                # Track both position (last_nct_id) and total count (total_synced)
+                if self.cursor:
+                    self.cursor.update(
+                        last_nct_id=clean_nct_id,
+                        total_synced=total_synced + entities_created,
+                    )
+
+            self.logger.debug(
+                f"Completed creating {entities_created} CTTI entities "
+                f"(total synced: {total_synced + entities_created}/{limit})"
+            )
 
         except Exception as e:
             self.logger.error(f"Error in CTTI generate_entities: {e}")
