@@ -29,6 +29,27 @@ class AsyncWorkerPool:
         # Simple flag to prevent submissions after cancellation
         self._cancelled = False
 
+    @property
+    def active_and_pending_count(self) -> int:
+        """Number of workers with tasks active or pending.
+
+        Returns:
+            Total number of submitted tasks (executing + waiting for semaphore).
+            This represents the total load on the worker pool.
+
+        Implementation Note:
+            pending_tasks includes:
+            - Tasks currently executing (inside semaphore)
+            - Tasks waiting for a semaphore slot
+
+            This is a more accurate representation of system load than
+            just counting executing tasks.
+
+            Example: max=20, pending_tasks=35
+            → 20 executing, 15 waiting
+        """
+        return len(self.pending_tasks)
+
     async def submit(self, coro: Callable, *args, **kwargs) -> asyncio.Task:
         """Submit a coroutine to be executed by the worker pool.
 

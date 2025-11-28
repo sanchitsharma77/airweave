@@ -135,7 +135,7 @@ class TemporalWorker:
         self.metrics_server = runner
         logger.info(
             f"Control server started on 0.0.0.0:{settings.WORKER_METRICS_PORT} "
-            f"(endpoints: /health, /metrics, /drain)"
+            f"(endpoints: /health, /metrics, /status, /drain)"
         )
 
     async def _handle_drain(self, request):
@@ -197,16 +197,30 @@ class TemporalWorker:
             elif not self.running:
                 status = "stopped"
 
-            # Update Prometheus metrics
+            # Get connector-aggregated metrics (low cardinality)
+            connector_metrics = await worker_metrics.get_per_connector_metrics()
+            worker_pool_active_and_pending_count = (
+                await worker_metrics.get_total_active_and_pending_workers()
+            )
+
+            # Get thread pool metrics
+            from airweave.platform.sync.async_helpers import get_active_thread_count
+
+            thread_pool_active = get_active_thread_count()
+
+            # Update Prometheus metrics with low-cardinality data
             update_prometheus_metrics(
-                worker_id=metrics["worker_id"],
+                worker_id=worker_metrics.get_pod_ordinal(),  # Use ordinal (0, 1, 2)
                 status=status,
                 uptime_seconds=metrics["uptime_seconds"],
                 active_activities_count=metrics["active_activities_count"],
                 active_sync_jobs_count=len(metrics["active_sync_jobs"]),
                 task_queue=settings.TEMPORAL_TASK_QUEUE,
-                max_workflow_polls=8,
-                max_activity_polls=16,
+                worker_pool_active_and_pending_count=worker_pool_active_and_pending_count,
+                connector_metrics=connector_metrics,  # Connector-type aggregated data
+                sync_max_workers=settings.SYNC_MAX_WORKERS,
+                thread_pool_size=settings.SYNC_THREAD_POOL_SIZE,
+                thread_pool_active=thread_pool_active,
             )
 
             # Generate and return Prometheus metrics
@@ -224,49 +238,75 @@ class TemporalWorker:
     async def _handle_json_status(self, request):
         """JSON status endpoint for debugging and monitoring.
 
-        Returns JSON with detailed worker information:
-        - worker_id: Unique identifier for this worker
-        - status: Current worker status (running, draining, stopped)
-        - uptime_seconds: How long the worker has been running
-        - task_queue: Name of the task queue this worker is polling
-        - capacity: Max concurrent workflow and activity polls
-        - active_activities_count: Number of activities currently executing
-        - active_sync_jobs: List of sync job IDs being processed
-        - active_activities: Detailed list of active activities with durations
-
-        Example response:
-        {
-            "worker_id": "airweave-worker-abc123",
-            "status": "running",
-            "uptime_seconds": 3600.5,
-            "task_queue": "airweave-sync-queue",
-            "capacity": {
-                "max_workflow_polls": 8,
-                "max_activity_polls": 16
-            },
-            "active_activities_count": 3,
-            "active_sync_jobs": ["uuid1", "uuid2", "uuid3"],
-            "active_activities": [...]
-        }
+        Returns JSON with detailed worker information including per-sync details,
+        resource metrics (CPU, memory), and worker pool utilization.
         """
         try:
             # Get metrics from the global registry
             metrics = await worker_metrics.get_metrics_summary()
 
-            # Add worker-specific configuration
+            # Determine status
             status = "running"
             if self.draining:
                 status = "draining"
             elif not self.running:
                 status = "stopped"
 
+            # Get detailed sync info with org names, connectors, worker counts
+            detailed_syncs = await worker_metrics.get_detailed_sync_metrics()
+            per_sync_workers = await worker_metrics.get_per_sync_worker_counts()
+
+            # Merge worker counts into detailed_syncs
+            worker_counts_map = {
+                s["sync_id"]: s["active_and_pending_worker_count"] for s in per_sync_workers
+            }
+
+            for sync in detailed_syncs:
+                sync["workers_allocated"] = worker_counts_map.get(sync["sync_id"], 0)
+                # Add duration if available from activities
+                for activity in metrics["active_activities"]:
+                    if activity.get("sync_id") == sync["sync_id"]:
+                        sync["duration_seconds"] = activity.get("duration_seconds", 0)
+                        break
+                else:
+                    sync["duration_seconds"] = 0
+
+            # Get thread pool metrics
+            from airweave.platform.sync.async_helpers import get_active_thread_count
+
+            thread_pool_active = get_active_thread_count()
+
+            # Get process metrics using psutil
+            try:
+                import psutil
+
+                process = psutil.Process()
+                cpu_percent = process.cpu_percent(interval=0.1)
+                memory_info = process.memory_info()
+                memory_mb = round(memory_info.rss / 1024 / 1024, 0)
+            except ImportError:
+                # Fallback if psutil not available
+                cpu_percent = 0.0
+                memory_mb = 0
+
             response_data = {
-                **metrics,
+                "worker_id": metrics["worker_id"],
                 "status": status,
+                "uptime_seconds": metrics["uptime_seconds"],
                 "task_queue": settings.TEMPORAL_TASK_QUEUE,
                 "capacity": {
                     "max_workflow_polls": 8,
                     "max_activity_polls": 16,
+                },
+                "active_activities_count": metrics["active_activities_count"],
+                "active_syncs": detailed_syncs,  # NEW: detailed sync info with org, connector
+                "metrics": {  # NEW: resource metrics
+                    "total_workers": settings.SYNC_MAX_WORKERS,
+                    "active_and_pending_workers": await worker_metrics.get_total_active_and_pending_workers(),
+                    "total_threads": settings.SYNC_THREAD_POOL_SIZE,
+                    "active_threads": thread_pool_active,
+                    "cpu_percent": round(cpu_percent, 1),
+                    "memory_mb": int(memory_mb),
                 },
             }
 

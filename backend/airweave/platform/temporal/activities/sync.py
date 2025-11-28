@@ -121,11 +121,14 @@ async def run_sync_activity(  # noqa: C901
         tracking_context = worker_metrics.track_activity(
             activity_name="run_sync_activity",
             sync_job_id=sync_job.id,
+            sync_id=sync.id,
             organization_id=organization.id,
             metadata={
                 "connection_name": connection.name,
                 "collection_name": collection.name,
                 "force_full_sync": force_full_sync,
+                "source_type": connection.short_name,
+                "org_name": organization.name,
             },
         )
         await tracking_context.__aenter__()
