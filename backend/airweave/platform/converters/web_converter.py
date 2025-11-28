@@ -33,7 +33,8 @@ class WebConverter(BaseTextConverter):
 
     Error handling:
     - Per-URL failures: Returns None for that URL (entity will be skipped)
-    - Infrastructure failures: Raises SyncFailureError (fails entire sync)
+    - Batch failures: Returns all None (all entities in batch will be skipped)
+    - Infrastructure failures (API key, auth, quota): Raises SyncFailureError (fails entire sync)
     """
 
     # Batch size from Firecrawl Growth plan (100 concurrent browsers)
@@ -74,10 +75,13 @@ class WebConverter(BaseTextConverter):
             urls: List of URLs to fetch and convert
 
         Returns:
-            Dict mapping URL -> markdown content (None if that URL failed)
+            Dict mapping URL -> markdown content (None if that URL failed).
+            Even if the entire batch fails, returns all None values so entities
+            can be skipped individually rather than failing the entire sync.
 
         Raises:
-            SyncFailureError: If infrastructure failure (API key, network, rate limit)
+            SyncFailureError: Only for true infrastructure failures (API key missing,
+                              unauthorized, forbidden, payment required, quota exceeded)
         """
         if not urls:
             return {}
@@ -125,14 +129,10 @@ class WebConverter(BaseTextConverter):
 
             # Other errors (timeout, network issues) - log but return partial results
             # Individual URL failures are already handled by returning None
-            logger.error(f"Firecrawl batch scrape error: {e}")
+            # Even if entire batch fails, return all None - entities will be skipped individually
+            logger.warning(f"Firecrawl batch scrape error (entities will be skipped): {e}")
 
-            # If we got no results at all, this is an infrastructure failure
-            successful_count = sum(1 for v in results.values() if v is not None)
-            if successful_count == 0:
-                raise SyncFailureError(f"Firecrawl batch scrape failed completely: {e}")
-
-            # Otherwise, return partial results (some URLs succeeded)
+            # Return partial results - URLs with None will be skipped by entity pipeline
             return results
 
     async def _batch_scrape_with_retry(self, urls: List[str]):
