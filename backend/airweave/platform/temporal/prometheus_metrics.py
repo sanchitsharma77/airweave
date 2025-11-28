@@ -153,11 +153,11 @@ def update_worker_metrics(
 
     # Update connector-type aggregated metrics and zero out finished connectors
     current_connector_labels = set()
-    
+
     if connector_metrics:
         for connector_type, metrics in connector_metrics.items():
             current_connector_labels.add(connector_type)
-            
+
             worker_pool_active_and_pending_by_connector.labels(
                 worker_id=worker_id,
                 connector_type=connector_type,
@@ -167,23 +167,23 @@ def update_worker_metrics(
                 worker_id=worker_id,
                 connector_type=connector_type,
             ).set(metrics.get("active_syncs", 0))
-    
+
     # Zero out connectors that finished since last update
     # This prevents stale gauges from showing old values after syncs complete
     previous_labels = _previous_connector_labels.get(worker_id, set())
     finished_connectors = previous_labels - current_connector_labels
-    
+
     for connector_type in finished_connectors:
         worker_pool_active_and_pending_by_connector.labels(
             worker_id=worker_id,
             connector_type=connector_type,
         ).set(0)
-        
+
         worker_active_syncs_by_connector.labels(
             worker_id=worker_id,
             connector_type=connector_type,
         ).set(0)
-    
+
     # Update tracking for next scrape
     _previous_connector_labels[worker_id] = current_connector_labels
 
