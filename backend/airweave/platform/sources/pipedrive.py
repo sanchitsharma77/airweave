@@ -90,10 +90,11 @@ class PipedriveSource(BaseSource):
             JSON response from API
         """
         # API token auth - add as query parameter
+        # Keep original URL for logging to avoid exposing the token
         separator = "&" if "?" in url else "?"
-        url = f"{url}{separator}api_token={self._api_token}"
+        auth_url = f"{url}{separator}api_token={self._api_token}"
 
-        response = await client.get(url)
+        response = await client.get(auth_url)
 
         # Log detailed error information for 4xx/5xx responses before raising
         if not response.is_success:
