@@ -698,7 +698,9 @@ class PipedriveSource(BaseSource):
 
             # Extract deal info
             deal_id = note.get("deal_id")
-            deal_title = note.get("deal", {}).get("title") if isinstance(note.get("deal"), dict) else None
+            deal_title = None
+            if isinstance(note.get("deal"), dict):
+                deal_title = note.get("deal").get("title")
 
             # Extract person info
             person_id = note.get("person_id")
@@ -825,4 +827,3 @@ class PipedriveSource(BaseSource):
         except Exception as e:
             self.logger.error(f"Pipedrive API token validation failed: {e}")
             return False
-

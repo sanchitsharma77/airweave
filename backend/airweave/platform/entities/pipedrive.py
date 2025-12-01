@@ -346,9 +346,7 @@ class PipedriveProductEntity(BaseEntity):
         https://developers.pipedrive.com/docs/api/v1/Products
     """
 
-    product_id: str = AirweaveField(
-        ..., description="The Pipedrive product ID.", is_entity_id=True
-    )
+    product_id: str = AirweaveField(..., description="The Pipedrive product ID.", is_entity_id=True)
     product_name: str = AirweaveField(
         ..., description="Name of the product.", embeddable=True, is_name=True
     )
@@ -530,7 +528,9 @@ class PipedriveNoteEntity(BaseEntity):
         default=False, description="Whether the note is pinned to a person.", embeddable=False
     )
     pinned_to_organization_flag: bool = AirweaveField(
-        default=False, description="Whether the note is pinned to an organization.", embeddable=False
+        default=False,
+        description="Whether the note is pinned to an organization.",
+        embeddable=False,
     )
     properties: Dict[str, Any] = AirweaveField(
         default_factory=dict,
@@ -554,4 +554,3 @@ class PipedriveNoteEntity(BaseEntity):
     def web_url(self) -> str:
         """Link to the Pipedrive note UI."""
         return self.web_url_value or ""
-
