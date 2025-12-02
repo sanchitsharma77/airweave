@@ -12,7 +12,7 @@ connector:
     # - User.Read
     # - offline_access
     # Note: Production syncs only need Files.Read.All
-    account_id: ca_WIOsV2kX2PzH
+    account_id: ca_gVWCWpNlF9in
     auth_config_id: ac_qwZe7KS8pdYT
   config_fields:
     openai_model: "gpt-4.1-mini"
