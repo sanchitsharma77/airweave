@@ -282,7 +282,7 @@ class PipedriveSource(BaseSource):
                 )
 
             yield PipedrivePersonEntity(
-                entity_id=person_id,
+                entity_id=f"person_{person_id}",
                 breadcrumbs=breadcrumbs,
                 name=name,
                 created_at=created_time,
@@ -327,7 +327,7 @@ class PipedriveSource(BaseSource):
             updated_time = parse_pipedrive_datetime(org.get("update_time")) or created_time
 
             yield PipedriveOrganizationEntity(
-                entity_id=org_id,
+                entity_id=f"organization_{org_id}",
                 breadcrumbs=[],
                 name=name,
                 created_at=created_time,
@@ -412,7 +412,7 @@ class PipedriveSource(BaseSource):
                 )
 
             yield PipedriveDealEntity(
-                entity_id=deal_id,
+                entity_id=f"deal_{deal_id}",
                 breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,
@@ -504,7 +504,7 @@ class PipedriveSource(BaseSource):
                 )
 
             yield PipedriveActivityEntity(
-                entity_id=activity_id,
+                entity_id=f"activity_{activity_id}",
                 breadcrumbs=breadcrumbs,
                 name=subject,
                 created_at=created_time,
@@ -566,7 +566,7 @@ class PipedriveSource(BaseSource):
                             }
 
             yield PipedriveProductEntity(
-                entity_id=product_id,
+                entity_id=f"product_{product_id}",
                 breadcrumbs=[],
                 name=name,
                 created_at=created_time,
@@ -650,7 +650,7 @@ class PipedriveSource(BaseSource):
                 )
 
             yield PipedriveLeadEntity(
-                entity_id=lead_id,
+                entity_id=f"lead_{lead_id}",
                 breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,
@@ -748,7 +748,7 @@ class PipedriveSource(BaseSource):
                 )
 
             yield PipedriveNoteEntity(
-                entity_id=note_id,
+                entity_id=f"note_{note_id}",
                 breadcrumbs=breadcrumbs,
                 name=title,
                 created_at=created_time,

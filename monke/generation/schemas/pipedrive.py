@@ -35,3 +35,57 @@ class PipedriveDeal(BaseModel):
     value: Optional[float] = Field(default=None, description="Deal value")
     currency: str = Field(default="USD", description="Currency code")
 
+
+class PipedriveActivity(BaseModel):
+    """Structured activity content for Pipedrive (calls, meetings, tasks)."""
+
+    token: str = Field(
+        description="Verification token that MUST appear in the subject."
+    )
+    subject: str = Field(description="Activity subject/title")
+    activity_type: str = Field(
+        default="task",
+        description="Type of activity (call, meeting, task, deadline, email, lunch)",
+    )
+    note: Optional[str] = Field(default=None, description="Activity note/description")
+    due_date: Optional[str] = Field(
+        default=None, description="Due date in YYYY-MM-DD format"
+    )
+    due_time: Optional[str] = Field(default=None, description="Due time in HH:MM format")
+    duration: Optional[str] = Field(
+        default=None, description="Duration in HH:MM format"
+    )
+
+
+class PipedriveProduct(BaseModel):
+    """Structured product content for Pipedrive."""
+
+    token: str = Field(
+        description="Verification token that MUST appear in the product name."
+    )
+    name: str = Field(description="Product name")
+    code: Optional[str] = Field(default=None, description="Product code/SKU")
+    description: Optional[str] = Field(default=None, description="Product description")
+    unit: Optional[str] = Field(default="piece", description="Unit of measurement")
+    price: Optional[float] = Field(default=None, description="Product price")
+    currency: str = Field(default="USD", description="Currency code")
+
+
+class PipedriveLead(BaseModel):
+    """Structured lead content for Pipedrive."""
+
+    token: str = Field(
+        description="Verification token that MUST appear in the lead title."
+    )
+    title: str = Field(description="Lead title")
+    value: Optional[float] = Field(default=None, description="Expected lead value")
+    currency: str = Field(default="USD", description="Currency code")
+
+
+class PipedriveNote(BaseModel):
+    """Structured note content for Pipedrive."""
+
+    token: str = Field(
+        description="Verification token that MUST appear in the note content."
+    )
+    content: str = Field(description="Note content/body")
