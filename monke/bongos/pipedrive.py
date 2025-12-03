@@ -133,7 +133,14 @@ class PipedriveBongo(BaseBongo):
             all_entities.extend(notes)
 
         self.logger.info(f"✅ Created {len(all_entities)} Pipedrive entities total")
-        return all_entities
+
+        # IMPORTANT: Reorder entities for partial_delete compatibility
+        # Pipedrive doesn't allow deleting entities that have linked children
+        # (e.g., can't delete an org if deals are linked to it)
+        # Put "leaf" entities first so partial_delete can safely delete them
+        # Order: notes, products, activities, leads, deals, persons, organizations
+        deletion_safe_order = notes + products + activities + leads + deals + persons + orgs
+        return deletion_safe_order
 
     async def _create_organizations(
         self, client: httpx.AsyncClient
@@ -173,7 +180,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "organization",
-                "id": org_id,
+                "id": f"organization_{org_id}",
+                "pipedrive_id": org_id,  # Raw ID for API calls
                 "name": org.name,
                 "token": token,
                 "expected_content": token,
@@ -181,7 +189,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._organizations.append(ent)
-            self.created_entities.append({"id": org_id, "name": org.name})
+            self.created_entities.append({"id": f"organization_{org_id}", "name": org.name})
 
         self.logger.info(f"✅ Created {len(entities)} organizations")
         return entities
@@ -210,7 +218,7 @@ class PipedriveBongo(BaseBongo):
 
             # Link to organization if we have one
             if self._organizations and i < len(self._organizations):
-                payload["org_id"] = self._organizations[i]["id"]
+                payload["org_id"] = self._organizations[i]["pipedrive_id"]
 
             url = f"{PIPEDRIVE_API}/persons?api_token={self.api_token}"
             r = await client.post(url, json=payload)
@@ -229,7 +237,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "person",
-                "id": person_id,
+                "id": f"person_{person_id}",
+                "pipedrive_id": person_id,  # Raw ID for API calls
                 "name": person.name,
                 "token": token,
                 "expected_content": token,
@@ -237,7 +246,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._persons.append(ent)
-            self.created_entities.append({"id": person_id, "name": person.name})
+            self.created_entities.append({"id": f"person_{person_id}", "name": person.name})
 
         self.logger.info(f"✅ Created {len(entities)} persons")
         return entities
@@ -275,9 +284,9 @@ class PipedriveBongo(BaseBongo):
 
             # Link to person and org if available
             if self._persons and i < len(self._persons):
-                payload["person_id"] = self._persons[i]["id"]
+                payload["person_id"] = self._persons[i]["pipedrive_id"]
             if self._organizations and i < len(self._organizations):
-                payload["org_id"] = self._organizations[i]["id"]
+                payload["org_id"] = self._organizations[i]["pipedrive_id"]
 
             url = f"{PIPEDRIVE_API}/deals?api_token={self.api_token}"
             r = await client.post(url, json=payload)
@@ -306,7 +315,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "deal",
-                "id": deal_id,
+                "id": f"deal_{deal_id}",
+                "pipedrive_id": deal_id,  # Raw ID for API calls
                 "name": title_with_token,
                 "token": token,
                 "expected_content": token,
@@ -314,7 +324,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._deals.append(ent)
-            self.created_entities.append({"id": deal_id, "name": title_with_token})
+            self.created_entities.append({"id": f"deal_{deal_id}", "name": title_with_token})
 
         self.logger.info(f"✅ Created {len(entities)} deals")
         return entities
@@ -362,11 +372,11 @@ class PipedriveBongo(BaseBongo):
 
             # Link to deal, person, org if available
             if self._deals and i < len(self._deals):
-                payload["deal_id"] = self._deals[i]["id"]
+                payload["deal_id"] = self._deals[i]["pipedrive_id"]
             if self._persons and i < len(self._persons):
-                payload["person_id"] = self._persons[i]["id"]
+                payload["person_id"] = self._persons[i]["pipedrive_id"]
             if self._organizations and i < len(self._organizations):
-                payload["org_id"] = self._organizations[i]["id"]
+                payload["org_id"] = self._organizations[i]["pipedrive_id"]
 
             url = f"{PIPEDRIVE_API}/activities?api_token={self.api_token}"
             r = await client.post(url, json=payload)
@@ -395,7 +405,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "activity",
-                "id": activity_id,
+                "id": f"activity_{activity_id}",
+                "pipedrive_id": activity_id,  # Raw ID for API calls
                 "name": subject_with_token,
                 "token": token,
                 "expected_content": token,
@@ -403,7 +414,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._activities.append(ent)
-            self.created_entities.append({"id": activity_id, "name": subject_with_token})
+            self.created_entities.append({"id": f"activity_{activity_id}", "name": subject_with_token})
 
         self.logger.info(f"✅ Created {len(entities)} activities")
         return entities
@@ -456,7 +467,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "product",
-                "id": product_id,
+                "id": f"product_{product_id}",
+                "pipedrive_id": product_id,  # Raw ID for API calls
                 "name": product.name,
                 "token": token,
                 "expected_content": token,
@@ -464,7 +476,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._products.append(ent)
-            self.created_entities.append({"id": product_id, "name": product.name})
+            self.created_entities.append({"id": f"product_{product_id}", "name": product.name})
 
         self.logger.info(f"✅ Created {len(entities)} products")
         return entities
@@ -496,13 +508,13 @@ class PipedriveBongo(BaseBongo):
 
             # Link to person or organization (required by Pipedrive API)
             if self._persons and i < len(self._persons):
-                payload["person_id"] = self._persons[i]["id"]
+                payload["person_id"] = self._persons[i]["pipedrive_id"]
             elif self._organizations and i < len(self._organizations):
-                payload["organization_id"] = self._organizations[i]["id"]
+                payload["organization_id"] = self._organizations[i]["pipedrive_id"]
             elif self._persons:
-                payload["person_id"] = self._persons[i % len(self._persons)]["id"]
+                payload["person_id"] = self._persons[i % len(self._persons)]["pipedrive_id"]
             else:
-                payload["organization_id"] = self._organizations[i % len(self._organizations)]["id"]
+                payload["organization_id"] = self._organizations[i % len(self._organizations)]["pipedrive_id"]
 
             url = f"{PIPEDRIVE_API}/leads?api_token={self.api_token}"
             r = await client.post(url, json=payload)
@@ -521,7 +533,8 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "lead",
-                "id": lead_id,
+                "id": f"lead_{lead_id}",
+                "pipedrive_id": lead_id,  # Raw ID for API calls
                 "name": lead.title,
                 "token": token,
                 "expected_content": token,
@@ -529,7 +542,7 @@ class PipedriveBongo(BaseBongo):
             }
             entities.append(ent)
             self._leads.append(ent)
-            self.created_entities.append({"id": lead_id, "name": lead.title})
+            self.created_entities.append({"id": f"lead_{lead_id}", "name": lead.title})
 
         self.logger.info(f"✅ Created {len(entities)} leads")
         return entities
@@ -555,7 +568,7 @@ class PipedriveBongo(BaseBongo):
 
             # Link to a person (cycle through available persons)
             person_idx = i % len(self._persons)
-            person_id = self._persons[person_idx]["id"]
+            person_id = self._persons[person_idx]["pipedrive_id"]
 
             payload = {
                 "content": note.content,
@@ -579,16 +592,17 @@ class PipedriveBongo(BaseBongo):
 
             ent = {
                 "type": "note",
-                "id": note_id,
+                "id": f"note_{note_id}",
+                "pipedrive_id": note_id,  # Raw ID for API calls
                 "name": f"Note {note_id}",
                 "token": token,
                 "expected_content": token,
-                "path": f"pipedrive/note/{note_id}",
+                "path": f"pipedrive/note/note_{note_id}",
                 "person_id": person_id,
             }
             entities.append(ent)
             self._notes.append(ent)
-            self.created_entities.append({"id": note_id, "name": f"Note {note_id}"})
+            self.created_entities.append({"id": f"note_{note_id}", "name": f"Note {note_id}"})
 
         self.logger.info(f"✅ Created {len(entities)} notes")
         return entities
@@ -631,7 +645,8 @@ class PipedriveBongo(BaseBongo):
             await self._pace()
 
             token = ent.get("token", "")
-            entity_id = ent["id"]
+            # Use pipedrive_id (raw numeric ID) for API calls
+            pipedrive_id = ent.get("pipedrive_id", ent["id"])
 
             # Build update payload based on type
             if endpoint == "persons":
@@ -651,13 +666,13 @@ class PipedriveBongo(BaseBongo):
             else:
                 continue
 
-            url = f"{PIPEDRIVE_API}/{endpoint}/{entity_id}?api_token={self.api_token}"
+            url = f"{PIPEDRIVE_API}/{endpoint}/{pipedrive_id}?api_token={self.api_token}"
             r = await client.put(url, json=payload)
 
             if r.status_code in (200, 201):
                 updated.append({**ent, "updated": True})
             else:
-                self.logger.warning(f"Update {endpoint}/{entity_id} failed: {r.text}")
+                self.logger.warning(f"Update {endpoint}/{pipedrive_id} failed: {r.text}")
 
         return updated
 
@@ -723,17 +738,20 @@ class PipedriveBongo(BaseBongo):
                 for ent in by_type[ent_type]:
                     try:
                         await self._pace()
+                        # Use pipedrive_id (raw numeric ID) for API calls
+                        pipedrive_id = ent.get("pipedrive_id", ent["id"])
                         url = (
-                            f"{PIPEDRIVE_API}/{endpoint}/{ent['id']}"
+                            f"{PIPEDRIVE_API}/{endpoint}/{pipedrive_id}"
                             f"?api_token={self.api_token}"
                         )
                         r = await client.delete(url)
 
                         if r.status_code in (200, 204):
+                            # Return the unique id (type-prefixed) for tracking
                             deleted.append(str(ent["id"]))
                         else:
                             self.logger.warning(
-                                f"Delete {endpoint}/{ent['id']} failed {r.status_code}"
+                                f"Delete {endpoint}/{pipedrive_id} failed {r.status_code}"
                             )
                     except Exception as e:
                         self.logger.warning(f"Delete error {ent['id']}: {e}")
