@@ -97,6 +97,19 @@ class ShopifySource(BaseSource):
         self.client_secret: Optional[str] = None
         self.access_token: Optional[str] = None
 
+    def _prepare_entity(self, entity: BaseEntity) -> BaseEntity:
+        """Prepare entity for yielding - sets original_entity_id for orphan cleanup.
+
+        This ensures the orphan cleanup process can properly delete entities
+        from Qdrant when they are removed from the source.
+        """
+        from airweave.platform.entities._base import AirweaveSystemMetadata
+
+        if entity.airweave_system_metadata is None:
+            entity.airweave_system_metadata = AirweaveSystemMetadata()
+        entity.airweave_system_metadata.original_entity_id = entity.entity_id
+        return entity
+
     @classmethod
     async def create(
         cls, credentials: ShopifyAuthConfig, config: Optional[Dict[str, Any]] = None
@@ -302,26 +315,28 @@ class ShopifySource(BaseSource):
             updated_time = self._parse_datetime(product.get("updated_at")) or created_time
 
             # Yield the product entity
-            yield ShopifyProductEntity(
-                entity_id=product_id,
-                breadcrumbs=[],
-                name=product.get("title", f"Product {product_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                product_id=product_id,
-                product_title=product.get("title", f"Product {product_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("products", product_id),
-                body_html=product.get("body_html"),
-                vendor=product.get("vendor"),
-                product_type=product.get("product_type"),
-                handle=product.get("handle"),
-                status=product.get("status"),
-                tags=product.get("tags"),
-                variants=product.get("variants", []),
-                options=product.get("options", []),
-                images=product.get("images", []),
+            yield self._prepare_entity(
+                ShopifyProductEntity(
+                    entity_id=product_id,
+                    breadcrumbs=[],
+                    name=product.get("title", f"Product {product_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    product_id=product_id,
+                    product_title=product.get("title", f"Product {product_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("products", product_id),
+                    body_html=product.get("body_html"),
+                    vendor=product.get("vendor"),
+                    product_type=product.get("product_type"),
+                    handle=product.get("handle"),
+                    status=product.get("status"),
+                    tags=product.get("tags"),
+                    variants=product.get("variants", []),
+                    options=product.get("options", []),
+                    images=product.get("images", []),
+                )
             )
 
             # Yield variant entities with breadcrumbs pointing to parent product
@@ -337,34 +352,36 @@ class ShopifySource(BaseSource):
                 else:
                     variant_title = f"{product.get('title', '')} - {variant_title}"
 
-                yield ShopifyProductVariantEntity(
-                    entity_id=variant_id,
-                    breadcrumbs=[
-                        Breadcrumb(
-                            entity_id=product_id,
-                            name=product.get("title", f"Product {product_id}"),
-                            entity_type=ShopifyProductEntity.__name__,
-                        )
-                    ],
-                    name=variant_title,
-                    created_at=variant_created,
-                    updated_at=variant_updated,
-                    variant_id=variant_id,
-                    variant_title=variant_title,
-                    created_time=variant_created,
-                    updated_time=variant_updated,
-                    web_url_value=self._build_admin_url("products", product_id),
-                    product_id=product_id,
-                    sku=variant.get("sku"),
-                    price=variant.get("price"),
-                    compare_at_price=variant.get("compare_at_price"),
-                    inventory_quantity=variant.get("inventory_quantity"),
-                    weight=variant.get("weight"),
-                    weight_unit=variant.get("weight_unit"),
-                    barcode=variant.get("barcode"),
-                    option1=variant.get("option1"),
-                    option2=variant.get("option2"),
-                    option3=variant.get("option3"),
+                yield self._prepare_entity(
+                    ShopifyProductVariantEntity(
+                        entity_id=variant_id,
+                        breadcrumbs=[
+                            Breadcrumb(
+                                entity_id=product_id,
+                                name=product.get("title", f"Product {product_id}"),
+                                entity_type=ShopifyProductEntity.__name__,
+                            )
+                        ],
+                        name=variant_title,
+                        created_at=variant_created,
+                        updated_at=variant_updated,
+                        variant_id=variant_id,
+                        variant_title=variant_title,
+                        created_time=variant_created,
+                        updated_time=variant_updated,
+                        web_url_value=self._build_admin_url("products", product_id),
+                        product_id=product_id,
+                        sku=variant.get("sku"),
+                        price=variant.get("price"),
+                        compare_at_price=variant.get("compare_at_price"),
+                        inventory_quantity=variant.get("inventory_quantity"),
+                        weight=variant.get("weight"),
+                        weight_unit=variant.get("weight_unit"),
+                        barcode=variant.get("barcode"),
+                        option1=variant.get("option1"),
+                        option2=variant.get("option2"),
+                        option3=variant.get("option3"),
+                    )
                 )
 
     async def _generate_customer_entities(
@@ -400,30 +417,32 @@ class ShopifySource(BaseSource):
             else:
                 customer_name = f"Customer {customer_id}"
 
-            yield ShopifyCustomerEntity(
-                entity_id=customer_id,
-                breadcrumbs=[],
-                name=customer_name,
-                created_at=created_time,
-                updated_at=updated_time,
-                customer_id=customer_id,
-                customer_name=customer_name,
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("customers", customer_id),
-                email=email or None,
-                phone=customer.get("phone"),
-                first_name=first_name or None,
-                last_name=last_name or None,
-                verified_email=customer.get("verified_email", False),
-                accepts_marketing=customer.get("accepts_marketing", False),
-                orders_count=customer.get("orders_count", 0),
-                total_spent=customer.get("total_spent"),
-                state=customer.get("state"),
-                currency=customer.get("currency"),
-                tags=customer.get("tags"),
-                note=customer.get("note"),
-                default_address=customer.get("default_address"),
+            yield self._prepare_entity(
+                ShopifyCustomerEntity(
+                    entity_id=customer_id,
+                    breadcrumbs=[],
+                    name=customer_name,
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    customer_id=customer_id,
+                    customer_name=customer_name,
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("customers", customer_id),
+                    email=email or None,
+                    phone=customer.get("phone"),
+                    first_name=first_name or None,
+                    last_name=last_name or None,
+                    verified_email=customer.get("verified_email", False),
+                    accepts_marketing=customer.get("accepts_marketing", False),
+                    orders_count=customer.get("orders_count", 0),
+                    total_spent=customer.get("total_spent"),
+                    state=customer.get("state"),
+                    currency=customer.get("currency"),
+                    tags=customer.get("tags"),
+                    note=customer.get("note"),
+                    default_address=customer.get("default_address"),
+                )
             )
 
     async def _generate_order_entities(
@@ -466,35 +485,37 @@ class ShopifySource(BaseSource):
                         )
                     )
 
-            yield ShopifyOrderEntity(
-                entity_id=order_id,
-                breadcrumbs=breadcrumbs,
-                name=order_name,
-                created_at=created_time,
-                updated_at=updated_time,
-                order_id=order_id,
-                order_name=order_name,
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("orders", order_id),
-                order_number=order.get("order_number"),
-                email=order.get("email"),
-                phone=order.get("phone"),
-                total_price=order.get("total_price"),
-                subtotal_price=order.get("subtotal_price"),
-                total_tax=order.get("total_tax"),
-                total_discounts=order.get("total_discounts"),
-                currency=order.get("currency"),
-                financial_status=order.get("financial_status"),
-                fulfillment_status=order.get("fulfillment_status"),
-                customer_id=str(customer.get("id")) if customer else None,
-                line_items=order.get("line_items", []),
-                shipping_address=order.get("shipping_address"),
-                billing_address=order.get("billing_address"),
-                tags=order.get("tags"),
-                note=order.get("note"),
-                cancelled_at=self._parse_datetime(order.get("cancelled_at")),
-                cancel_reason=order.get("cancel_reason"),
+            yield self._prepare_entity(
+                ShopifyOrderEntity(
+                    entity_id=order_id,
+                    breadcrumbs=breadcrumbs,
+                    name=order_name,
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    order_id=order_id,
+                    order_name=order_name,
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("orders", order_id),
+                    order_number=order.get("order_number"),
+                    email=order.get("email"),
+                    phone=order.get("phone"),
+                    total_price=order.get("total_price"),
+                    subtotal_price=order.get("subtotal_price"),
+                    total_tax=order.get("total_tax"),
+                    total_discounts=order.get("total_discounts"),
+                    currency=order.get("currency"),
+                    financial_status=order.get("financial_status"),
+                    fulfillment_status=order.get("fulfillment_status"),
+                    customer_id=str(customer.get("id")) if customer else None,
+                    line_items=order.get("line_items", []),
+                    shipping_address=order.get("shipping_address"),
+                    billing_address=order.get("billing_address"),
+                    tags=order.get("tags"),
+                    note=order.get("note"),
+                    cancelled_at=self._parse_datetime(order.get("cancelled_at")),
+                    cancel_reason=order.get("cancel_reason"),
+                )
             )
 
     async def _generate_draft_order_entities(
@@ -538,31 +559,33 @@ class ShopifySource(BaseSource):
                         )
                     )
 
-            yield ShopifyDraftOrderEntity(
-                entity_id=draft_order_id,
-                breadcrumbs=breadcrumbs,
-                name=draft_order_name,
-                created_at=created_time,
-                updated_at=updated_time,
-                draft_order_id=draft_order_id,
-                draft_order_name=draft_order_name,
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("draft_orders", draft_order_id),
-                email=draft_order.get("email"),
-                status=draft_order.get("status"),
-                total_price=draft_order.get("total_price"),
-                subtotal_price=draft_order.get("subtotal_price"),
-                total_tax=draft_order.get("total_tax"),
-                currency=draft_order.get("currency"),
-                customer_id=str(customer.get("id")) if customer else None,
-                line_items=draft_order.get("line_items", []),
-                shipping_address=draft_order.get("shipping_address"),
-                billing_address=draft_order.get("billing_address"),
-                tags=draft_order.get("tags"),
-                note=draft_order.get("note"),
-                invoice_sent_at=self._parse_datetime(draft_order.get("invoice_sent_at")),
-                completed_at=self._parse_datetime(draft_order.get("completed_at")),
+            yield self._prepare_entity(
+                ShopifyDraftOrderEntity(
+                    entity_id=draft_order_id,
+                    breadcrumbs=breadcrumbs,
+                    name=draft_order_name,
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    draft_order_id=draft_order_id,
+                    draft_order_name=draft_order_name,
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("draft_orders", draft_order_id),
+                    email=draft_order.get("email"),
+                    status=draft_order.get("status"),
+                    total_price=draft_order.get("total_price"),
+                    subtotal_price=draft_order.get("subtotal_price"),
+                    total_tax=draft_order.get("total_tax"),
+                    currency=draft_order.get("currency"),
+                    customer_id=str(customer.get("id")) if customer else None,
+                    line_items=draft_order.get("line_items", []),
+                    shipping_address=draft_order.get("shipping_address"),
+                    billing_address=draft_order.get("billing_address"),
+                    tags=draft_order.get("tags"),
+                    note=draft_order.get("note"),
+                    invoice_sent_at=self._parse_datetime(draft_order.get("invoice_sent_at")),
+                    completed_at=self._parse_datetime(draft_order.get("completed_at")),
+                )
             )
 
     async def _generate_collection_entities(
@@ -586,26 +609,28 @@ class ShopifySource(BaseSource):
             created_time = self._parse_datetime(collection.get("published_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(collection.get("updated_at")) or created_time
 
-            yield ShopifyCollectionEntity(
-                entity_id=collection_id,
-                breadcrumbs=[],
-                name=collection.get("title", f"Collection {collection_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                collection_id=collection_id,
-                collection_title=collection.get("title", f"Collection {collection_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("collections", collection_id),
-                handle=collection.get("handle"),
-                body_html=collection.get("body_html"),
-                published_at=self._parse_datetime(collection.get("published_at")),
-                published_scope=collection.get("published_scope"),
-                sort_order=collection.get("sort_order"),
-                collection_type="custom",
-                disjunctive=None,
-                rules=[],
-                products_count=None,
+            yield self._prepare_entity(
+                ShopifyCollectionEntity(
+                    entity_id=collection_id,
+                    breadcrumbs=[],
+                    name=collection.get("title", f"Collection {collection_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    collection_id=collection_id,
+                    collection_title=collection.get("title", f"Collection {collection_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("collections", collection_id),
+                    handle=collection.get("handle"),
+                    body_html=collection.get("body_html"),
+                    published_at=self._parse_datetime(collection.get("published_at")),
+                    published_scope=collection.get("published_scope"),
+                    sort_order=collection.get("sort_order"),
+                    collection_type="custom",
+                    disjunctive=None,
+                    rules=[],
+                    products_count=None,
+                )
             )
 
         # Fetch smart collections
@@ -616,26 +641,28 @@ class ShopifySource(BaseSource):
             created_time = self._parse_datetime(collection.get("published_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(collection.get("updated_at")) or created_time
 
-            yield ShopifyCollectionEntity(
-                entity_id=collection_id,
-                breadcrumbs=[],
-                name=collection.get("title", f"Collection {collection_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                collection_id=collection_id,
-                collection_title=collection.get("title", f"Collection {collection_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("collections", collection_id),
-                handle=collection.get("handle"),
-                body_html=collection.get("body_html"),
-                published_at=self._parse_datetime(collection.get("published_at")),
-                published_scope=collection.get("published_scope"),
-                sort_order=collection.get("sort_order"),
-                collection_type="smart",
-                disjunctive=collection.get("disjunctive"),
-                rules=collection.get("rules", []),
-                products_count=None,
+            yield self._prepare_entity(
+                ShopifyCollectionEntity(
+                    entity_id=collection_id,
+                    breadcrumbs=[],
+                    name=collection.get("title", f"Collection {collection_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    collection_id=collection_id,
+                    collection_title=collection.get("title", f"Collection {collection_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("collections", collection_id),
+                    handle=collection.get("handle"),
+                    body_html=collection.get("body_html"),
+                    published_at=self._parse_datetime(collection.get("published_at")),
+                    published_scope=collection.get("published_scope"),
+                    sort_order=collection.get("sort_order"),
+                    collection_type="smart",
+                    disjunctive=collection.get("disjunctive"),
+                    rules=collection.get("rules", []),
+                    products_count=None,
+                )
             )
 
     async def _generate_location_entities(
@@ -655,30 +682,32 @@ class ShopifySource(BaseSource):
             created_time = self._parse_datetime(location.get("created_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(location.get("updated_at")) or created_time
 
-            yield ShopifyLocationEntity(
-                entity_id=location_id,
-                breadcrumbs=[],
-                name=location.get("name", f"Location {location_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                location_id=location_id,
-                location_name=location.get("name", f"Location {location_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("settings/locations", location_id),
-                address1=location.get("address1"),
-                address2=location.get("address2"),
-                city=location.get("city"),
-                province=location.get("province"),
-                province_code=location.get("province_code"),
-                country=location.get("country"),
-                country_code=location.get("country_code"),
-                zip=location.get("zip"),
-                phone=location.get("phone"),
-                active=location.get("active", True),
-                legacy=location.get("legacy", False),
-                localized_country_name=location.get("localized_country_name"),
-                localized_province_name=location.get("localized_province_name"),
+            yield self._prepare_entity(
+                ShopifyLocationEntity(
+                    entity_id=location_id,
+                    breadcrumbs=[],
+                    name=location.get("name", f"Location {location_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    location_id=location_id,
+                    location_name=location.get("name", f"Location {location_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("settings/locations", location_id),
+                    address1=location.get("address1"),
+                    address2=location.get("address2"),
+                    city=location.get("city"),
+                    province=location.get("province"),
+                    province_code=location.get("province_code"),
+                    country=location.get("country"),
+                    country_code=location.get("country_code"),
+                    zip=location.get("zip"),
+                    phone=location.get("phone"),
+                    active=location.get("active", True),
+                    legacy=location.get("legacy", False),
+                    localized_country_name=location.get("localized_country_name"),
+                    localized_province_name=location.get("localized_province_name"),
+                )
             )
 
     async def _generate_inventory_entities(
@@ -720,33 +749,35 @@ class ShopifySource(BaseSource):
                         )
                         updated_time = self._parse_datetime(item.get("updated_at")) or created_time
 
-                        yield ShopifyInventoryItemEntity(
-                            entity_id=inventory_item_id,
-                            breadcrumbs=[
-                                Breadcrumb(
-                                    entity_id=str(variant["id"]),
-                                    name=variant.get("title", f"Variant {variant['id']}"),
-                                    entity_type=ShopifyProductVariantEntity.__name__,
-                                )
-                            ],
-                            name=item.get("sku") or f"Inventory Item {inventory_item_id}",
-                            created_at=created_time,
-                            updated_at=updated_time,
-                            inventory_item_id=inventory_item_id,
-                            inventory_item_name=item.get("sku")
-                            or f"Inventory Item {inventory_item_id}",
-                            created_time=created_time,
-                            updated_time=updated_time,
-                            web_url_value=self._build_admin_url(
-                                "products/inventory", inventory_item_id
-                            ),
-                            sku=item.get("sku"),
-                            cost=item.get("cost"),
-                            tracked=item.get("tracked", False),
-                            requires_shipping=item.get("requires_shipping", False),
-                            country_code_of_origin=item.get("country_code_of_origin"),
-                            province_code_of_origin=item.get("province_code_of_origin"),
-                            harmonized_system_code=item.get("harmonized_system_code"),
+                        yield self._prepare_entity(
+                            ShopifyInventoryItemEntity(
+                                entity_id=inventory_item_id,
+                                breadcrumbs=[
+                                    Breadcrumb(
+                                        entity_id=str(variant["id"]),
+                                        name=variant.get("title", f"Variant {variant['id']}"),
+                                        entity_type=ShopifyProductVariantEntity.__name__,
+                                    )
+                                ],
+                                name=item.get("sku") or f"Inventory Item {inventory_item_id}",
+                                created_at=created_time,
+                                updated_at=updated_time,
+                                inventory_item_id=inventory_item_id,
+                                inventory_item_name=item.get("sku")
+                                or f"Inventory Item {inventory_item_id}",
+                                created_time=created_time,
+                                updated_time=updated_time,
+                                web_url_value=self._build_admin_url(
+                                    "products/inventory", inventory_item_id
+                                ),
+                                sku=item.get("sku"),
+                                cost=item.get("cost"),
+                                tracked=item.get("tracked", False),
+                                requires_shipping=item.get("requires_shipping", False),
+                                country_code_of_origin=item.get("country_code_of_origin"),
+                                province_code_of_origin=item.get("province_code_of_origin"),
+                                harmonized_system_code=item.get("harmonized_system_code"),
+                            )
                         )
 
                         # Fetch inventory levels for this item
@@ -762,33 +793,37 @@ class ShopifySource(BaseSource):
                                 level_location_id, f"Location {level_location_id}"
                             )
 
-                            yield ShopifyInventoryLevelEntity(
-                                entity_id=composite_id,
-                                breadcrumbs=[
-                                    Breadcrumb(
-                                        entity_id=inventory_item_id,
-                                        name=item.get("sku") or f"Item {inventory_item_id}",
-                                        entity_type=ShopifyInventoryItemEntity.__name__,
+                            yield self._prepare_entity(
+                                ShopifyInventoryLevelEntity(
+                                    entity_id=composite_id,
+                                    breadcrumbs=[
+                                        Breadcrumb(
+                                            entity_id=inventory_item_id,
+                                            name=item.get("sku") or f"Item {inventory_item_id}",
+                                            entity_type=ShopifyInventoryItemEntity.__name__,
+                                        ),
+                                        Breadcrumb(
+                                            entity_id=level_location_id,
+                                            name=location_name,
+                                            entity_type=ShopifyLocationEntity.__name__,
+                                        ),
+                                    ],
+                                    name=f"{item.get('sku', 'Item')} @ {location_name}",
+                                    created_at=updated_time,
+                                    updated_at=updated_time,
+                                    inventory_level_id=composite_id,
+                                    inventory_level_name=(
+                                        f"{item.get('sku', 'Item')} @ {location_name}"
                                     ),
-                                    Breadcrumb(
-                                        entity_id=level_location_id,
-                                        name=location_name,
-                                        entity_type=ShopifyLocationEntity.__name__,
+                                    created_time=updated_time,
+                                    updated_time=updated_time,
+                                    web_url_value=self._build_admin_url(
+                                        "products/inventory", inventory_item_id
                                     ),
-                                ],
-                                name=f"{item.get('sku', 'Item')} @ {location_name}",
-                                created_at=updated_time,
-                                updated_at=updated_time,
-                                inventory_level_id=composite_id,
-                                inventory_level_name=f"{item.get('sku', 'Item')} @ {location_name}",
-                                created_time=updated_time,
-                                updated_time=updated_time,
-                                web_url_value=self._build_admin_url(
-                                    "products/inventory", inventory_item_id
-                                ),
-                                inventory_item_id=inventory_item_id,
-                                location_id=level_location_id,
-                                available=level.get("available"),
+                                    inventory_item_id=inventory_item_id,
+                                    location_id=level_location_id,
+                                    available=level.get("available"),
+                                )
                             )
                     except Exception as e:
                         self.logger.warning(
@@ -818,35 +853,37 @@ class ShopifySource(BaseSource):
                 )
                 updated_time = self._parse_datetime(fulfillment.get("updated_at")) or created_time
 
-                yield ShopifyFulfillmentEntity(
-                    entity_id=fulfillment_id,
-                    breadcrumbs=[
-                        Breadcrumb(
-                            entity_id=order_id,
-                            name=order_name,
-                            entity_type=ShopifyOrderEntity.__name__,
-                        )
-                    ],
-                    name=f"Fulfillment {fulfillment_id} for {order_name}",
-                    created_at=created_time,
-                    updated_at=updated_time,
-                    fulfillment_id=fulfillment_id,
-                    fulfillment_name=f"Fulfillment {fulfillment_id} for {order_name}",
-                    created_time=created_time,
-                    updated_time=updated_time,
-                    web_url_value=self._build_admin_url("orders", order_id),
-                    order_id=order_id,
-                    status=fulfillment.get("status"),
-                    tracking_company=fulfillment.get("tracking_company"),
-                    tracking_number=fulfillment.get("tracking_number"),
-                    tracking_numbers=fulfillment.get("tracking_numbers", []),
-                    tracking_url=fulfillment.get("tracking_url"),
-                    tracking_urls=fulfillment.get("tracking_urls", []),
-                    location_id=str(fulfillment.get("location_id"))
-                    if fulfillment.get("location_id")
-                    else None,
-                    line_items=fulfillment.get("line_items", []),
-                    shipment_status=fulfillment.get("shipment_status"),
+                yield self._prepare_entity(
+                    ShopifyFulfillmentEntity(
+                        entity_id=fulfillment_id,
+                        breadcrumbs=[
+                            Breadcrumb(
+                                entity_id=order_id,
+                                name=order_name,
+                                entity_type=ShopifyOrderEntity.__name__,
+                            )
+                        ],
+                        name=f"Fulfillment {fulfillment_id} for {order_name}",
+                        created_at=created_time,
+                        updated_at=updated_time,
+                        fulfillment_id=fulfillment_id,
+                        fulfillment_name=f"Fulfillment {fulfillment_id} for {order_name}",
+                        created_time=created_time,
+                        updated_time=updated_time,
+                        web_url_value=self._build_admin_url("orders", order_id),
+                        order_id=order_id,
+                        status=fulfillment.get("status"),
+                        tracking_company=fulfillment.get("tracking_company"),
+                        tracking_number=fulfillment.get("tracking_number"),
+                        tracking_numbers=fulfillment.get("tracking_numbers", []),
+                        tracking_url=fulfillment.get("tracking_url"),
+                        tracking_urls=fulfillment.get("tracking_urls", []),
+                        location_id=str(fulfillment.get("location_id"))
+                        if fulfillment.get("location_id")
+                        else None,
+                        line_items=fulfillment.get("line_items", []),
+                        shipment_status=fulfillment.get("shipment_status"),
+                    )
                 )
 
     async def _generate_gift_card_entities(
@@ -875,29 +912,31 @@ class ShopifySource(BaseSource):
                 f"Gift Card ****{last_chars}" if last_chars else f"Gift Card {gift_card_id}"
             )
 
-            yield ShopifyGiftCardEntity(
-                entity_id=gift_card_id,
-                breadcrumbs=[],
-                name=gift_card_name,
-                created_at=created_time,
-                updated_at=updated_time,
-                gift_card_id=gift_card_id,
-                gift_card_name=gift_card_name,
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("gift_cards", gift_card_id),
-                initial_value=gift_card.get("initial_value"),
-                balance=gift_card.get("balance"),
-                currency=gift_card.get("currency"),
-                code=gift_card.get("code"),
-                last_characters=last_chars,
-                disabled_at=self._parse_datetime(gift_card.get("disabled_at")),
-                expires_on=gift_card.get("expires_on"),
-                note=gift_card.get("note"),
-                customer_id=str(gift_card.get("customer_id"))
-                if gift_card.get("customer_id")
-                else None,
-                order_id=str(gift_card.get("order_id")) if gift_card.get("order_id") else None,
+            yield self._prepare_entity(
+                ShopifyGiftCardEntity(
+                    entity_id=gift_card_id,
+                    breadcrumbs=[],
+                    name=gift_card_name,
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    gift_card_id=gift_card_id,
+                    gift_card_name=gift_card_name,
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("gift_cards", gift_card_id),
+                    initial_value=gift_card.get("initial_value"),
+                    balance=gift_card.get("balance"),
+                    currency=gift_card.get("currency"),
+                    code=gift_card.get("code"),
+                    last_characters=last_chars,
+                    disabled_at=self._parse_datetime(gift_card.get("disabled_at")),
+                    expires_on=gift_card.get("expires_on"),
+                    note=gift_card.get("note"),
+                    customer_id=str(gift_card.get("customer_id"))
+                    if gift_card.get("customer_id")
+                    else None,
+                    order_id=str(gift_card.get("order_id")) if gift_card.get("order_id") else None,
+                )
             )
 
     async def _generate_discount_entities(
@@ -917,28 +956,30 @@ class ShopifySource(BaseSource):
             created_time = self._parse_datetime(price_rule.get("created_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(price_rule.get("updated_at")) or created_time
 
-            yield ShopifyDiscountEntity(
-                entity_id=discount_id,
-                breadcrumbs=[],
-                name=price_rule.get("title", f"Discount {discount_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                discount_id=discount_id,
-                discount_title=price_rule.get("title", f"Discount {discount_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("discounts", discount_id),
-                value_type=price_rule.get("value_type"),
-                value=price_rule.get("value"),
-                target_type=price_rule.get("target_type"),
-                target_selection=price_rule.get("target_selection"),
-                allocation_method=price_rule.get("allocation_method"),
-                once_per_customer=price_rule.get("once_per_customer", False),
-                usage_limit=price_rule.get("usage_limit"),
-                starts_at=self._parse_datetime(price_rule.get("starts_at")),
-                ends_at=self._parse_datetime(price_rule.get("ends_at")),
-                prerequisite_subtotal_range=price_rule.get("prerequisite_subtotal_range"),
-                prerequisite_quantity_range=price_rule.get("prerequisite_quantity_range"),
+            yield self._prepare_entity(
+                ShopifyDiscountEntity(
+                    entity_id=discount_id,
+                    breadcrumbs=[],
+                    name=price_rule.get("title", f"Discount {discount_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    discount_id=discount_id,
+                    discount_title=price_rule.get("title", f"Discount {discount_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("discounts", discount_id),
+                    value_type=price_rule.get("value_type"),
+                    value=price_rule.get("value"),
+                    target_type=price_rule.get("target_type"),
+                    target_selection=price_rule.get("target_selection"),
+                    allocation_method=price_rule.get("allocation_method"),
+                    once_per_customer=price_rule.get("once_per_customer", False),
+                    usage_limit=price_rule.get("usage_limit"),
+                    starts_at=self._parse_datetime(price_rule.get("starts_at")),
+                    ends_at=self._parse_datetime(price_rule.get("ends_at")),
+                    prerequisite_subtotal_range=price_rule.get("prerequisite_subtotal_range"),
+                    prerequisite_quantity_range=price_rule.get("prerequisite_quantity_range"),
+                )
             )
 
     async def _generate_metaobject_entities(
@@ -980,21 +1021,25 @@ class ShopifySource(BaseSource):
                         handle = metaobject.get("handle", "")
                         display_name = handle or f"Metaobject {metaobject_id}"
 
-                        yield ShopifyMetaobjectEntity(
-                            entity_id=metaobject_id,
-                            breadcrumbs=[],
-                            name=display_name,
-                            created_at=created_time,
-                            updated_at=updated_time,
-                            metaobject_id=metaobject_id,
-                            metaobject_name=display_name,
-                            created_time=created_time,
-                            updated_time=updated_time,
-                            web_url_value=self._build_admin_url("content/entries", metaobject_id),
-                            type=def_type,
-                            handle=handle,
-                            fields=metaobject.get("fields", []),
-                            capabilities=metaobject.get("capabilities"),
+                        yield self._prepare_entity(
+                            ShopifyMetaobjectEntity(
+                                entity_id=metaobject_id,
+                                breadcrumbs=[],
+                                name=display_name,
+                                created_at=created_time,
+                                updated_at=updated_time,
+                                metaobject_id=metaobject_id,
+                                metaobject_name=display_name,
+                                created_time=created_time,
+                                updated_time=updated_time,
+                                web_url_value=self._build_admin_url(
+                                    "content/entries", metaobject_id
+                                ),
+                                type=def_type,
+                                handle=handle,
+                                fields=metaobject.get("fields", []),
+                                capabilities=metaobject.get("capabilities"),
+                            )
                         )
                 except Exception as e:
                     self.logger.warning(f"Failed to fetch metaobjects of type {def_type}: {e}")
@@ -1112,23 +1157,25 @@ class ShopifySource(BaseSource):
 
                     file_name = file_node.get("alt") or f"File {file_id}"
 
-                    yield ShopifyFileEntity(
-                        entity_id=file_id,
-                        breadcrumbs=[],
-                        name=file_name,
-                        created_at=created_time,
-                        updated_at=updated_time,
-                        file_id=file_id,
-                        file_name=file_name,
-                        created_time=created_time,
-                        updated_time=updated_time,
-                        web_url_value=self._build_admin_url("content/files", file_id),
-                        alt=file_node.get("alt"),
-                        file_status=file_node.get("fileStatus"),
-                        file_type=file_type,
-                        preview_image_url=file_url,
-                        original_file_size=file_node.get("originalFileSize"),
-                        url=file_url,
+                    yield self._prepare_entity(
+                        ShopifyFileEntity(
+                            entity_id=file_id,
+                            breadcrumbs=[],
+                            name=file_name,
+                            created_at=created_time,
+                            updated_at=updated_time,
+                            file_id=file_id,
+                            file_name=file_name,
+                            created_time=created_time,
+                            updated_time=updated_time,
+                            web_url_value=self._build_admin_url("content/files", file_id),
+                            alt=file_node.get("alt"),
+                            file_status=file_node.get("fileStatus"),
+                            file_type=file_type,
+                            preview_image_url=file_url,
+                            original_file_size=file_node.get("originalFileSize"),
+                            url=file_url,
+                        )
                     )
 
                 has_next_page = page_info.get("hasNextPage", False)
@@ -1155,21 +1202,23 @@ class ShopifySource(BaseSource):
             created_time = self._parse_datetime(theme.get("created_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(theme.get("updated_at")) or created_time
 
-            yield ShopifyThemeEntity(
-                entity_id=theme_id,
-                breadcrumbs=[],
-                name=theme.get("name", f"Theme {theme_id}"),
-                created_at=created_time,
-                updated_at=updated_time,
-                theme_id=theme_id,
-                theme_name=theme.get("name", f"Theme {theme_id}"),
-                created_time=created_time,
-                updated_time=updated_time,
-                web_url_value=self._build_admin_url("themes", theme_id),
-                role=theme.get("role"),
-                theme_store_id=theme.get("theme_store_id"),
-                previewable=theme.get("previewable", True),
-                processing=theme.get("processing", False),
+            yield self._prepare_entity(
+                ShopifyThemeEntity(
+                    entity_id=theme_id,
+                    breadcrumbs=[],
+                    name=theme.get("name", f"Theme {theme_id}"),
+                    created_at=created_time,
+                    updated_at=updated_time,
+                    theme_id=theme_id,
+                    theme_name=theme.get("name", f"Theme {theme_id}"),
+                    created_time=created_time,
+                    updated_time=updated_time,
+                    web_url_value=self._build_admin_url("themes", theme_id),
+                    role=theme.get("role"),
+                    theme_store_id=theme.get("theme_store_id"),
+                    previewable=theme.get("previewable", True),
+                    processing=theme.get("processing", False),
+                )
             )
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:  # noqa C901

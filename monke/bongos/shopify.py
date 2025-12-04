@@ -260,10 +260,14 @@ class ShopifyBongo(BaseBongo):
                     all_entities.append(collection_desc)
                     self.logger.info(f"📁 Created collection: {collection['id']}")
 
-            # 4. Create Draft Orders (require customer and product)
-            if self._customers and self._products:
+            # 4. Create Draft Orders (require customer only - NO product links)
+            # IMPORTANT: We intentionally do NOT link draft orders to products/variants
+            # to avoid token leakage. If a draft order contains a product variant,
+            # the product's token appears in the draft order's line items, causing
+            # false positives in deletion verification.
+            if self._customers:
                 self.logger.info(f"🛒 Creating {self.entity_count} draft orders...")
-                for i in range(min(self.entity_count, len(self._customers), len(self._products))):
+                for i in range(min(self.entity_count, len(self._customers))):
                     order_token = str(uuid.uuid4())[:8]
 
                     order_data = await generate_shopify_order(
@@ -271,18 +275,14 @@ class ShopifyBongo(BaseBongo):
                     )
 
                     await self._rate_limit()
-                    # Use first variant from a product
-                    variant_id = None
-                    if i < len(self._variants):
-                        variant_id = self._variants[i]["shopify_id"]
-
+                    # Always use custom line items (no variant_id) to keep tokens isolated
                     order = await self._create_draft_order(
                         client,
                         headers,
                         order_data,
                         order_token,
                         customer_id=self._customers[i]["shopify_id"],
-                        variant_id=variant_id,
+                        variant_id=None,  # No product link to avoid token leakage
                     )
 
                     if order:
@@ -868,7 +868,13 @@ class ShopifyBongo(BaseBongo):
         customer_id: str,
         variant_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Create a draft order via Shopify Admin API."""
+        """Create a draft order via Shopify Admin API.
+
+        Note: We intentionally use custom line items instead of linking to product
+        variants. If a draft order contains a variant, the product's name/token
+        appears in the draft order data, causing token leakage and false positives
+        during deletion verification tests.
+        """
         note = order_data.get("note", "")
         if token not in note:
             note = f"{note} Token: {token}"
@@ -881,16 +887,11 @@ class ShopifyBongo(BaseBongo):
             }
         }
 
-        # Add line item if we have a variant
-        if variant_id:
-            payload["draft_order"]["line_items"] = [
-                {"variant_id": int(variant_id), "quantity": 1}
-            ]
-        else:
-            # Use a custom line item
-            payload["draft_order"]["line_items"] = [
-                {"title": "Test Item", "price": "10.00", "quantity": 1}
-            ]
+        # Always use custom line items to avoid token leakage from products
+        # Even if variant_id is passed, we ignore it to keep tokens isolated
+        payload["draft_order"]["line_items"] = [
+            {"title": f"Test Item [{token}]", "price": "10.00", "quantity": 1}
+        ]
 
         response = await client.post(
             self._build_api_url("draft_orders.json"),

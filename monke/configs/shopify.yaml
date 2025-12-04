@@ -52,8 +52,7 @@ collection:
 verification:
   score_threshold: 0.1
   max_retries: 5
-  retry_delay_seconds: 10
-
+  retry_delay_seconds: 30  # Increased to allow more time for orphan cleanup
 # Test-specific notes:
 # - Uses OAuth 2.0 client credentials grant to obtain access token
 # - Access tokens expire after 24 hours and are refreshed automatically
