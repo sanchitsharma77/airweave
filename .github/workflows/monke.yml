@@ -253,6 +253,9 @@ jobs:
           # Stripe direct auth credentials
           MONKE_STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
 
+          # Pipedrive direct auth credentials
+          MONKE_PIPEDRIVE_API_TOKEN: ${{ secrets.MONKE_PIPEDRIVE_API_TOKEN }}
+
           # All SaaS app credentials (Composio configs, API tokens, etc.)
           # will be fetched from Azure Key Vault at runtime
         run: |

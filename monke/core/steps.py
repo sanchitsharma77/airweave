@@ -562,7 +562,8 @@ class PartialDeleteStep(TestStep):
         # We need to update our tracking based on what was actually deleted
 
         # Build a set of deleted identifiers for fast lookup
-        deleted_identifiers = set(deleted_paths)
+        # Convert to strings for consistent comparison (bongos may return int or str IDs)
+        deleted_identifiers = set(str(p) for p in deleted_paths)
 
         # Find all entities that were actually deleted (including cascade deletions)
         # Different bongos use different identifier fields (id vs path)
@@ -571,7 +572,8 @@ class PartialDeleteStep(TestStep):
 
         for e in self.context.created_entities:
             # Check both 'id' and 'path' fields to support different bongo types
-            entity_identifier = e.get("id") or e.get("path")
+            # Convert to string for consistent comparison with deleted_identifiers
+            entity_identifier = str(e.get("id") or e.get("path") or "")
             if entity_identifier and entity_identifier in deleted_identifiers:
                 actually_deleted.append(e)
             else:
