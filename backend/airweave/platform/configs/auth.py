@@ -577,6 +577,25 @@ class SharePointAuthConfig(OAuth2WithRefreshAuthConfig):
     # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
 
 
+class ShopifyAuthConfig(AuthConfig):
+    """Shopify authentication credentials schema using client credentials grant.
+
+    Uses client_id and client_secret to obtain an access token via OAuth 2.0
+    client credentials flow. The token is exchanged for Admin API access.
+    """
+
+    client_id: str = Field(
+        title="Client ID",
+        description="Client ID from your Shopify app in the Dev Dashboard",
+        min_length=10,
+    )
+    client_secret: str = Field(
+        title="Client Secret",
+        description="Client Secret from your Shopify app in the Dev Dashboard",
+        min_length=10,
+    )
+
+
 class SlackAuthConfig(OAuth2AuthConfig):
     """Slack authentication credentials schema."""
 

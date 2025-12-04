@@ -473,6 +473,16 @@ class SharePointConfig(SourceConfig):
     pass
 
 
+class ShopifyConfig(SourceConfig):
+    """Shopify configuration schema."""
+
+    shop_domain: str = Field(
+        title="Shop Domain",
+        description="Your Shopify store domain (e.g., 'my-store.myshopify.com')",
+        min_length=3,
+    )
+
+
 class SlackConfig(SourceConfig):
     """Slack configuration schema."""
 
