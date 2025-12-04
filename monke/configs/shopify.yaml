@@ -11,7 +11,7 @@ connector:
     client_id: MONKE_SHOPIFY_CLIENT_ID
     client_secret: MONKE_SHOPIFY_CLIENT_SECRET
   config_fields:
-    shop_domain: MONKE_SHOPIFY_SHOP_DOMAIN
+    shop_domain: "${MONKE_SHOPIFY_SHOP_DOMAIN}"
     openai_model: "gpt-4.1-mini"
 
 test_flow:

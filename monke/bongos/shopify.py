@@ -753,7 +753,8 @@ class ShopifyBongo(BaseBongo):
             note = f"{note} Token: {token}"
 
         # Always use a unique email based on token to avoid duplicates
-        unique_email = f"monke-{token}@test.example.com"
+        # Use example.com (IANA reserved domain) - Shopify rejects subdomains like test.example.com
+        unique_email = f"monke-{token}@example.com"
 
         payload = {
             "customer": {
