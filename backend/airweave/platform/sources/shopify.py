@@ -862,6 +862,10 @@ class ShopifySource(BaseSource):
         self.logger.info("🔍 [SHOPIFY] Fetching gift cards...")
 
         async for gift_card in self._get_paginated(client, "gift_cards.json", "gift_cards"):
+            # IMPORTANT:Skip disabled gift cards (they can't be deleted in Shopify, only disabled)
+            if gift_card.get("disabled_at"):
+                continue
+
             gift_card_id = str(gift_card["id"])
             created_time = self._parse_datetime(gift_card.get("created_at")) or datetime.utcnow()
             updated_time = self._parse_datetime(gift_card.get("updated_at")) or created_time
