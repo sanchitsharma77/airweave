@@ -752,11 +752,14 @@ class ShopifyBongo(BaseBongo):
         if token not in note:
             note = f"{note} Token: {token}"
 
+        # Always use a unique email based on token to avoid duplicates
+        unique_email = f"monke-{token}@test.example.com"
+
         payload = {
             "customer": {
                 "first_name": customer_data.get("first_name", "Test"),
                 "last_name": customer_data.get("last_name", "Customer"),
-                "email": customer_data.get("email", f"monke-{token}@test.example.com"),
+                "email": unique_email,
                 "note": note,
                 "tags": "monke-test",
             }
