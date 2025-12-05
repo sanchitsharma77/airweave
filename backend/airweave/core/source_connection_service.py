@@ -1467,6 +1467,8 @@ class SourceConnectionService:
             module_name = "google_" + module_name[6:]
         elif module_name.startswith("outlook") and len(module_name) > 7:
             module_name = "outlook_" + module_name[7:]
+        elif module_name.startswith("zoho") and len(module_name) > 4:
+            module_name = "zoho_" + module_name[4:]
 
         module = __import__(f"airweave.platform.sources.{module_name}", fromlist=[class_name])
         return getattr(module, class_name)

@@ -408,4 +408,18 @@ integrations:
       response_type: "code"
       response_mode: "query"
 
+  zoho_crm:
+    oauth_type: "with_refresh"
+    url: "https://accounts.zoho.com/oauth/v2/auth"
+    backend_url: "https://accounts.zoho.com/oauth/v2/token"
+    grant_type: "authorization_code"
+    client_id: "zoho-crm-client-id-key"
+    client_secret: "zoho-crm-client-secret-key"
+    content_type: "application/x-www-form-urlencoded"
+    client_credential_location: "body"
+    scope: "ZohoCRM.modules.READ ZohoCRM.settings.READ ZohoCRM.users.READ"
+    additional_frontend_params:
+      access_type: "offline"
+      prompt: "consent"
+
   qdrant:

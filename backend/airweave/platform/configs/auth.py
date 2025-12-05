@@ -707,3 +707,9 @@ class S3AuthConfig(AuthConfig):
         if not self.bucket_name:
             raise ValueError("S3 requires bucket_name")
         return self
+
+
+class ZohoCRMAuthConfig(OAuth2WithRefreshAuthConfig):
+    """Zoho CRM authentication credentials schema."""
+
+    # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
