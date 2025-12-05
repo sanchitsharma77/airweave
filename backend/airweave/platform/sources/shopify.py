@@ -240,6 +240,28 @@ class ShopifySource(BaseSource):
         response.raise_for_status()
         return response.json()
 
+    @retry(
+        stop=stop_after_attempt(5),
+        retry=retry_if_rate_limit_or_timeout,
+        wait=wait_rate_limit_with_backoff,
+        reraise=True,
+    )
+    async def _get_with_retry(self, client: httpx.AsyncClient, url: str) -> httpx.Response:
+        """Make an authenticated GET request with retry, returning full response.
+
+        Used by _get_paginated which needs access to response headers for pagination.
+
+        Args:
+            client: HTTP client
+            url: Full API URL
+
+        Returns:
+            Full httpx.Response object (for header access)
+        """
+        response = await client.get(url, headers=self._get_headers(), timeout=30.0)
+        response.raise_for_status()
+        return response
+
     @staticmethod
     def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         """Parse a Shopify datetime string into a datetime object.
@@ -265,7 +287,8 @@ class ShopifySource(BaseSource):
     ) -> AsyncGenerator[Dict, None]:
         """Fetch paginated results from a Shopify API endpoint.
 
-        Shopify uses Link header-based pagination.
+        Shopify uses Link header-based pagination. Uses _get_with_retry for
+        automatic retry on rate limits and timeouts.
 
         Args:
             client: HTTP client
@@ -278,8 +301,8 @@ class ShopifySource(BaseSource):
         url = f"{self._build_api_url(endpoint)}?limit={self.SHOPIFY_PAGE_LIMIT}"
 
         while url:
-            response = await client.get(url, headers=self._get_headers(), timeout=30.0)
-            response.raise_for_status()
+            # Use retry-protected method for rate limit handling
+            response = await self._get_with_retry(client, url)
             data = response.json()
 
             # Yield items from this page
