@@ -257,6 +257,8 @@ jobs:
           MONKE_ZOHO_CRM_CLIENT_ID: ${{ secrets.MONKE_ZOHO_CRM_CLIENT_ID }}
           MONKE_ZOHO_CRM_CLIENT_SECRET: ${{ secrets.MONKE_ZOHO_CRM_CLIENT_SECRET }}
           MONKE_ZOHO_CRM_REFRESH_TOKEN: ${{ secrets.MONKE_ZOHO_CRM_REFRESH_TOKEN }}
+          # Pipedrive direct auth credentials
+          MONKE_PIPEDRIVE_API_TOKEN: ${{ secrets.MONKE_PIPEDRIVE_API_TOKEN }}
 
           # All SaaS app credentials (Composio configs, API tokens, etc.)
           # will be fetched from Azure Key Vault at runtime
