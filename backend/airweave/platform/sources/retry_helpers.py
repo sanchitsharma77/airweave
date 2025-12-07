@@ -9,20 +9,33 @@ from tenacity import retry_if_exception, wait_exponential
 
 
 def should_retry_on_rate_limit(exception: BaseException) -> bool:
-    """Check if exception is a retryable rate limit (429).
+    """Check if exception is a retryable rate limit (429 or Zoho's 400 rate limit).
 
-    Handles both:
+    Handles:
     - Real API 429 responses
     - Airweave internal rate limits (AirweaveHttpClient → 429)
+    - Zoho's non-standard 400 "too many requests" error
 
     Args:
         exception: Exception to check
 
     Returns:
-        True if this is a 429 that should be retried
+        True if this is a rate limit that should be retried
     """
     if isinstance(exception, httpx.HTTPStatusError):
-        return exception.response.status_code == 429
+        if exception.response.status_code == 429:
+            return True
+        # Zoho returns 400 (not 429) for OAuth rate limits with specific format:
+        # {"error_description": "You have made too many requests...", "error": "Access Denied"}
+        if exception.response.status_code == 400:
+            try:
+                data = exception.response.json()
+                error_desc = data.get("error_description", "").lower()
+                error_type = data.get("error", "").lower()
+                if "too many requests" in error_desc and error_type == "access denied":
+                    return True
+            except Exception:
+                pass
     return False
 
 

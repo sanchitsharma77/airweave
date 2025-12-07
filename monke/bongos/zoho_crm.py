@@ -12,6 +12,7 @@ Supports OAuth via:
 """
 
 import asyncio
+import random
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -59,7 +60,8 @@ class ZohoCRMBongo(BaseBongo):
 
         self.entity_count: int = int(kwargs.get("entity_count", 3))
         self.openai_model: str = kwargs.get("openai_model", "gpt-4.1-mini")
-        self.rate_limit_delay = float(kwargs.get("rate_limit_delay_ms", 200)) / 1000.0
+        # Zoho CRM has strict rate limits - use 500ms between requests
+        self.rate_limit_delay = float(kwargs.get("rate_limit_delay_ms", 500)) / 1000.0
 
         # Track entities by type
         self._contacts: List[Dict[str, Any]] = []
@@ -88,8 +90,29 @@ class ZohoCRMBongo(BaseBongo):
         """Allow setting credentials (required by base class pattern)."""
         self._raw_credentials = value
 
+    def _is_rate_limit_error(self, response: httpx.Response) -> bool:
+        """Check if response is a Zoho rate limit error.
+
+        Zoho returns 400 (not 429) with specific error for OAuth rate limits:
+        - error_description: "You have made too many requests continuously..."
+        - error: "Access Denied"
+        """
+        if response.status_code == 429:
+            return True
+        if response.status_code == 400:
+            try:
+                data = response.json()
+                error_desc = data.get("error_description", "").lower()
+                error_type = data.get("error", "").lower()
+                # Zoho's specific rate limit signature
+                if "too many requests" in error_desc and error_type == "access denied":
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _refresh_access_token_sync(self):
-        """Synchronously exchange refresh token for a new access token."""
+        """Synchronously exchange refresh token for a new access token with retry."""
         token_url = f"{self.accounts_url}/oauth/v2/token"
         params = {
             "grant_type": "refresh_token",
@@ -98,18 +121,39 @@ class ZohoCRMBongo(BaseBongo):
             "refresh_token": self.refresh_token,
         }
 
-        self.logger.info("🔑 Exchanging refresh token for access token (sync)...")
-        with httpx.Client(timeout=30) as client:
-            response = client.post(token_url, params=params)
+        max_retries = 5
+        base_delay = 5.0  # Start with 5 seconds
 
-            if response.status_code != 200:
+        self.logger.info("🔑 Exchanging refresh token for access token (sync)...")
+
+        for attempt in range(max_retries):
+            with httpx.Client(timeout=30) as client:
+                response = client.post(token_url, params=params)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    self.access_token = data.get("access_token")
+                    self._token_refreshed = True
+                    self.logger.info("✅ Successfully obtained access token")
+                    return
+
+                # Check for rate limiting
+                if self._is_rate_limit_error(response):
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    self.logger.warning(
+                        f"⏳ Zoho rate limit hit, waiting {delay:.1f}s before retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(delay)
+                    continue
+
+                # Non-rate-limit error
                 self.logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
                 raise ValueError(f"Failed to refresh Zoho token: {response.text}")
 
-            data = response.json()
-            self.access_token = data.get("access_token")
-            self._token_refreshed = True
-            self.logger.info("✅ Successfully obtained access token")
+        # Exhausted all retries
+        raise ValueError(f"Failed to refresh Zoho token after {max_retries} attempts (rate limited)")
 
     async def _ensure_access_token(self):
         """Ensure we have a valid access token, refreshing if needed."""
@@ -126,7 +170,7 @@ class ZohoCRMBongo(BaseBongo):
             )
 
     async def _refresh_access_token(self):
-        """Exchange refresh token for a new access token."""
+        """Exchange refresh token for a new access token with retry."""
         token_url = f"{self.accounts_url}/oauth/v2/token"
         params = {
             "grant_type": "refresh_token",
@@ -135,17 +179,37 @@ class ZohoCRMBongo(BaseBongo):
             "refresh_token": self.refresh_token,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(token_url, params=params)
+        max_retries = 5
+        base_delay = 5.0  # Start with 5 seconds
 
-            if response.status_code != 200:
+        for attempt in range(max_retries):
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(token_url, params=params)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    self.access_token = data.get("access_token")
+                    self._token_refreshed = True
+                    self.logger.info("✅ Successfully obtained access token")
+                    return
+
+                # Check for rate limiting
+                if self._is_rate_limit_error(response):
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    self.logger.warning(
+                        f"⏳ Zoho rate limit hit, waiting {delay:.1f}s before retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Non-rate-limit error
                 self.logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
                 raise ValueError(f"Failed to refresh Zoho token: {response.text}")
 
-            data = response.json()
-            self.access_token = data.get("access_token")
-            self._token_refreshed = True
-            self.logger.info("✅ Successfully obtained access token")
+        # Exhausted all retries
+        raise ValueError(f"Failed to refresh Zoho token after {max_retries} attempts (rate limited)")
 
     def _get_base_url(self) -> str:
         """Get the base URL for Zoho CRM API calls."""
@@ -167,33 +231,70 @@ class ZohoCRMBongo(BaseBongo):
     async def _create_record(
         self, client: httpx.AsyncClient, module: str, payload: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Create a record in a Zoho CRM module."""
-        await self._pace()
-        r = await client.post(
-            f"{self._get_base_url()}/{module}",
-            headers=self._hdrs(),
-            json={"data": [payload]},
-        )
-        if r.status_code not in (200, 201):
-            self.logger.error(f"Zoho CRM create {module} failed {r.status_code}: {r.text}")
+        """Create a record in a Zoho CRM module with retry on rate limit."""
+        max_retries = 5
+        base_delay = 2.0
+
+        for attempt in range(max_retries):
+            await self._pace()
+            r = await client.post(
+                f"{self._get_base_url()}/{module}",
+                headers=self._hdrs(),
+                json={"data": [payload]},
+            )
+
+            # Check for rate limiting (429 or Zoho's 400 "too many requests")
+            if self._is_rate_limit_error(r):
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                self.logger.warning(
+                    f"⏳ Zoho rate limit on {module} create, waiting {delay:.1f}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            if r.status_code not in (200, 201):
+                self.logger.error(f"Zoho CRM create {module} failed {r.status_code}: {r.text}")
+                return {}
+
+            data = r.json()
+            records = data.get("data", [])
+            if records and records[0].get("status") == "success":
+                return records[0]["details"]
+            self.logger.error(f"Zoho CRM create {module} failed: {data}")
             return {}
-        data = r.json()
-        records = data.get("data", [])
-        if records and records[0].get("status") == "success":
-            return records[0]["details"]
-        self.logger.error(f"Zoho CRM create {module} failed: {data}")
+
+        self.logger.error(f"Zoho CRM create {module} failed after {max_retries} retries (rate limited)")
         return {}
 
     async def _delete_record(
         self, client: httpx.AsyncClient, module: str, record_id: str
     ) -> bool:
-        """Delete a record from a Zoho CRM module."""
-        await self._pace()
-        r = await client.delete(
-            f"{self._get_base_url()}/{module}?ids={record_id}",
-            headers=self._hdrs(),
-        )
-        return r.status_code in (200, 204)
+        """Delete a record from a Zoho CRM module with retry on rate limit."""
+        max_retries = 5
+        base_delay = 2.0
+
+        for attempt in range(max_retries):
+            await self._pace()
+            r = await client.delete(
+                f"{self._get_base_url()}/{module}?ids={record_id}",
+                headers=self._hdrs(),
+            )
+
+            # Check for rate limiting
+            if self._is_rate_limit_error(r):
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                self.logger.warning(
+                    f"⏳ Zoho rate limit on {module} delete, waiting {delay:.1f}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            return r.status_code in (200, 204)
+
+        self.logger.warning(f"Zoho CRM delete {module}/{record_id} failed after {max_retries} retries")
+        return False
 
     async def create_entities(self) -> List[Dict[str, Any]]:
         """Create test entities in Zoho CRM (Contacts, Accounts, Deals, Leads)."""
