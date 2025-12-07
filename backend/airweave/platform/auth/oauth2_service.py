@@ -1,7 +1,9 @@
 """The services for handling OAuth2 authentication and token exchange for integrations."""
 
+import asyncio
 import base64
 import hashlib
+import random
 import secrets
 from typing import Optional, Tuple
 from urllib.parse import urlencode
@@ -578,39 +580,91 @@ class OAuth2Service:
         return headers, payload
 
     @staticmethod
+    def _is_oauth_rate_limit_error(response: httpx.Response) -> bool:
+        """Check if response is an OAuth rate limit error.
+
+        Some providers (like Zoho) return 400 instead of 429 for rate limits:
+        {"error_description": "You have made too many requests...", "error": "Access Denied"}
+        """
+        if response.status_code == 429:
+            return True
+        if response.status_code == 400:
+            try:
+                data = response.json()
+                error_desc = data.get("error_description", "").lower()
+                error_type = data.get("error", "").lower()
+                if "too many requests" in error_desc and error_type == "access denied":
+                    return True
+            except Exception:
+                pass
+        return False
+
+    @staticmethod
     async def _make_token_request(
         logger: ContextualLogger, url: str, headers: dict, payload: dict
     ) -> httpx.Response:
-        """Make the token refresh request."""
+        """Make the token refresh request with retry on rate limit."""
         logger.info(f"Making token request to: {url}")
 
-        try:
-            async with httpx.AsyncClient() as client:
-                logger.info(f"Sending request to {url}")
-                response = await client.post(url, headers=headers, data=payload)
+        max_retries = 5
+        base_delay = 5.0  # Start with 5 seconds for OAuth rate limits
 
-                logger.info(f"Received response: Status {response.status_code}, ")
-
-                response.raise_for_status()
-                return response
-
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"HTTP error during token request: {e.response.status_code} "
-                f"{e.response.reason_phrase}"
-            )
-
-            # Try to log the error response
+        for attempt in range(max_retries):
             try:
-                error_content = e.response.json()
-                logger.error(f"Error response body: {error_content}")
-            except Exception:
-                logger.error(f"Error response text: {e.response.text}")
+                async with httpx.AsyncClient() as client:
+                    logger.info(f"Sending request to {url}")
+                    response = await client.post(url, headers=headers, data=payload)
 
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error during token request: {str(e)}")
-            raise
+                    logger.info(f"Received response: Status {response.status_code}, ")
+
+                    # Check for rate limiting before raising
+                    if OAuth2Service._is_oauth_rate_limit_error(response):
+                        # Exponential backoff with jitter
+                        delay = base_delay * (2**attempt) + random.uniform(0, 2)
+                        logger.warning(
+                            f"OAuth rate limit hit, waiting {delay:.1f}s before retry "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    response.raise_for_status()
+                    return response
+
+            except httpx.HTTPStatusError as e:
+                # Check if it's a rate limit we should retry
+                if OAuth2Service._is_oauth_rate_limit_error(e.response):
+                    delay = base_delay * (2**attempt) + random.uniform(0, 2)
+                    logger.warning(
+                        f"OAuth rate limit hit (exception), waiting {delay:.1f}s before retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                logger.error(
+                    f"HTTP error during token request: {e.response.status_code} "
+                    f"{e.response.reason_phrase}"
+                )
+
+                # Try to log the error response
+                try:
+                    error_content = e.response.json()
+                    logger.error(f"Error response body: {error_content}")
+                except Exception:
+                    logger.error(f"Error response text: {e.response.text}")
+
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error during token request: {str(e)}")
+                raise
+
+        # Exhausted all retries
+        raise httpx.HTTPStatusError(
+            f"OAuth token request failed after {max_retries} retries (rate limited)",
+            request=httpx.Request("POST", url),
+            response=httpx.Response(429),
+        )
 
     @staticmethod
     async def _handle_token_response(
