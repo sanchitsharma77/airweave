@@ -16,7 +16,6 @@ import httpx
 from tenacity import retry, stop_after_attempt
 
 from airweave.core.logging import logger
-from airweave.platform.utils.filename_utils import safe_filename
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.cursors import GmailCursor
 from airweave.platform.decorators import source
@@ -32,6 +31,7 @@ from airweave.platform.sources._base import BaseSource
 from airweave.platform.sources.retry_helpers import (
     wait_rate_limit_with_backoff,
 )
+from airweave.platform.utils.filename_utils import safe_filename
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
 
@@ -600,9 +600,12 @@ class GmailSource(BaseSource):
 
         # Download email body to file (NOT stored in entity fields)
         # Email content is only in the local file for conversion
+        # NOTE: BaseEntity.name is populated later in the sync pipeline from flagged fields,
+        # so we must not rely on message_entity.name here (it is still None).
+        # Use the subject (which is required and already set) as the human-readable filename.
         try:
             if body_html:
-                filename = safe_filename(message_entity.name, ".html")
+                filename = safe_filename(subject_value, ".html")
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_html.encode("utf-8"),
@@ -611,7 +614,7 @@ class GmailSource(BaseSource):
                 )
             elif body_plain:
                 # Save plain-text emails as .txt files for conversion
-                filename = safe_filename(message_entity.name, ".txt")
+                filename = safe_filename(subject_value, ".txt")
                 await self.file_downloader.save_bytes(
                     entity=message_entity,
                     content=body_plain.encode("utf-8"),

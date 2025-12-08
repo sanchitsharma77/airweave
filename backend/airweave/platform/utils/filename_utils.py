@@ -1,5 +1,5 @@
-import re
 import os
+import re
 import unicodedata
 
 
@@ -9,6 +9,12 @@ def safe_filename(name: str, default_ext: str = ".html") -> str:
     Falls back to 'untitled' if sanitization removes all characters.
     Preserves existing extensions and appends default_ext only if missing.
     """
+    # Be defensive: some call sites may pass None or non-str objects.
+    if name is None:
+        name = ""
+    else:
+        name = str(name)
+
     name = unicodedata.normalize("NFKC", name).strip()
     name = re.sub(r"[\\/]+", "_", name)
     name = re.sub(r"\s+", " ", name)
