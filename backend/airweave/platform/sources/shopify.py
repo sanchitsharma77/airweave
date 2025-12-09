@@ -1167,16 +1167,19 @@ class ShopifySource(BaseSource):
                     )
                     updated_time = self._parse_datetime(file_node.get("updatedAt")) or created_time
 
-                    # Determine file type and URL
+                    # Determine file type, URL, and size based on file kind
                     file_type = "GENERIC"
-                    file_url = file_node.get("url")
+                    file_url = file_node.get("url") or ""
+                    file_size = file_node.get("originalFileSize") or 0
 
                     if "image" in file_node:
                         file_type = "IMAGE"
-                        file_url = file_node.get("image", {}).get("url")
+                        file_url = file_node.get("image", {}).get("url") or ""
                     elif "originalSource" in file_node:
                         file_type = "VIDEO"
-                        file_url = file_node.get("originalSource", {}).get("url")
+                        original_source = file_node.get("originalSource", {})
+                        file_url = original_source.get("url") or ""
+                        file_size = original_source.get("fileSize") or 0
 
                     file_name = file_node.get("alt") or f"File {file_id}"
 
@@ -1187,6 +1190,11 @@ class ShopifySource(BaseSource):
                             name=file_name,
                             created_at=created_time,
                             updated_at=updated_time,
+                            # FileEntity required fields
+                            url=file_url,
+                            size=file_size,
+                            file_type=file_type,
+                            # Shopify-specific fields
                             file_id=file_id,
                             file_name=file_name,
                             created_time=created_time,
@@ -1194,10 +1202,7 @@ class ShopifySource(BaseSource):
                             web_url_value=self._build_admin_url("content/files", file_id),
                             alt=file_node.get("alt"),
                             file_status=file_node.get("fileStatus"),
-                            file_type=file_type,
-                            preview_image_url=file_url,
-                            original_file_size=file_node.get("originalFileSize"),
-                            url=file_url,
+                            preview_image_url=file_url or None,
                         )
                     )
 

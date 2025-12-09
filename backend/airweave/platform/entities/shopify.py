@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import computed_field
 
 from airweave.platform.entities._airweave_field import AirweaveField
-from airweave.platform.entities._base import BaseEntity
+from airweave.platform.entities._base import BaseEntity, FileEntity
 
 
 class ShopifyProductEntity(BaseEntity):
@@ -825,8 +825,10 @@ class ShopifyMetaobjectEntity(BaseEntity):
         return self.web_url_value or ""
 
 
-class ShopifyFileEntity(BaseEntity):
+class ShopifyFileEntity(FileEntity):
     """Schema for Shopify File resource.
+
+    Inherits from FileEntity for consistency with other file entities in the codebase.
 
     https://shopify.dev/docs/api/admin-graphql/2024-01/objects/file
     """
@@ -848,7 +850,7 @@ class ShopifyFileEntity(BaseEntity):
         unhashable=True,
     )
 
-    # API fields
+    # Shopify-specific fields
     alt: Optional[str] = AirweaveField(
         None, description="Alt text for accessibility", embeddable=True
     )
@@ -857,16 +859,9 @@ class ShopifyFileEntity(BaseEntity):
         description="Status of the file (UPLOADED, PROCESSING, READY, FAILED)",
         embeddable=True,
     )
-    file_type: Optional[str] = AirweaveField(
-        None, description="Type of file (IMAGE, VIDEO, DOCUMENT)", embeddable=True
-    )
     preview_image_url: Optional[str] = AirweaveField(
         None, description="URL of the preview image", embeddable=False
     )
-    original_file_size: Optional[int] = AirweaveField(
-        None, description="Original file size in bytes", embeddable=True
-    )
-    url: Optional[str] = AirweaveField(None, description="URL to access the file", embeddable=False)
 
     @computed_field(return_type=str)
     def web_url(self) -> str:
