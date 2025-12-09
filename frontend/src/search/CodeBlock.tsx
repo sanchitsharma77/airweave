@@ -98,21 +98,21 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
         const pythonFilterStr = parsedFilter ?
             JSON.stringify(parsedFilter, null, 4)
                 .split('\n')
-                .map((line, index) => index === 0 ? line : '    ' + line)
+                .map((line, index) => index === 0 ? line : '        ' + line)
                 .join('\n') :
             null;
 
-        const pythonParams = [
-            `    query="${escapeForPython(searchQuery)}"`,
-            `    retrieval_strategy="${searchConfig?.search_method || "hybrid"}"`,
-            `    expand_query=${searchConfig?.expansion_strategy !== "no_expansion" ? "True" : "False"}`,
-            ...(pythonFilterStr ? [`    filter=${pythonFilterStr}`] : []),
-            `    interpret_filters=${searchConfig?.enable_query_interpretation ? "True" : "False"}`,
-            `    temporal_relevance=${searchConfig?.recency_bias ?? 0.3}`,
-            `    rerank=${(searchConfig?.enable_reranking ?? true) ? "True" : "False"}`,
-            `    generate_answer=${searchConfig?.response_type === "completion" ? "True" : "False"}`,
-            `    limit=20`,
-            `    offset=0`
+        const pythonRequestParams = [
+            `        query="${escapeForPython(searchQuery)}"`,
+            `        retrieval_strategy=RetrievalStrategy.${(searchConfig?.search_method || "hybrid").toUpperCase()}`,
+            `        expand_query=${searchConfig?.expansion_strategy !== "no_expansion" ? "True" : "False"}`,
+            ...(pythonFilterStr ? [`        filter=${pythonFilterStr}`] : []),
+            `        interpret_filters=${searchConfig?.enable_query_interpretation ? "True" : "False"}`,
+            `        temporal_relevance=${searchConfig?.recency_bias ?? 0}`,
+            `        rerank=${(searchConfig?.enable_reranking ?? true) ? "True" : "False"}`,
+            `        generate_answer=${searchConfig?.response_type === "completion" ? "True" : "False"}`,
+            `        limit=1000`,
+            `        offset=0`
         ];
 
         const pythonInterpretNote = searchConfig?.enable_query_interpretation
@@ -124,40 +124,41 @@ export const ApiIntegrationDoc = ({ collectionReadableId, query, searchConfig, f
             : '';
 
         const pythonSnippet =
-            `${pythonInterpretNote}from airweave import AirweaveSDK
+            `${pythonInterpretNote}from airweave import AirweaveSDK, SearchRequest, RetrievalStrategy
 
 client = AirweaveSDK(
     api_key="${apiKey}",
 )
 
-result = client.collections.search_collection_advanced(
+result = client.collections.search(
     readable_id="${collectionReadableId}",
-${pythonParams.join(',\n')}
-)`;
+    request=SearchRequest(
+${pythonRequestParams.join(',\n')}
+    ),
+)
+
+print(result.completion)  # AI-generated answer (if generate_answer=True)
+print(len(result.results))  # Number of results`;
 
         // Create the Node.js code with ALL parameters in specific order
-        const nodeExpansionStrategy = searchConfig?.expansion_strategy === "no_expansion"
-            ? "noExpansion"
-            : (searchConfig?.expansion_strategy || "auto");
-
         const nodeFilterStr = parsedFilter ?
             JSON.stringify(parsedFilter, null, 4)
                 .split('\n')
-                .map((line, index) => index === 0 ? line : '    ' + line)
+                .map((line, index) => index === 0 ? line : '            ' + line)
                 .join('\n') :
             null;
 
-        const nodeParams = [
-            `    query: "${escapeForJson(searchQuery)}"`,
-            `    retrievalStrategy: "${searchConfig?.search_method || "hybrid"}"`,
-            `    expandQuery: ${searchConfig?.expansion_strategy !== "no_expansion"}`,
-            ...(nodeFilterStr ? [`    filter: ${nodeFilterStr}`] : []),
-            `    interpretFilters: ${searchConfig?.enable_query_interpretation || false}`,
-            `    temporalRelevance: ${searchConfig?.recency_bias ?? 0.3}`,
-            `    rerank: ${searchConfig?.enable_reranking ?? true}`,
-            `    generateAnswer: ${searchConfig?.response_type === "completion"}`,
-            `    limit: 20`,
-            `    offset: 0`
+        const nodeRequestParams = [
+            `            query: "${escapeForJson(searchQuery)}"`,
+            `            retrievalStrategy: "${searchConfig?.search_method || "hybrid"}"`,
+            `            expandQuery: ${searchConfig?.expansion_strategy !== "no_expansion"}`,
+            ...(nodeFilterStr ? [`            filter: ${nodeFilterStr}`] : []),
+            `            interpretFilters: ${searchConfig?.enable_query_interpretation || false}`,
+            `            temporalRelevance: ${searchConfig?.recency_bias ?? 0}`,
+            `            rerank: ${searchConfig?.enable_reranking ?? true}`,
+            `            generateAnswer: ${searchConfig?.response_type === "completion"}`,
+            `            limit: 1000`,
+            `            offset: 0`
         ];
 
         const nodeInterpretNote = searchConfig?.enable_query_interpretation
@@ -173,9 +174,14 @@ ${pythonParams.join(',\n')}
 
 const client = new AirweaveSDKClient({ apiKey: "${apiKey}" });
 
-const result = await client.collections.searchCollectionAdvanced("${collectionReadableId}", {
-${nodeParams.join(',\n')}
-});`;
+const result = await client.collections.search("${collectionReadableId}", {
+    request: {
+${nodeRequestParams.join(',\n')}
+    }
+});
+
+console.log(result.completion);  // AI-generated answer (if generateAnswer=true)
+console.log(result.results.length);  // Number of results`;
 
         // MCP Server code examples
         // Note: MCP servers typically don't support all advanced search parameters directly,
