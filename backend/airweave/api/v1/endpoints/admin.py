@@ -492,8 +492,8 @@ async def upgrade_organization_to_enterprise(  # noqa: C901
     """
     _require_admin(ctx)
 
-    # Get organization
-    org = await crud.organization.get(db, organization_id, ctx)
+    # Get organization as ORM model (enrich=False) to allow mutations and db.refresh()
+    org = await crud.organization.get(db, organization_id, ctx, enrich=False)
     if not org:
         raise NotFoundException(f"Organization {organization_id} not found")
 
