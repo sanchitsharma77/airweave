@@ -227,7 +227,10 @@ class SourceConnectionHelpers:
         config_fields: Any,
         ctx: ApiContext,
     ) -> Dict[str, Any]:
-        """Validate configuration fields against source schema, returning a plain dict."""
+        """Validate configuration fields against source schema, returning a plain dict.
+
+        Also strips fields that have feature flags not enabled for the organization.
+        """
         source = await crud.source.get_by_short_name(db, short_name=short_name)
         if not source:
             raise HTTPException(status_code=404, detail=f"Source '{short_name}' not found")
@@ -247,6 +250,31 @@ class SourceConnectionHelpers:
         try:
             payload = self._as_mapping(config_fields)
             config_class = resource_locator.get_config(source.config_class)
+
+            # Check for feature-flag protected fields that the organization doesn't have access to
+            # This prevents users from bypassing UI restrictions via API/SDK
+            enabled_features = ctx.organization.enabled_features or []
+
+            for field_name, field_info in config_class.model_fields.items():
+                json_schema_extra = field_info.json_schema_extra or {}
+                feature_flag = json_schema_extra.get("feature_flag")
+
+                if feature_flag and feature_flag not in enabled_features:
+                    # Feature flag required but not enabled - reject if user tried to use this field
+                    if field_name in payload and payload[field_name] is not None:
+                        ctx.logger.warning(
+                            f"Rejected config field '{field_name}' for {short_name}: "
+                            f"feature flag '{feature_flag}' not enabled for organization"
+                        )
+                        field_title = field_info.title or field_name
+                        raise HTTPException(
+                            status_code=403,
+                            detail=(
+                                f"The '{field_title}' feature requires the '{feature_flag}' "
+                                f"feature to be enabled for your organization. "
+                                f"Please contact support to enable this feature."
+                            ),
+                        )
 
             # Pydantic v2 first, fall back to v1 constructor
             if hasattr(config_class, "model_validate"):

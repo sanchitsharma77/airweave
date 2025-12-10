@@ -101,6 +101,7 @@ class FeatureFlag(str, Enum):
     S3_DESTINATION = "s3_destination"
     PRIORITY_SUPPORT = "priority_support"
     SOURCE_RATE_LIMITING = "source_rate_limiting"
+    ZEPHYR_SCALE = "zephyr_scale"  # Enables Zephyr Scale test management sync for Jira
 
 
 class AuthMethod(str, Enum):

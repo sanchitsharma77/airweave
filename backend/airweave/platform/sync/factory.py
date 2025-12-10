@@ -321,11 +321,11 @@ class SyncFactory:
         # Step 4.1: Pass sync identifiers to the source for scoped helpers
         try:
             organization_id = ctx.organization.id
-            source_connection_obj = source_connection_data.get("source_connection_obj")
-            if hasattr(source, "set_sync_identifiers") and source_connection_obj:
+            source_connection_id = source_connection_data.get("source_connection_id")
+            if hasattr(source, "set_sync_identifiers") and source_connection_id:
                 source.set_sync_identifiers(
                     organization_id=str(organization_id),
-                    source_connection_id=str(source_connection_obj.id),
+                    source_connection_id=str(source_connection_id),
                 )
         except Exception:
             # Non-fatal: older sources may ignore this
@@ -382,7 +382,7 @@ class SyncFactory:
         wrap_source_with_airweave_client(
             source=source,
             source_short_name=source_connection_data["short_name"],
-            source_connection_id=source_connection_data["source_connection_obj"].id,
+            source_connection_id=source_connection_data["source_connection_id"],
             ctx=ctx,
             logger=logger,
         )
@@ -422,6 +422,7 @@ class SyncFactory:
         # Pre-fetch to avoid lazy loading - convert to pure Python types
         auth_config_class = source_model.auth_config_class
         # Convert SQLAlchemy values to clean Python types to avoid lazy loading
+        source_connection_id = UUID(str(source_connection_obj.id))  # From SourceConnection
         short_name = str(source_connection_obj.short_name)  # From SourceConnection
         connection_id = UUID(str(connection.id))
 
@@ -443,6 +444,9 @@ class SyncFactory:
 
         source_class = resource_locator.get_source(source_model)
 
+        # Pre-fetch oauth_type to avoid lazy loading issues
+        oauth_type = str(source_model.oauth_type) if source_model.oauth_type else None
+
         return {
             "source_connection_obj": source_connection_obj,  # The main entity
             "connection": connection,  # Just for credential access
@@ -450,9 +454,11 @@ class SyncFactory:
             "source_class": source_class,
             "config_fields": config_fields,  # From SourceConnection
             "short_name": short_name,  # From SourceConnection
+            "source_connection_id": source_connection_id,  # Pre-fetched to avoid lazy loading
             "auth_config_class": auth_config_class,
             "connection_id": connection_id,
             "integration_credential_id": integration_credential_id,  # From Connection
+            "oauth_type": oauth_type,  # Pre-fetched to avoid lazy loading
             "readable_auth_provider_id": getattr(
                 source_connection_obj, "readable_auth_provider_id", None
             ),
@@ -507,26 +513,27 @@ class SyncFactory:
     ) -> None:
         """Set up token manager for OAuth sources."""
         short_name = source_connection_data["short_name"]
-        source_model = source_connection_data.get("source_model")
+        # Use pre-fetched oauth_type to avoid SQLAlchemy lazy loading issues
+        oauth_type = source_connection_data.get("oauth_type")
 
         # Determine if we should create a token manager based on oauth_type
         should_create_token_manager = False
 
-        if source_model and hasattr(source_model, "oauth_type") and source_model.oauth_type:
+        if oauth_type:
             # Import OAuthType enum
             from airweave.schemas.source_connection import OAuthType
 
             # Only create token manager for sources that support token refresh
-            if source_model.oauth_type in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
+            if oauth_type in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
                 should_create_token_manager = True
                 logger.debug(
-                    f"✅ OAuth source {short_name} with oauth_type={source_model.oauth_type} "
+                    f"✅ OAuth source {short_name} with oauth_type={oauth_type} "
                     f"will use token manager for refresh"
                 )
             else:
                 logger.debug(
                     f"⏭️ Skipping token manager for {short_name} - "
-                    f"oauth_type={source_model.oauth_type} does not support token refresh"
+                    f"oauth_type={oauth_type} does not support token refresh"
                 )
 
         if should_create_token_manager:
