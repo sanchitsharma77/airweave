@@ -155,22 +155,8 @@ class IntegrationSettings:
         # In production, fetch from Azure Key Vault
         # In dev/local, use the raw value from YAML
         if core_settings.ENVIRONMENT == "prd":
-            try:
-                secret = await secret_client.get_secret(secret_field)
-                return secret.value
-            except Exception:
-                # For BYOC sources with placeholder values (e.g., "placeholder_client_id"),
-                # Key Vault lookup will fail. Return the placeholder as-is since users
-                # will provide their own credentials during connection creation.
-                if "placeholder" in secret_field.lower():
-                    logger.warning(
-                        f"Key Vault secret not found for "
-                        f"{settings.integration_short_name}: {secret_field}. "
-                        f"Using placeholder (expected for BYOC sources)."
-                    )
-                    return secret_field
-                # Re-raise for actual Key Vault errors (missing real secrets)
-                raise
+            secret = await secret_client.get_secret(secret_field)
+            return secret.value
         else:
             return secret_field
 
