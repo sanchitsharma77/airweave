@@ -303,6 +303,19 @@ class JiraConfig(SourceConfig):
         min_length=1,
     )
 
+    # Zephyr Scale integration (requires ZEPHYR_SCALE feature flag)
+    # This field is dynamically shown/hidden based on organization feature flags
+    zephyr_scale_api_token: Optional[str] = Field(
+        default=None,
+        title="Zephyr Scale API Token",
+        description=(
+            "API token for Zephyr Scale test management integration. "
+            "Generate in Jira > Apps > Zephyr Scale > API Keys. "
+            "Leave empty if not using Zephyr Scale."
+        ),
+        json_schema_extra={"feature_flag": "zephyr_scale", "is_secret": True},
+    )
+
 
 class LinearConfig(SourceConfig):
     """Linear configuration schema."""

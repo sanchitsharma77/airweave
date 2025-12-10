@@ -75,7 +75,23 @@ async def list(
             # Get configuration class
             try:
                 config_class = resource_locator.get_config(source.config_class)
-                config_fields = Fields.from_config_class(config_class)
+                config_fields_unfiltered = Fields.from_config_class(config_class)
+
+                # Filter config fields based on organization's enabled features
+                enabled_features = ctx.organization.enabled_features or []
+                config_fields = config_fields_unfiltered.filter_by_features(enabled_features)
+
+                # Log any fields that were filtered out due to missing feature flags
+                filtered_out = [
+                    f.name
+                    for f in config_fields_unfiltered.fields
+                    if f.feature_flag and f.feature_flag not in enabled_features
+                ]
+                if filtered_out:
+                    ctx.logger.debug(
+                        f"🚫 Hidden config fields for {source.short_name} "
+                        f"(feature flags not enabled): {filtered_out}"
+                    )
             except AttributeError as e:
                 invalid_sources.append(f"{source.short_name} (invalid config_class: {str(e)})")
                 continue
@@ -160,7 +176,23 @@ async def get(
         # Get config fields
         try:
             config_class = resource_locator.get_config(source.config_class)
-            config_fields = Fields.from_config_class(config_class)
+            config_fields_unfiltered = Fields.from_config_class(config_class)
+
+            # Filter config fields based on organization's enabled features
+            enabled_features = ctx.organization.enabled_features or []
+            config_fields = config_fields_unfiltered.filter_by_features(enabled_features)
+
+            # Log any fields that were filtered out due to missing feature flags
+            filtered_out = [
+                f.name
+                for f in config_fields_unfiltered.fields
+                if f.feature_flag and f.feature_flag not in enabled_features
+            ]
+            if filtered_out:
+                ctx.logger.debug(
+                    f"🚫 Hidden config fields for {short_name} "
+                    f"(feature flags not enabled): {filtered_out}"
+                )
         except Exception as e:
             ctx.logger.error(f"Failed to get config for {short_name}: {str(e)}")
             raise HTTPException(

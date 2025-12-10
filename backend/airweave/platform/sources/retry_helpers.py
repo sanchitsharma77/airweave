@@ -4,6 +4,9 @@ Provides reusable retry strategies that handle both API rate limits
 and Airweave's internal rate limiting (via AirweaveHttpClient).
 """
 
+import logging
+from typing import Callable
+
 import httpx
 from tenacity import retry_if_exception, wait_exponential
 
@@ -27,15 +30,25 @@ def should_retry_on_rate_limit(exception: BaseException) -> bool:
 
 
 def should_retry_on_timeout(exception: BaseException) -> bool:
-    """Check if exception is a timeout that should be retried.
+    """Check if exception is a timeout or connection error that should be retried.
 
     Args:
         exception: Exception to check
 
     Returns:
-        True if this is a timeout exception
+        True if this is a timeout or transient connection exception
     """
-    return isinstance(exception, (httpx.ConnectTimeout, httpx.ReadTimeout))
+    # Include connection errors and pool timeouts in addition to regular timeouts
+    return isinstance(
+        exception,
+        (
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+            httpx.ConnectError,
+        ),
+    )
 
 
 def should_retry_on_rate_limit_or_timeout(exception: BaseException) -> bool:
@@ -106,3 +119,37 @@ def wait_rate_limit_with_backoff(retry_state) -> float:
 retry_if_rate_limit = retry_if_exception(should_retry_on_rate_limit)
 retry_if_timeout = retry_if_exception(should_retry_on_timeout)
 retry_if_rate_limit_or_timeout = retry_if_exception(should_retry_on_rate_limit_or_timeout)
+
+
+def log_retry_attempt(logger: logging.Logger, service_name: str = "API") -> Callable[..., None]:
+    """Create a before_sleep callback that logs retry attempts.
+
+    Args:
+        logger: Logger instance to use
+        service_name: Name of the service being called (for log messages)
+
+    Returns:
+        Callable that can be used as before_sleep in @retry decorator
+    """
+
+    def before_sleep(retry_state) -> None:
+        exception = retry_state.outcome.exception()
+        attempt = retry_state.attempt_number
+        wait_time = retry_state.next_action.sleep if retry_state.next_action else 0
+
+        # Build a descriptive error message
+        if isinstance(exception, httpx.HTTPStatusError):
+            error_desc = f"HTTP {exception.response.status_code}"
+        elif isinstance(exception, httpx.TimeoutException):
+            error_desc = f"timeout ({type(exception).__name__})"
+        elif isinstance(exception, httpx.RequestError):
+            error_desc = f"connection error ({type(exception).__name__})"
+        else:
+            error_desc = f"{type(exception).__name__}: {exception}"
+
+        logger.warning(
+            f"🔄 {service_name} request failed ({error_desc}), "
+            f"retrying in {wait_time:.1f}s (attempt {attempt}/5)"
+        )
+
+    return before_sleep
