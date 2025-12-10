@@ -310,7 +310,6 @@ class JiraConfig(SourceConfig):
         title="Zephyr Scale API Token",
         description=(
             "API token for Zephyr Scale test management integration. "
-            "Generate in Jira > Apps > Zephyr Scale > API Keys. "
             "Leave empty if not using Zephyr Scale."
         ),
         json_schema_extra={"feature_flag": "zephyr_scale", "is_secret": True},
