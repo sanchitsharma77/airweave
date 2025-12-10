@@ -498,12 +498,17 @@ class StripeConfig(SourceConfig):
 
 
 class SalesforceConfig(SourceConfig):
-    """Salesforce configuration schema."""
+    """Salesforce configuration schema.
 
-    instance_url: str = RequiredTemplateConfig(
+    Note: instance_url is automatically extracted from the OAuth response,
+    so users don't need to provide it manually.
+    """
+
+    instance_url: Optional[str] = Field(
+        default=None,
         title="Salesforce Instance URL",
-        description="Your Salesforce instance domain only (e.g. 'mycompany.my.salesforce.com')",
-        json_schema_extra={"required_for_auth": True},
+        description="Your Salesforce instance domain (auto-populated from OAuth response)",
+        json_schema_extra={"exclude_from_ui": True},
     )
 
     @field_validator("instance_url", mode="before")

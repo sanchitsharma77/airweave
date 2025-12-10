@@ -542,9 +542,18 @@ class OAuth2Service:
         # IMPORTANT: For WITH_ROTATING_REFRESH OAuth (Jira, Confluence, Microsoft),
         # do NOT include scope parameter - Atlassian/Microsoft reject it with 403
         # For WITH_REFRESH OAuth (Google, Slack), scope should be included
+        # EXCEPTION: Salesforce is with_refresh but does NOT support scope parameter during refresh
         # See: https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/#refresh-a-token
         oauth_type = getattr(integration_config, "oauth_type", None)
-        if (
+        integration_short_name = getattr(integration_config, "integration_short_name", None)
+
+        # Skip scope for: rotating_refresh types, or Salesforce
+        if oauth_type == "with_rotating_refresh" or integration_short_name == "salesforce":
+            logger.debug(
+                f"Skipping scope in token refresh "
+                f"(oauth_type={oauth_type}, integration={integration_short_name})"
+            )
+        elif (
             oauth_type == "with_refresh"
             and hasattr(integration_config, "scope")
             and integration_config.scope
@@ -554,8 +563,6 @@ class OAuth2Service:
                 f"Including scope in token refresh (oauth_type=with_refresh): "
                 f"{integration_config.scope}"
             )
-        elif oauth_type == "with_rotating_refresh":
-            logger.debug("Skipping scope in token refresh (oauth_type=with_rotating_refresh)")
 
         if integration_config.client_credential_location == "header":
             encoded_credentials = OAuth2Service._encode_client_credentials(client_id, client_secret)

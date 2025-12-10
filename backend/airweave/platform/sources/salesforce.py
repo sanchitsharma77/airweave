@@ -151,7 +151,12 @@ class SalesforceSource(BaseSource):
         Raises:
             httpx.HTTPStatusError: If the request fails
         """
-        headers = {"Authorization": f"Bearer {self.access_token}"}
+        # Get a valid token (will refresh if needed via TokenManager)
+        access_token = await self.get_access_token()
+        if not access_token:
+            raise ValueError("No access token available")
+
+        headers = {"Authorization": f"Bearer {access_token}"}
         response = await client.get(url, headers=headers, params=params)
         response.raise_for_status()
         return response.json()
