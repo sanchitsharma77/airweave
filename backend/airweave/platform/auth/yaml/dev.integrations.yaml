@@ -1,5 +1,5 @@
 # Warning: this file is not used in production. It is only used for development.
-# The secrets that we openly share with you are for development purposes only and cannot 
+# The secrets that we openly share with you are for development purposes only and cannot
 # be used in production.
 
 integrations:
@@ -386,9 +386,7 @@ integrations:
   salesforce:
     oauth_type: "with_refresh"
     url: "https://login.salesforce.com/services/oauth2/authorize"
-    backend_url: "https://{instance_url}/services/oauth2/token"
-    url_template: true
-    backend_url_template: true
+    backend_url: "https://login.salesforce.com/services/oauth2/token"
     grant_type: "authorization_code"
     client_id: "3MVG9dAEux2v1sLseF_0jBTN_sDLP7fVLtwbpycDbE8dR99sf7irwffkExkYz80vLsd_Wqh.SbBHaaWsjTB0D"
     client_secret: "817BA10D3DDEEAAA309B6D38B6B58A0339BD3F2073AD6D72232382F1B99F73BF"

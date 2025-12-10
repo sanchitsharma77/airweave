@@ -383,10 +383,8 @@ integrations:
 
   salesforce:
     oauth_type: "with_refresh"
-    url: "https://{instance_url}/services/oauth2/authorize"
-    backend_url: "https://{instance_url}/services/oauth2/token"
-    url_template: true
-    backend_url_template: true
+    url: "https://login.salesforce.com/services/oauth2/authorize"
+    backend_url: "https://login.salesforce.com/services/oauth2/token"
     grant_type: "authorization_code"
     client_id: "salesforce-client-id-key"
     client_secret: "salesforce-client-secret-key"

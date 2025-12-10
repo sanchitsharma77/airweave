@@ -140,6 +140,11 @@ class Fields(BaseModel):
         """Create fields from config class."""
         fields = []
         for field_name, field_info in config_class.model_fields.items():
+            # Skip fields marked as excluded from UI
+            json_schema_extra = field_info.json_schema_extra or {}
+            if json_schema_extra.get("exclude_from_ui"):
+                continue
+
             # Get the actual type, handling Optional types
             annotation = field_info.annotation
             is_optional = False

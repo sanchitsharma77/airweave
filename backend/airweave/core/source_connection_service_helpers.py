@@ -1437,6 +1437,29 @@ class SourceConnectionHelpers:
             else AuthenticationMethod.OAUTH_BROWSER
         )
 
+        # For Salesforce: extract instance_url from token response and update config
+        # Salesforce returns the actual instance_url in the OAuth response
+        # (e.g., orgfarm-xxx.salesforce.com)
+        # This overrides whatever placeholder the user may have entered
+        if init_session.short_name == "salesforce" and "instance_url" in auth_fields:
+            # Get the instance_url from OAuth response
+            instance_url_from_response = auth_fields.get("instance_url", "")
+            if instance_url_from_response:
+                # Normalize it (remove https:// if present)
+                instance_url_normalized = instance_url_from_response.replace(
+                    "https://", ""
+                ).replace("http://", "")
+
+                # Update the payload config with the real instance_url
+                if not payload.get("config"):
+                    payload["config"] = {}
+                payload["config"]["instance_url"] = instance_url_normalized
+
+                ctx.logger.info(
+                    f"Updated Salesforce instance_url from OAuth response: "
+                    f"{instance_url_normalized}"
+                )
+
         # Continue with common logic
         return await self._complete_oauth_connection_common(
             db,
