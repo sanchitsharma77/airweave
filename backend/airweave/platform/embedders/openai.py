@@ -215,7 +215,10 @@ class DenseEmbedder(BaseEmbedder):
             List of embedding vectors
         """
         # Count tokens for this sub-batch
-        total_tokens = sum(len(self._tokenizer.encode(text)) for text in texts)
+        # Use allowed_special="all" to handle special tokens like <|endoftext|>
+        total_tokens = sum(
+            len(self._tokenizer.encode(text, allowed_special="all")) for text in texts
+        )
 
         # Check if we need to split due to token limit
         if total_tokens > self.MAX_TOKENS_PER_REQUEST:

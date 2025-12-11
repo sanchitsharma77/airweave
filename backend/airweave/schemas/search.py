@@ -40,7 +40,8 @@ class SearchRequest(BaseModel):
 
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
-            token_count = len(encoding.encode(v))
+            # Use allowed_special="all" to handle special tokens like <|endoftext|>
+            token_count = len(encoding.encode(v, allowed_special="all"))
 
             max_tokens = 2048
             if token_count > max_tokens:
