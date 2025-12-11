@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 from airweave.core.logging import logger
-from airweave.platform.chunkers._base import BaseChunker
+from airweave.platform.chunkers._base import BaseChunker, TiktokenWrapperForChonkie
 from airweave.platform.sync.async_helpers import run_in_thread_pool
 from airweave.platform.sync.exceptions import SyncFailureError
 
@@ -104,6 +104,11 @@ class SemanticChunker(BaseChunker):
             # Initialize tiktoken tokenizer for accurate OpenAI token counting
             self._tiktoken_tokenizer = tiktoken.get_encoding(self.TOKENIZER)
 
+            # Wrap tiktoken for Chonkie to handle special tokens like <|endoftext|>
+            # Chonkie's internal AutoTokenizer doesn't pass allowed_special="all",
+            # which causes failures when syncing content with special tokens
+            tiktoken_wrapper = TiktokenWrapperForChonkie(self._tiktoken_tokenizer)
+
             # Initialize Chonkie's SemanticChunker with ALL parameters explicit
             # NOTE: Uses local embedding model for chunking decisions (fast, no API calls)
             # This is separate from OpenAI embeddings used later for final search vectors
@@ -131,7 +136,7 @@ class SemanticChunker(BaseChunker):
             # Splits at exact token boundaries when semantic chunking produces oversized chunks
             # GUARANTEES chunks ≤ MAX_TOKENS_PER_CHUNK (uses same tokenizer for encode/decode)
             self._token_chunker = TokenChunker(
-                tokenizer=self._tiktoken_tokenizer,
+                tokenizer=tiktoken_wrapper,  # Use wrapper that handles special tokens
                 chunk_size=self.MAX_TOKENS_PER_CHUNK,
                 chunk_overlap=0,
             )
