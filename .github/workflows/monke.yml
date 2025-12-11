@@ -256,6 +256,11 @@ jobs:
           # Pipedrive direct auth credentials
           MONKE_PIPEDRIVE_API_TOKEN: ${{ secrets.MONKE_PIPEDRIVE_API_TOKEN }}
 
+          # Shopify direct auth credentials (client credentials grant)
+          MONKE_SHOPIFY_CLIENT_ID: ${{ secrets.MONKE_SHOPIFY_CLIENT_ID }}
+          MONKE_SHOPIFY_CLIENT_SECRET: ${{ secrets.MONKE_SHOPIFY_CLIENT_SECRET }}
+          MONKE_SHOPIFY_SHOP_DOMAIN: ${{ secrets.MONKE_SHOPIFY_SHOP_DOMAIN }}
+
           # All SaaS app credentials (Composio configs, API tokens, etc.)
           # will be fetched from Azure Key Vault at runtime
         run: |
