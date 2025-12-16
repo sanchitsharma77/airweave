@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 
 import { Copy, Eye, Key, Plus, ExternalLink, FileText, Github, Code, Sparkles, TrendingUp, Search, Package } from "lucide-react";
 import { useNavigate, Link, useLocation, useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
 import { useTheme } from "@/lib/theme-provider";
 import {
   CollectionCard,
