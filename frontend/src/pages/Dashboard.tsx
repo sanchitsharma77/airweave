@@ -135,11 +135,6 @@ const Dashboard = () => {
   // Usage limits are now checked by UsageChecker component
 
 
-  const handleRequestNewKey = () => {
-    // Placeholder for requesting a new API key
-    toast.info("New API key feature coming soon");
-  };
-
   const handleSourceClick = (source: Source) => {
     const store = useCollectionCreationStore.getState();
     // Determine auth mode based on source
@@ -246,9 +241,7 @@ const Dashboard = () => {
         {/* Right Column */}
         <div className="md:col-span-1 space-y-6">
           {/* API Key Card */}
-          <ApiKeyCard
-            onRequestNewKey={handleRequestNewKey}
-          />
+          <ApiKeyCard />
 
           {/* Example Projects Section */}
           <div className="space-y-4">

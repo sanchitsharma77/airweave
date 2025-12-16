@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Check, Copy, Key, Plus } from "lucide-react";
@@ -10,6 +11,7 @@ interface ApiKeyCardProps {
 }
 
 export const ApiKeyCard = ({ onRequestNewKey }: ApiKeyCardProps) => {
+  const navigate = useNavigate();
   const [copySuccess, setCopySuccess] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -47,12 +49,8 @@ export const ApiKeyCard = ({ onRequestNewKey }: ApiKeyCardProps) => {
   };
 
   const handleNeedAnotherKey = () => {
-    if (onRequestNewKey) {
-      onRequestNewKey();
-    } else {
-      // Fallback to creating a new key directly
-      handleCreateAPIKey();
-    }
+    // Navigate to the API keys page where users can create and manage their keys
+    navigate('/api-keys');
   };
 
   const maskApiKey = (key: string) => {
