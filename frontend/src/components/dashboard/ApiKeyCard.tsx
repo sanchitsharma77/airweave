@@ -1,17 +1,12 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Check, Copy, Key, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useAPIKeysStore } from "@/lib/stores/apiKeys";
 
-interface ApiKeyCardProps {
-  onRequestNewKey?: () => void;
-}
-
-export const ApiKeyCard = ({ onRequestNewKey }: ApiKeyCardProps) => {
-  const navigate = useNavigate();
+export const ApiKeyCard = () => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -46,11 +41,6 @@ export const ApiKeyCard = ({ onRequestNewKey }: ApiKeyCardProps) => {
     } finally {
       setIsCreating(false);
     }
-  };
-
-  const handleNeedAnotherKey = () => {
-    // Navigate to the API keys page where users can create and manage their keys
-    navigate('/api-keys');
   };
 
   const maskApiKey = (key: string) => {
@@ -97,13 +87,12 @@ export const ApiKeyCard = ({ onRequestNewKey }: ApiKeyCardProps) => {
               </Button>
             </div>
             <div className="mt-2 text-right">
-              <button
+              <Link
+                to="/api-keys"
                 className="text-xs text-primary hover:underline"
-                onClick={handleNeedAnotherKey}
-                disabled={isCreating}
               >
-                {isCreating ? "Creating..." : "Need another API key?"}
-              </button>
+                Need another API key?
+              </Link>
             </div>
           </>
         ) : (
