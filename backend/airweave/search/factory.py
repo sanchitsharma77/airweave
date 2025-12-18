@@ -67,6 +67,9 @@ class SearchFactory:
         db: AsyncSession,
     ) -> SearchContext:
         """Build SearchContext from request with validated YAML defaults."""
+        # Enrich logger with collection context for all downstream logs
+        ctx.logger = ctx.logger.with_context(collection=readable_collection_id)
+
         if not search_request.query or not search_request.query.strip():
             raise HTTPException(status_code=422, detail="Query is required")
 
