@@ -17,7 +17,7 @@ from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.config import settings as core_settings
 from airweave.core.constants.reserved_ids import (
-    NATIVE_QDRANT_UUID,
+    NATIVE_VESPA_UUID,
 )
 from airweave.core.shared_models import (
     AuthMethod,
@@ -69,7 +69,7 @@ class SourceConnectionHelpers:
 
         from airweave.models.connection import Connection
 
-        destination_ids = [NATIVE_QDRANT_UUID]  # Always include Qdrant as primary
+        destination_ids = [NATIVE_VESPA_UUID]  # Use Vespa as primary destination
 
         # Add S3 if feature flag enabled
         if ctx.has_feature(FeatureFlag.S3_DESTINATION):
@@ -966,25 +966,44 @@ class SourceConnectionHelpers:
     async def cleanup_destination_data(
         self, db: AsyncSession, source_conn: Any, ctx: ApiContext
     ) -> None:
-        """Clean up data in destinations."""
-        try:
-            collection = await crud.collection.get_by_readable_id(
-                db, readable_id=source_conn.readable_collection_id, ctx=ctx
-            )
-            if collection:
-                from airweave.platform.destinations.qdrant import QdrantDestination
+        """Clean up data in destinations (Qdrant and Vespa)."""
+        collection = await crud.collection.get_by_readable_id(
+            db, readable_id=source_conn.readable_collection_id, ctx=ctx
+        )
+        if not collection:
+            return
 
-                destination = await QdrantDestination.create(
-                    credentials=None,  # Native Qdrant uses settings
-                    config=None,
-                    collection_id=collection.id,
-                    organization_id=collection.organization_id,
-                    # vector_size auto-detected based on embedding model configuration
-                )
-                await destination.delete_by_sync_id(source_conn.sync_id)
-                ctx.logger.info(f"Deleted data for sync {source_conn.sync_id}")
+        # Clean up Qdrant
+        try:
+            from airweave.platform.destinations.qdrant import QdrantDestination
+
+            qdrant = await QdrantDestination.create(
+                credentials=None,  # Native Qdrant uses settings
+                config=None,
+                collection_id=collection.id,
+                organization_id=collection.organization_id,
+            )
+            await qdrant.delete_by_sync_id(source_conn.sync_id)
+            ctx.logger.info(f"Deleted Qdrant data for sync {source_conn.sync_id}")
         except Exception as e:
-            ctx.logger.error(f"Error cleaning up destination data: {e}")
+            ctx.logger.error(f"Error cleaning up Qdrant destination data: {e}")
+
+        # Clean up Vespa
+        try:
+            from airweave.platform.destinations.vespa import VespaDestination
+
+            vespa = await VespaDestination.create(
+                credentials=None,
+                config=None,
+                collection_id=collection.id,
+                organization_id=collection.organization_id,
+                logger=ctx.logger,
+                sync_id=source_conn.sync_id,
+            )
+            await vespa.delete_by_sync_id(source_conn.sync_id)
+            ctx.logger.info(f"Deleted Vespa data for sync {source_conn.sync_id}")
+        except Exception as e:
+            ctx.logger.error(f"Error cleaning up Vespa destination data: {e}")
 
     async def cleanup_temporal_schedules(
         self, sync_id: UUID, db: AsyncSession, ctx: ApiContext

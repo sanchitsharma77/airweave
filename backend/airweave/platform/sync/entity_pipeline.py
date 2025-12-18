@@ -38,11 +38,63 @@ from airweave.platform.sync.file_types import SUPPORTED_FILE_EXTENSIONS
 class EntityPipeline:
     """Pipeline for processing entities with stateful tracking across sync lifecycle."""
 
+    # Entity types not yet supported by Vespa (need custom schemas)
+    VESPA_UNSUPPORTED_TYPES = (FileEntity, CodeFileEntity, PolymorphicEntity, WebEntity)
+
     def __init__(self):
         """Initialize pipeline with empty entity tracking."""
         self._entity_ids_encountered_by_type: Dict[str, Set[str]] = {}
         self._dedupe_lock = asyncio.Lock()
         self._entities_printed_count: int = 0
+
+    # ------------------------------------------------------------------------------------
+    # Vespa-specific helpers
+    # ------------------------------------------------------------------------------------
+
+    def _has_vespa_destination(self, sync_context: SyncContext) -> bool:
+        """Check if any destination is a Vespa destination.
+
+        Vespa handles chunking and embedding internally, so the pipeline
+        needs to skip those steps when Vespa is the target.
+        """
+        from airweave.platform.destinations.vespa import VespaDestination
+
+        return any(isinstance(dest, VespaDestination) for dest in sync_context.destinations)
+
+    def _filter_for_vespa(
+        self, entities: List[BaseEntity], sync_context: SyncContext
+    ) -> Tuple[List[BaseEntity], List[BaseEntity]]:
+        """Filter entities - only direct BaseEntity subclasses supported for Vespa.
+
+        Skipped types (need custom schemas later):
+        - FileEntity: has file-specific fields and binary content
+        - CodeFileEntity: has code-specific fields and AST data
+        - PolymorphicEntity: dynamic schema that varies per instance
+        - WebEntity: crawl-specific fields
+
+        Args:
+            entities: Entities to filter
+            sync_context: Sync context for logging
+
+        Returns:
+            Tuple of (compatible_entities, skipped_entities)
+        """
+        compatible = []
+        skipped = []
+
+        for entity in entities:
+            if isinstance(entity, self.VESPA_UNSUPPORTED_TYPES):
+                skipped.append(entity)
+            else:
+                compatible.append(entity)
+
+        if skipped:
+            sync_context.logger.info(
+                f"Skipped {len(skipped)} entities for Vespa "
+                f"(FileEntity/CodeFileEntity/PolymorphicEntity/WebEntity not yet supported)"
+            )
+
+        return compatible, skipped
 
     # ------------------------------------------------------------------------------------
     # Cleanup orphaned entities
@@ -187,40 +239,81 @@ class EntityPipeline:
             await self._update_progress(partitions, sync_context)
             return
 
-        await self._build_textual_representations(entities_to_process, sync_context)
+        # Check if we're using Vespa - different processing path
+        is_vespa = self._has_vespa_destination(sync_context)
 
-        for entity in entities_to_process:
-            if not hasattr(entity, "textual_representation") or not entity.textual_representation:
-                raise SyncFailureError(
-                    f"PROGRAMMING ERROR: Entity {entity.__class__.__name__}[{entity.entity_id}] "
-                    f"has no textual_representation after _build_textual_representations(). "
-                    f"This should never happen - failed entities should be removed from the list."
-                )
+        if is_vespa:
+            # Vespa path: filter unsupported types, build text, feed directly
+            # Vespa handles chunking and embedding internally via schema
+            vespa_entities, skipped = self._filter_for_vespa(entities_to_process, sync_context)
 
-        # Chunk entities (entity multiplication: 1 entity → N chunk entities)
-        # entities_to_process may be empty if all failed conversion (handled in method)
-        if not entities_to_process:
-            sync_context.logger.debug("No entities to chunk - all failed conversion")
-            return
+            if skipped:
+                await sync_context.progress.increment("skipped", len(skipped))
 
-        chunk_entities = await self._chunk_entities(entities_to_process, sync_context)
+            if not vespa_entities:
+                sync_context.logger.debug("No Vespa-compatible entities to process")
+                await self._update_progress(partitions, sync_context)
+                return
 
-        # Release large textual bodies on parent entities once chunks are created
-        for entity in entities_to_process:
-            entity.textual_representation = None
+            # Build textual representations for Vespa entities
+            await self._build_textual_representations(vespa_entities, sync_context)
 
-        # Embed chunk entities (sets vectors field)
-        await self._embed_entities(chunk_entities, sync_context)
+            # Validate textual representations
+            for entity in vespa_entities:
+                if not entity.textual_representation:
+                    raise SyncFailureError(
+                        f"Entity {entity.__class__.__name__}[{entity.entity_id}] "
+                        f"has no textual_representation after _build_textual_representations()."
+                    )
 
-        # Persist to destinations (COMMIT POINT)
-        await self._persist_to_destinations(chunk_entities, partitions, sync_context)
+            # Persist directly to Vespa (NO chunking/embedding - Vespa handles this)
+            # VespaDestination.bulk_insert transforms entities to Vespa format internally
+            await self._persist_to_destinations(vespa_entities, partitions, sync_context)
 
-        # Drop chunk payloads/vectors ASAP to minimise concurrent memory footprint
-        for chunk in chunk_entities:
-            chunk.textual_representation = None
-            if chunk.airweave_system_metadata:
-                chunk.airweave_system_metadata.vectors = None
-        chunk_entities.clear()
+            # Release textual bodies after successful persist
+            for entity in vespa_entities:
+                entity.textual_representation = None
+
+        else:
+            # Traditional Qdrant path: chunk + embed + persist
+            await self._build_textual_representations(entities_to_process, sync_context)
+
+            for entity in entities_to_process:
+                if not hasattr(entity, "textual_representation"):
+                    raise SyncFailureError(
+                        f"Entity {entity.__class__.__name__}[{entity.entity_id}] "
+                        f"has no textual_representation after build step."
+                    )
+                if not entity.textual_representation:
+                    raise SyncFailureError(
+                        f"Entity {entity.__class__.__name__}[{entity.entity_id}] "
+                        f"has empty textual_representation."
+                    )
+
+            # Chunk entities (entity multiplication: 1 entity → N chunk entities)
+            # entities_to_process may be empty if all failed conversion (handled in method)
+            if not entities_to_process:
+                sync_context.logger.debug("No entities to chunk - all failed conversion")
+                return
+
+            chunk_entities = await self._chunk_entities(entities_to_process, sync_context)
+
+            # Release large textual bodies on parent entities once chunks are created
+            for entity in entities_to_process:
+                entity.textual_representation = None
+
+            # Embed chunk entities (sets vectors field)
+            await self._embed_entities(chunk_entities, sync_context)
+
+            # Persist to destinations (COMMIT POINT)
+            await self._persist_to_destinations(chunk_entities, partitions, sync_context)
+
+            # Drop chunk payloads/vectors ASAP to minimise concurrent memory footprint
+            for chunk in chunk_entities:
+                chunk.textual_representation = None
+                if chunk.airweave_system_metadata:
+                    chunk.airweave_system_metadata.vectors = None
+            chunk_entities.clear()
 
         # Persist to database (only after destination success)
         await self._persist_to_database(partitions, sync_context)
@@ -835,6 +928,12 @@ class EntityPipeline:
             f"**Type**: {entity_type}",
             f"**Name**: {entity.name}",
         ]
+
+        # Add timestamps if present (makes them searchable via text index)
+        if entity.created_at:
+            lines.append(f"**Created**: {entity.created_at.isoformat()}")
+        if entity.updated_at:
+            lines.append(f"**Updated**: {entity.updated_at.isoformat()}")
 
         # Add breadcrumb path if present (shows hierarchy with types)
         if entity.breadcrumbs and len(entity.breadcrumbs) > 0:

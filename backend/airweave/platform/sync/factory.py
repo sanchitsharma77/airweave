@@ -11,7 +11,11 @@ from airweave import crud, schemas
 from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.config import settings
-from airweave.core.constants.reserved_ids import NATIVE_QDRANT_UUID, RESERVED_TABLE_ENTITY_ID
+from airweave.core.constants.reserved_ids import (
+    NATIVE_QDRANT_UUID,
+    NATIVE_VESPA_UUID,
+    RESERVED_TABLE_ENTITY_ID,
+)
 from airweave.core.exceptions import NotFoundException
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
@@ -636,6 +640,33 @@ class SyncFactory:
 
                     destinations.append(destination)
                     logger.info("Created native Qdrant destination")
+                    continue
+
+                # Special case: Native Vespa (uses settings, no DB connection)
+                # Vespa handles chunking and embedding internally via schema
+                if destination_connection_id == NATIVE_VESPA_UUID:
+                    logger.info("Using native Vespa destination (settings-based)")
+                    destination_model = await crud.destination.get_by_short_name(db, "vespa")
+                    if not destination_model:
+                        logger.warning("Vespa destination model not found")
+                        continue
+
+                    destination_schema = schemas.Destination.model_validate(destination_model)
+                    destination_class = resource_locator.get_destination(destination_schema)
+
+                    # Native Vespa: no credentials (uses settings)
+                    # Note: vector_size not needed - Vespa handles embeddings internally
+                    destination = await destination_class.create(
+                        credentials=None,
+                        config=None,
+                        collection_id=collection.id,
+                        organization_id=collection.organization_id,
+                        vector_size=None,  # Vespa handles embeddings internally
+                        logger=logger,
+                    )
+
+                    destinations.append(destination)
+                    logger.info("Created native Vespa destination")
                     continue
 
                 # Regular case: Load connection from database

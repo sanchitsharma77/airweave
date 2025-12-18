@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         Retrieval,
         TemporalRelevance,
         UserFilter,
+        VespaRetrieval,
     )
 
 
@@ -46,6 +47,7 @@ class SearchContext(BaseModel):
     user_filter: Optional[UserFilter] = Field()
     temporal_relevance: Optional[TemporalRelevance] = Field()
     retrieval: Optional[Retrieval] = Field()
+    vespa_retrieval: Optional[VespaRetrieval] = Field()
     federated_search: Optional[FederatedSearch] = Field()
     reranking: Optional[Reranking] = Field()
     generate_answer: Optional[GenerateAnswer] = Field()

@@ -31,6 +31,7 @@ from airweave.search.operations import (
     Retrieval,
     TemporalRelevance,
     UserFilter,
+    VespaRetrieval,
 )
 from airweave.search.providers._base import BaseProvider
 from airweave.search.providers.cerebras import CerebrasProvider
@@ -82,7 +83,11 @@ class SearchFactory:
         has_federated_sources = bool(federated_sources)
         has_vector_sources = await self._has_vector_sources(db, collection, ctx)
 
+        # Check if collection uses Vespa destination
+        use_vespa = await self._uses_vespa_destination(db, collection, ctx)
+
         self._log_source_modes(ctx, federated_sources, has_vector_sources)
+        ctx.logger.info(f"[SearchFactory] Using Vespa: {use_vespa}")
 
         if not has_federated_sources and not has_vector_sources:
             raise ValueError("Collection has no sources")
@@ -95,9 +100,16 @@ class SearchFactory:
             raise ValueError(f"Collection {collection.readable_id} has no vector_size set.")
 
         # Select providers for operations
+        # Note: When using Vespa, we skip embedding provider since Vespa embeds server-side
         api_keys = self._get_available_api_keys()
         providers = self._create_provider_for_each_operation(
-            api_keys, params, has_federated_sources, has_vector_sources, ctx, vector_size
+            api_keys,
+            params,
+            has_federated_sources,
+            has_vector_sources,
+            ctx,
+            vector_size,
+            use_vespa=use_vespa,
         )
 
         # Create event emitter and emit skip notices if needed
@@ -124,6 +136,8 @@ class SearchFactory:
             search_request,
             temporal_supporting_sources,
             vector_size,
+            use_vespa=use_vespa,
+            collection_id=collection_id,
         )
 
         search_context = SearchContext(
@@ -264,6 +278,8 @@ class SearchFactory:
         search_request: SearchRequest,
         temporal_supporting_sources: Optional[List[str]] = None,
         vector_size: Optional[int] = None,
+        use_vespa: bool = False,
+        collection_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """Build operation instances for the search context.
 
@@ -280,14 +296,23 @@ class SearchFactory:
                 - Empty list: Skip operation (no sources support temporal)
                 - None: No filtering needed (temporal disabled or not checked)
             vector_size: Vector dimensions for this collection (used by EmbedQuery)
+            use_vespa: Whether to use Vespa for retrieval (skips Qdrant-specific operations)
+            collection_id: Collection UUID (needed for Vespa multi-tenant filtering)
         """
+        # When using Vespa:
+        # - Skip EmbedQuery (Vespa embeds server-side)
+        # - Skip QueryInterpretation, UserFilter, TemporalRelevance (Qdrant-specific filters)
+        # - Use VespaRetrieval instead of Retrieval
+        use_qdrant = has_vector_sources and not use_vespa
+
         return {
             "query_expansion": (
                 QueryExpansion(providers=providers["expansion"]) if params["expand_query"] else None
             ),
+            # Qdrant-specific operations - skip for Vespa
             "query_interpretation": (
                 QueryInterpretation(providers=providers["interpretation"])
-                if (params["interpret_filters"] and has_vector_sources)
+                if (params["interpret_filters"] and use_qdrant)
                 else None
             ),
             "embed_query": (
@@ -296,7 +321,7 @@ class SearchFactory:
                     provider=providers["embed"],  # Single provider - embeddings must be consistent
                     vector_size=vector_size,
                 )
-                if has_vector_sources
+                if use_qdrant
                 else None
             ),
             "temporal_relevance": (
@@ -305,7 +330,7 @@ class SearchFactory:
                 )
                 if (
                     params["temporal_weight"] > 0
-                    and has_vector_sources
+                    and use_qdrant
                     # Skip only if explicitly empty list (no sources support it)
                     and temporal_supporting_sources != []
                 )
@@ -313,16 +338,27 @@ class SearchFactory:
             ),
             "user_filter": (
                 UserFilter(filter=search_request.filter)
-                if (search_request.filter and has_vector_sources)
+                if (search_request.filter and use_qdrant)
                 else None
             ),
+            # Qdrant retrieval
             "retrieval": (
                 Retrieval(
                     strategy=params["retrieval_strategy"],
                     offset=params["offset"],
                     limit=params["limit"],
                 )
-                if has_vector_sources
+                if use_qdrant
+                else None
+            ),
+            # Vespa retrieval
+            "vespa_retrieval": (
+                VespaRetrieval(
+                    collection_id=collection_id,
+                    limit=params["limit"],
+                    offset=params["offset"],
+                )
+                if (use_vespa and has_vector_sources)
                 else None
             ),
             "federated_search": (
@@ -383,18 +419,24 @@ class SearchFactory:
         has_vector_sources: bool,
         ctx: ApiContext,
         vector_size: int,
+        use_vespa: bool = False,
     ) -> Dict[str, BaseProvider]:
         """Select and validate all required providers."""
         providers = {}
 
-        # Create embedding provider if needed
-        if has_vector_sources:
+        # Create embedding provider if needed (skip for Vespa - it embeds server-side)
+        if has_vector_sources and not use_vespa:
             providers["embed"] = self._create_embedding_provider(api_keys, ctx, vector_size)
 
         # Create LLM providers for enabled operations
         providers.update(
             self._create_llm_providers(
-                api_keys, params, has_federated_sources, has_vector_sources, ctx
+                api_keys,
+                params,
+                has_federated_sources,
+                has_vector_sources,
+                ctx,
+                use_vespa=use_vespa,
             )
         )
 
@@ -426,6 +468,7 @@ class SearchFactory:
         has_federated_sources: bool,
         has_vector_sources: bool,
         ctx: ApiContext,
+        use_vespa: bool = False,
     ) -> Dict[str, List[BaseProvider]]:
         """Create LLM provider lists for enabled operations.
 
@@ -457,8 +500,9 @@ class SearchFactory:
                 "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
-        # Query interpretation
-        if params["interpret_filters"] and has_vector_sources:
+        # Query interpretation (skip for Vespa - uses YQL filters, not Qdrant filters)
+        use_qdrant = has_vector_sources and not use_vespa
+        if params["interpret_filters"] and use_qdrant:
             self._add_provider_list_or_error(
                 providers,
                 "interpretation",
@@ -534,6 +578,51 @@ class SearchFactory:
             raise ValueError(
                 f"Error getting vector sources for collection {collection.readable_id}"
             )
+
+    async def _uses_vespa_destination(self, db: AsyncSession, collection, ctx: ApiContext) -> bool:
+        """Check if collection uses Vespa as its vector destination.
+
+        Returns True if any source connection's sync has NATIVE_VESPA_UUID in its destination
+        connections (via SyncConnection table).
+        """
+        from sqlalchemy import select
+
+        from airweave.core.constants.reserved_ids import NATIVE_VESPA_UUID
+        from airweave.models.sync_connection import SyncConnection
+
+        try:
+            # Get source connections for this collection
+            source_connections = await crud.source_connection.get_for_collection(
+                db, readable_collection_id=collection.readable_id, ctx=ctx
+            )
+
+            if not source_connections:
+                return False
+
+            # Check if any source connection's sync uses Vespa destination
+            for source_connection in source_connections:
+                if not source_connection.sync_id:
+                    continue
+
+                # Get the sync's destination connections via SyncConnection
+                result = await db.execute(
+                    select(SyncConnection.connection_id).where(
+                        SyncConnection.sync_id == source_connection.sync_id
+                    )
+                )
+                destination_connection_ids = [row[0] for row in result.fetchall()]
+
+                if NATIVE_VESPA_UUID in destination_connection_ids:
+                    ctx.logger.info(
+                        f"[SearchFactory] Collection {collection.readable_id} uses Vespa destination"
+                    )
+                    return True
+
+            return False
+
+        except Exception as e:
+            ctx.logger.warning(f"[SearchFactory] Error checking Vespa destination: {e}")
+            return False
 
     async def _get_temporal_supporting_sources(
         self, db: AsyncSession, collection, ctx: ApiContext, emitter: EventEmitter
