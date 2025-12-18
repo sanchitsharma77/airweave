@@ -7,7 +7,7 @@ AutoTokenizer._get_backend() detects it as a tiktoken backend via the type strin
 This ensures our encode() method (with allowed_special="all") is called.
 """
 
-from typing import Sequence, Union
+from typing import List, Sequence, Union
 
 
 class TiktokenWrapperForChonkie:
@@ -45,6 +45,17 @@ class TiktokenWrapperForChonkie:
         """
         return self._encoding.encode(text, allowed_special="all")
 
+    def encode_batch(self, texts: List[str]) -> List[List[int]]:
+        """Encode multiple texts to token IDs, allowing all special tokens.
+
+        Args:
+            texts: List of texts to encode
+
+        Returns:
+            List of token ID sequences
+        """
+        return [self._encoding.encode(text, allowed_special="all") for text in texts]
+
     def decode(self, tokens: Sequence[int]) -> str:
         """Decode token IDs back to text.
 
@@ -55,6 +66,17 @@ class TiktokenWrapperForChonkie:
             Decoded text string
         """
         return self._encoding.decode(list(tokens))
+
+    def decode_batch(self, token_lists: List[List[int]]) -> List[str]:
+        """Decode multiple token sequences back to text.
+
+        Args:
+            token_lists: List of token ID sequences
+
+        Returns:
+            List of decoded text strings
+        """
+        return [self._encoding.decode(tokens) for tokens in token_lists]
 
     def tokenize(self, text: str) -> Sequence[Union[str, int]]:
         """Tokenize text into token IDs.
