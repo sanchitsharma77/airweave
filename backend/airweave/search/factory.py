@@ -907,6 +907,9 @@ class SearchFactory:
                 logger=ctx.logger,
             )
 
+            # Store source connection ID on instance for error tracking
+            source_instance._source_connection_id = str(source_connection.id)
+
             # Step 9: Setup token manager for OAuth sources that support refresh
             # Skip for proxy mode (proxy client manages tokens internally)
             from airweave.platform.auth_providers.auth_result import AuthProviderMode
