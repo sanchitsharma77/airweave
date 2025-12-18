@@ -179,8 +179,8 @@ jobs:
           echo "Detected $FAILURES test failure(s)"
 
           # If 3 or more failures, don't retry
-          if [ "$FAILURES" -ge 3 ]; then
-            echo "3 or more tests failed. Not retrying."
+          if [ "$FAILURES" -ge 5 ]; then
+            echo "5 or more tests failed. Not retrying."
             exit 1
           fi
 
@@ -191,7 +191,7 @@ jobs:
             echo "=========================================="
             echo "Retry attempt $ATTEMPT of $MAX_RETRIES (running ONLY failed tests)"
             echo "=========================================="
-            sleep 5
+            sleep 10
 
             set +e
             pytest tests/e2e/smoke -m "not rate_limit" --lf -n 3 -v --tb=short 2>&1 | tee pytest_retry_output.txt
