@@ -207,18 +207,33 @@ class DenseEmbedder(BaseEmbedder):
         This is called from concurrent processing and handles cases where
         a sub-batch exceeds the token limit by splitting recursively.
 
+        Texts that individually exceed the token limit are skipped with a
+        zero vector to avoid crashing the entire sync pipeline.
+
         Args:
             texts: List of texts to embed (already within count limit)
             sync_context: Sync context with logger
 
         Returns:
-            List of embedding vectors
+            List of embedding vectors (zero vectors for skipped texts)
         """
-        # Count tokens for this sub-batch
+        if not texts:
+            return []
+
+        # Count tokens for each text individually
         # Use allowed_special="all" to handle special tokens like <|endoftext|>
-        total_tokens = sum(
-            len(self._tokenizer.encode(text, allowed_special="all")) for text in texts
-        )
+        token_counts = [len(self._tokenizer.encode(text, allowed_special="all")) for text in texts]
+        total_tokens = sum(token_counts)
+
+        # Handle single text that exceeds the limit - skip it gracefully
+        if len(texts) == 1 and total_tokens > self.MAX_TOKENS_PER_REQUEST:
+            sync_context.logger.warning(
+                f"[EMBED] Skipping text with {total_tokens} tokens "
+                f"(exceeds {self.MAX_TOKENS_PER_REQUEST} limit). "
+                f"Text preview: {texts[0][:200]}..."
+            )
+            # Return zero vector so the pipeline continues
+            return [[0.0] * self.VECTOR_DIMENSIONS]
 
         # Check if we need to split due to token limit
         if total_tokens > self.MAX_TOKENS_PER_REQUEST:
@@ -292,12 +307,19 @@ class DenseEmbedder(BaseEmbedder):
         except Exception as e:
             error_msg = str(e).lower()
 
-            # Check for token limit error (should be impossible if chunker worked)
+            # Token limit error - skip batch gracefully with zero vectors
+            # This shouldn't happen if _embed_sub_batch worked, but handle it as fallback
             if "maximum context length" in error_msg or "max_tokens" in error_msg:
-                raise SyncFailureError(
-                    f"Token limit exceeded during embedding - chunker failed to enforce limits: {e}"
+                sync_context.logger.error(
+                    f"[EMBED] Token limit exceeded for batch of {len(batch)} texts, "
+                    f"returning zero vectors. Error: {e}"
                 )
+                return [[0.0] * self.VECTOR_DIMENSIONS for _ in batch]
 
-            # Any other error is also fatal
-            sync_context.logger.error(f"OpenAI embedding API error: {e}")
-            raise SyncFailureError(f"OpenAI embedding failed: {e}")
+            # Other transient errors - log and skip batch
+            # Don't kill the entire sync for a single batch failure
+            sync_context.logger.error(
+                f"[EMBED] OpenAI API error for batch of {len(batch)} texts, "
+                f"returning zero vectors. Error: {e}"
+            )
+            return [[0.0] * self.VECTOR_DIMENSIONS for _ in batch]
