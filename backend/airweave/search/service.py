@@ -6,6 +6,8 @@ and executed in a flexible pipeline.
 """
 
 import time
+from typing import Any, Dict, List
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +48,9 @@ class SearchService:
 
         ctx.logger.debug("Executing search")
         response, state = await orchestrator.run(ctx, search_context)
+
+        # Handle any federated source auth failures (mark connections as unauthenticated)
+        await self._handle_failed_federated_auth(db, state, ctx)
 
         duration_ms = (time.monotonic() - start_time) * 1000
         ctx.logger.debug(f"Search completed in {duration_ms:.2f}ms")
@@ -95,6 +100,25 @@ class SearchService:
         )
 
         return response
+
+    async def _handle_failed_federated_auth(
+        self,
+        db: AsyncSession,
+        state: Dict[str, Any],
+        ctx: ApiContext,
+    ) -> None:
+        """Mark source connections as unauthenticated on federated auth errors."""
+        failed_conn_ids: List[str] = state.get("_failed_federated_auth", [])
+        if not failed_conn_ids:
+            return
+
+        for conn_id in failed_conn_ids:
+            source_conn = await crud.source_connection.get(db, id=UUID(conn_id), ctx=ctx)
+            if source_conn:
+                await crud.source_connection.update(
+                    db, db_obj=source_conn, obj_in={"is_authenticated": False}, ctx=ctx
+                )
+                ctx.logger.warning(f"Marked source connection {conn_id} as unauthenticated")
 
 
 # TODO: clean search results

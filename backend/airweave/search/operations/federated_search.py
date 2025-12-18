@@ -178,13 +178,21 @@ class FederatedSearch(SearchOperation):
                 )
 
             except Exception as e:
-                # Emit error event but continue with other sources
+                error_str = str(e)
+                source_conn_id = getattr(source, "_source_connection_id", None)
+
+                # Track auth failures for post-search DB update
+                if self._is_auth_error(error_str) and source_conn_id:
+                    if "_failed_federated_auth" not in state:
+                        state["_failed_federated_auth"] = []
+                    state["_failed_federated_auth"].append(source_conn_id)
+
+                ctx.logger.warning(f"[FederatedSearch] {source_name} failed: {error_str}")
                 await context.emitter.emit(
                     "federated_source_error",
-                    {"source": source_name, "error": str(e)},
+                    {"source": source_name, "error": error_str},
                     op_name=self.__class__.__name__,
                 )
-                raise ValueError(f"Error searching {source_name} at query time: {e}")
 
         ctx.logger.debug(f"[FederatedSearch] Retrieved {len(all_results)} federated results")
 
@@ -485,3 +493,37 @@ class FederatedSearch(SearchOperation):
         }
 
         return result
+
+    def _is_auth_error(self, error_str: str) -> bool:
+        """Check if an error indicates an authentication/authorization failure.
+
+        These errors indicate the OAuth token or credentials are invalid and
+        the source connection should be marked as unauthenticated.
+
+        Args:
+            error_str: The error message stringd
+
+        Returns:
+            True if this is an auth-related error that should invalidate the connection
+        """
+        # Common OAuth/auth error indicators across different APIs
+        auth_error_indicators = [
+            "token_expired",
+            "token_revoked",
+            "invalid_token",
+            "not_authed",
+            "invalid_auth",
+            "account_inactive",
+            "missing_scope",
+            "unauthorized",
+            "401",
+            "403",
+            "authentication",
+            "access_denied",
+            "invalid_credentials",
+            "expired",
+            "revoked",
+        ]
+
+        error_lower = error_str.lower()
+        return any(indicator in error_lower for indicator in auth_error_indicators)
