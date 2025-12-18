@@ -501,7 +501,7 @@ class FederatedSearch(SearchOperation):
         the source connection should be marked as unauthenticated.
 
         Args:
-            error_str: The error message stringd
+            error_str: The error message string
 
         Returns:
             True if this is an auth-related error that should invalidate the connection
