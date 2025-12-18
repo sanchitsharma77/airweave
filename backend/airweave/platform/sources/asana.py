@@ -268,7 +268,7 @@ class AsanaSource(BaseSource):
         section: Optional[Dict] = None,
         breadcrumbs: List[Breadcrumb] = None,
     ) -> AsyncGenerator[AsanaTaskEntity, None]:
-        """Generate task entities for a project or section."""
+        """Generate task entities for a project or section with pagination."""
         url = (
             f"https://app.asana.com/api/1.0/sections/{section['gid']}/tasks"
             if section
@@ -317,56 +317,84 @@ class AsanaSource(BaseSource):
             "workspace.name",
         ]
 
-        tasks_data = await self._get_with_auth(
-            client, url, params={"opt_fields": ",".join(task_fields)}
-        )
+        # Use pagination to handle large result sets
+        # Asana API default limit is 20, max is 100
+        params = {"opt_fields": ",".join(task_fields), "limit": 100}
+        offset = None
 
-        for task in tasks_data.get("data", []):
-            # If we have a section, add it to the breadcrumbs
-            task_breadcrumbs = breadcrumbs
-            if section:
-                section_breadcrumb = Breadcrumb(
-                    entity_id=section["gid"], name=section["name"], entity_type="AsanaSectionEntity"
+        try:
+            while True:
+                if offset:
+                    params["offset"] = offset
+
+                tasks_data = await self._get_with_auth(client, url, params=params)
+
+                for task in tasks_data.get("data", []):
+                    # If we have a section, add it to the breadcrumbs
+                    task_breadcrumbs = breadcrumbs
+                    if section:
+                        section_breadcrumb = Breadcrumb(
+                            entity_id=section["gid"],
+                            name=section["name"],
+                            entity_type="AsanaSectionEntity",
+                        )
+                        task_breadcrumbs = [*breadcrumbs, section_breadcrumb]
+
+                    yield AsanaTaskEntity(
+                        gid=task["gid"],
+                        name=task["name"],
+                        created_at=task.get("created_at"),
+                        modified_at=task.get("modified_at"),
+                        breadcrumbs=task_breadcrumbs,
+                        project_gid=project["gid"],
+                        section_gid=section["gid"] if section else None,
+                        actual_time_minutes=task.get("actual_time_minutes"),
+                        approval_status=task.get("approval_status"),
+                        assignee=task.get("assignee"),
+                        assignee_status=task.get("assignee_status"),
+                        completed=task.get("completed", False),
+                        completed_at=task.get("completed_at"),
+                        completed_by=task.get("completed_by"),
+                        dependencies=task.get("dependencies", []),
+                        dependents=task.get("dependents", []),
+                        due_at=task.get("due_at"),
+                        due_on=task.get("due_on"),
+                        external=task.get("external"),
+                        html_notes=task.get("html_notes"),
+                        notes=task.get("notes"),
+                        is_rendered_as_separator=task.get("is_rendered_as_separator", False),
+                        liked=task.get("liked", False),
+                        memberships=task.get("memberships", []),
+                        num_likes=task.get("num_likes", 0),
+                        num_subtasks=task.get("num_subtasks", 0),
+                        parent=task.get("parent"),
+                        permalink_url=task.get("permalink_url"),
+                        resource_subtype=task.get("resource_subtype", "default_task"),
+                        start_at=task.get("start_at"),
+                        start_on=task.get("start_on"),
+                        tags=task.get("tags", []),
+                        custom_fields=task.get("custom_fields", []),
+                        followers=task.get("followers", []),
+                        workspace=task.get("workspace"),
+                    )
+
+                # Check for next page
+                next_page = tasks_data.get("next_page")
+                if next_page and next_page.get("offset"):
+                    offset = next_page["offset"]
+                else:
+                    break  # No more pages
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                # Handle "result too large" error - log warning and skip this section/project
+                context = f"section {section['gid']}" if section else f"project {project['gid']}"
+                self.logger.warning(
+                    f"Skipping tasks for {context}: result too large even with pagination. "
+                    f"Some tasks may be missing."
                 )
-                task_breadcrumbs = [*breadcrumbs, section_breadcrumb]
-
-            yield AsanaTaskEntity(
-                gid=task["gid"],
-                name=task["name"],
-                created_at=task.get("created_at"),
-                modified_at=task.get("modified_at"),
-                breadcrumbs=task_breadcrumbs,
-                project_gid=project["gid"],
-                section_gid=section["gid"] if section else None,
-                actual_time_minutes=task.get("actual_time_minutes"),
-                approval_status=task.get("approval_status"),
-                assignee=task.get("assignee"),
-                assignee_status=task.get("assignee_status"),
-                completed=task.get("completed", False),
-                completed_at=task.get("completed_at"),
-                completed_by=task.get("completed_by"),
-                dependencies=task.get("dependencies", []),
-                dependents=task.get("dependents", []),
-                due_at=task.get("due_at"),
-                due_on=task.get("due_on"),
-                external=task.get("external"),
-                html_notes=task.get("html_notes"),
-                notes=task.get("notes"),
-                is_rendered_as_separator=task.get("is_rendered_as_separator", False),
-                liked=task.get("liked", False),
-                memberships=task.get("memberships", []),
-                num_likes=task.get("num_likes", 0),
-                num_subtasks=task.get("num_subtasks", 0),
-                parent=task.get("parent"),
-                permalink_url=task.get("permalink_url"),
-                resource_subtype=task.get("resource_subtype", "default_task"),
-                start_at=task.get("start_at"),
-                start_on=task.get("start_on"),
-                tags=task.get("tags", []),
-                custom_fields=task.get("custom_fields", []),
-                followers=task.get("followers", []),
-                workspace=task.get("workspace"),
-            )
+                return
+            raise
 
     async def _generate_comment_entities(
         self, client: httpx.AsyncClient, task: Dict, task_breadcrumbs: List[Breadcrumb]
