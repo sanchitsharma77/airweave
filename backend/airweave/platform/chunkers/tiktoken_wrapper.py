@@ -67,6 +67,17 @@ class TiktokenWrapperForChonkie:
         """
         return self._encoding.decode(list(tokens))
 
+    def decode_batch(self, token_lists: List[List[int]]) -> List[str]:
+        """Decode multiple token sequences back to text.
+
+        Args:
+            token_lists: List of token ID sequences
+
+        Returns:
+            List of decoded text strings
+        """
+        return [self._encoding.decode(tokens) for tokens in token_lists]
+
     def tokenize(self, text: str) -> Sequence[Union[str, int]]:
         """Tokenize text into token IDs.
 
