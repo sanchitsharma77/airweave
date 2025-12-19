@@ -189,13 +189,23 @@ class EntityPipeline:
 
         await self._build_textual_representations(entities_to_process, sync_context)
 
+        # Filter out entities with empty textual_representation
+        valid_entities = []
         for entity in entities_to_process:
-            if not hasattr(entity, "textual_representation") or not entity.textual_representation:
-                raise SyncFailureError(
-                    f"PROGRAMMING ERROR: Entity {entity.__class__.__name__}[{entity.entity_id}] "
-                    f"has no textual_representation after _build_textual_representations(). "
-                    f"This should never happen - failed entities should be removed from the list."
+            text = entity.textual_representation
+            if not text or not text.strip():
+                sync_context.logger.warning(
+                    "Entity %s[%s] has empty textual_representation, skipping.",
+                    entity.__class__.__name__,
+                    entity.entity_id,
                 )
+                continue
+            valid_entities.append(entity)
+
+        skipped = len(entities_to_process) - len(valid_entities)
+        if skipped:
+            await sync_context.progress.increment("skipped", skipped)
+        entities_to_process = valid_entities
 
         # Chunk entities (entity multiplication: 1 entity → N chunk entities)
         # entities_to_process may be empty if all failed conversion (handled in method)
