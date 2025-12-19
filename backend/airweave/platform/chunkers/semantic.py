@@ -187,14 +187,15 @@ class SemanticChunker(BaseChunker):
             self._apply_safety_net_batched, semantic_results_with_tiktoken
         )
 
-        # Validate all chunks meet requirements
+        # Filter empty chunks and validate token limits
         for doc_chunks in final_results:
-            for chunk in doc_chunks:
-                # Check for empty chunks
-                if not chunk["text"] or not chunk["text"].strip():
-                    raise SyncFailureError("PROGRAMMING ERROR: Empty chunk produced by chunker")
+            # Remove empty chunks in-place
+            doc_chunks[:] = [
+                chunk for chunk in doc_chunks
+                if chunk["text"] and chunk["text"].strip()
+            ]
 
-                # Check token limit enforced (using tiktoken counts)
+            for chunk in doc_chunks:
                 if chunk["token_count"] > self.MAX_TOKENS_PER_CHUNK:
                     raise SyncFailureError(
                         f"PROGRAMMING ERROR: Chunk has {chunk['token_count']} tokens "
