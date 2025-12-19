@@ -191,8 +191,7 @@ class SemanticChunker(BaseChunker):
         for doc_chunks in final_results:
             # Remove empty chunks in-place
             doc_chunks[:] = [
-                chunk for chunk in doc_chunks
-                if chunk["text"] and chunk["text"].strip()
+                chunk for chunk in doc_chunks if chunk["text"] and chunk["text"].strip()
             ]
 
             for chunk in doc_chunks:
