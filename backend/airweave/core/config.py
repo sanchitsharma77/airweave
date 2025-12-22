@@ -181,6 +181,11 @@ class Settings(BaseSettings):
     OPENAI_MAX_CONCURRENT: int = 20  # Max concurrent OpenAI API requests
     CTTI_MAX_CONCURRENT: int = 3  # Max concurrent CTTI (ClinicalTrials.gov) requests
 
+    # Eval data capture - stores raw entities for evaluation/testing
+    # Set EVAL_DATA_CAPTURE_PATH to an absolute path in your .env file
+    EVAL_DATA_CAPTURE_ENABLED: bool = False
+    EVAL_DATA_CAPTURE_PATH: str = ""
+
     API_REQUEST_BODY_SIZE_LIMIT: int = 10 * 1024 * 1024  # 10MB default
     API_REQUEST_TIMEOUT_SECONDS: int = 60
 
