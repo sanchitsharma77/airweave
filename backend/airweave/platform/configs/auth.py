@@ -750,3 +750,14 @@ class ZohoCRMAuthConfig(OAuth2WithRefreshAuthConfig):
     """Zoho CRM authentication credentials schema."""
 
     # Inherits refresh_token and access_token from OAuth2WithRefreshAuthConfig
+
+
+class StubAuthConfig(AuthConfig):
+    """Stub source authentication credentials schema.
+
+    The stub source doesn't require real authentication.
+    This config is a placeholder for consistency with other sources.
+    """
+
+    # No authentication required - stub source generates data locally
+    pass
