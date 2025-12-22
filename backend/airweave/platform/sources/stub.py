@@ -26,33 +26,113 @@ from airweave.platform.entities.stub import (
 from airweave.platform.sources._base import BaseSource
 from airweave.schemas.source_connection import AuthenticationMethod
 
-
 # Word lists for deterministic content generation
 NOUNS = [
-    "project", "task", "document", "report", "meeting", "analysis", "review",
-    "strategy", "plan", "update", "milestone", "feature", "bug", "request",
-    "issue", "ticket", "story", "epic", "sprint", "release", "deployment",
-    "integration", "module", "component", "service", "system", "database",
-    "workflow", "process", "procedure", "guideline", "specification",
+    "project",
+    "task",
+    "document",
+    "report",
+    "meeting",
+    "analysis",
+    "review",
+    "strategy",
+    "plan",
+    "update",
+    "milestone",
+    "feature",
+    "bug",
+    "request",
+    "issue",
+    "ticket",
+    "story",
+    "epic",
+    "sprint",
+    "release",
+    "deployment",
+    "integration",
+    "module",
+    "component",
+    "service",
+    "system",
+    "database",
+    "workflow",
+    "process",
+    "procedure",
+    "guideline",
+    "specification",
 ]
 
 VERBS = [
-    "implement", "review", "update", "create", "delete", "modify", "analyze",
-    "test", "deploy", "configure", "optimize", "refactor", "debug", "fix",
-    "document", "design", "plan", "schedule", "track", "monitor", "verify",
-    "validate", "approve", "reject", "complete", "start", "finish", "pause",
+    "implement",
+    "review",
+    "update",
+    "create",
+    "delete",
+    "modify",
+    "analyze",
+    "test",
+    "deploy",
+    "configure",
+    "optimize",
+    "refactor",
+    "debug",
+    "fix",
+    "document",
+    "design",
+    "plan",
+    "schedule",
+    "track",
+    "monitor",
+    "verify",
+    "validate",
+    "approve",
+    "reject",
+    "complete",
+    "start",
+    "finish",
+    "pause",
 ]
 
 ADJECTIVES = [
-    "important", "urgent", "critical", "minor", "major", "quick", "detailed",
-    "comprehensive", "preliminary", "final", "draft", "approved", "pending",
-    "active", "inactive", "completed", "in-progress", "blocked", "ready",
-    "new", "updated", "legacy", "modern", "automated", "manual", "secure",
+    "important",
+    "urgent",
+    "critical",
+    "minor",
+    "major",
+    "quick",
+    "detailed",
+    "comprehensive",
+    "preliminary",
+    "final",
+    "draft",
+    "approved",
+    "pending",
+    "active",
+    "inactive",
+    "completed",
+    "in-progress",
+    "blocked",
+    "ready",
+    "new",
+    "updated",
+    "legacy",
+    "modern",
+    "automated",
+    "manual",
+    "secure",
 ]
 
 AUTHORS = [
-    "Alice Smith", "Bob Johnson", "Charlie Brown", "Diana Prince", "Eve Wilson",
-    "Frank Miller", "Grace Lee", "Henry Davis", "Ivy Chen", "Jack Thompson",
+    "Alice Smith",
+    "Bob Johnson",
+    "Charlie Brown",
+    "Diana Prince",
+    "Eve Wilson",
+    "Frank Miller",
+    "Grace Lee",
+    "Henry Davis",
+    "Ivy Chen",
+    "Jack Thompson",
 ]
 
 STATUSES = ["active", "pending", "completed", "in-progress", "blocked", "draft"]
@@ -138,7 +218,7 @@ def {function2}(items: List[str], prefix: str = "") -> List[str]:
     return [f"{{prefix}}{{item}}" for item in items]
 '''
 
-JS_TEMPLATE = '''/**
+JS_TEMPLATE = """/**
  * {module_name} - {description}
  */
 
@@ -208,7 +288,7 @@ function {function2}(items, prefix = '') {{
 }}
 
 export {{ {class_name}, {function1}, {function2} }};
-'''
+"""
 
 
 class ContentGenerator:
@@ -247,8 +327,7 @@ class ContentGenerator:
     def _generate_paragraph(self, sentence_count: int = 5) -> str:
         """Generate a random paragraph."""
         sentences = [
-            self._generate_sentence(self.rng.randint(8, 15))
-            for _ in range(sentence_count)
+            self._generate_sentence(self.rng.randint(8, 15)) for _ in range(sentence_count)
         ]
         return " ".join(sentences)
 
@@ -281,9 +360,7 @@ class ContentGenerator:
         sections = []
         for i in range(5):
             section_title = f"## Section {i + 1}: {self.generate_title()}"
-            section_content = "\n\n".join([
-                self._generate_paragraph(5) for _ in range(3)
-            ])
+            section_content = "\n\n".join([self._generate_paragraph(5) for _ in range(3)])
             sections.append(f"{section_title}\n\n{section_content}")
         return "\n\n".join(sections)
 
@@ -775,9 +852,7 @@ class StubSource(BaseSource):
             if (i + 1) % 100 == 0:
                 self.logger.info(f"Generated {i + 1}/{self.entity_count} entities")
 
-        self.logger.info(
-            f"Completed stub entity generation. Distribution: {type_counts}"
-        )
+        self.logger.info(f"Completed stub entity generation. Distribution: {type_counts}")
 
     async def validate(self) -> bool:
         """Validate the stub source configuration.
@@ -788,4 +863,3 @@ class StubSource(BaseSource):
             True (stub source is always valid).
         """
         return True
-

@@ -7,7 +7,7 @@ and types to simulate real-world data sources.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import Field, computed_field
+from pydantic import computed_field
 
 from airweave.platform.entities._airweave_field import AirweaveField
 from airweave.platform.entities._base import BaseEntity, CodeFileEntity, FileEntity
@@ -445,4 +445,3 @@ class CodeStubFileEntity(CodeFileEntity):
     def web_url(self) -> str:
         """Placeholder URL for the code file."""
         return f"stub://file/code/{self.stub_id}"
-
