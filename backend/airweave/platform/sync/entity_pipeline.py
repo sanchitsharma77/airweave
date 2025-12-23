@@ -158,30 +158,25 @@ class EntityPipeline:
             self._populate_base_entity_fields_from_flags(entity)
 
         # Eval data capture (AFTER field population so entity_id is set)
+        # Captures raw entity snapshots to Azure Blob Storage for evaluation
         from airweave.core.config import settings
 
         if settings.EVAL_DATA_CAPTURE_ENABLED:
-            if not settings.EVAL_DATA_CAPTURE_PATH:
-                sync_context.logger.error(
-                    "EVAL_DATA_CAPTURE_ENABLED=true but EVAL_DATA_CAPTURE_PATH is not set. "
-                    "Set it to an absolute path in your .env file."
+            try:
+                from airweave_evals.capture import EvalDataCapture
+
+                capture = EvalDataCapture()
+                snapshot_name = capture.capture(entities=entities, sync_context=sync_context)
+                sync_context.logger.info(
+                    f"Captured {len(entities)} entities to Azure Blob: {snapshot_name}"
                 )
-            else:
-                try:
-                    from pathlib import Path
-
-                    from airweave_evals.capture import EvalDataCapture
-
-                    capture = EvalDataCapture(Path(settings.EVAL_DATA_CAPTURE_PATH))
-                    dataset_dir = capture.capture(entities=entities, sync_context=sync_context)
-                    sync_context.logger.info(f"Captured {len(entities)} entities to {dataset_dir}")
-                except ImportError:
-                    sync_context.logger.warning(
-                        "EVAL_DATA_CAPTURE_ENABLED but airweave_evals not installed. "
-                        "Install with: pip install -e /path/to/evals"
-                    )
-                except Exception as e:
-                    sync_context.logger.error(f"Failed to capture eval data: {e}")
+            except ImportError:
+                sync_context.logger.warning(
+                    "EVAL_DATA_CAPTURE_ENABLED but airweave_evals not installed. "
+                    "Install with: pip install -e /path/to/evals2"
+                )
+            except Exception as e:
+                sync_context.logger.error(f"Failed to capture eval data: {e}")
 
         unique_entities = await self._filter_duplicates(entities, sync_context)
 
