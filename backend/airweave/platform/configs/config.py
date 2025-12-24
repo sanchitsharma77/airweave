@@ -714,3 +714,35 @@ class PipedreamConfig(AuthProviderConfig):
         title="Environment",
         description="Pipedream environment (production or development)",
     )
+
+
+class SnapshotConfig(BaseConfig):
+    """Configuration for SnapshotSource.
+
+    Specifies the path to raw data captured during a previous sync.
+    Supports both local filesystem paths and Azure blob URLs.
+    """
+
+    path: str = Field(
+        title="Raw Data Path",
+        description=(
+            "Path to the raw data directory containing manifest.json, entities/, and files/. "
+            "Can be a local filesystem path (e.g., '/path/to/raw/sync-id') or "
+            "Azure blob URL (e.g., 'https://account.blob.core.windows.net/container/raw/sync-id')"
+        ),
+        min_length=1,
+    )
+
+    restore_files: bool = Field(
+        default=True,
+        title="Restore Files",
+        description="Whether to restore file attachments from the files/ directory",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: str) -> str:
+        """Validate and normalize path."""
+        if not v or not v.strip():
+            raise ValueError("Path is required")
+        return v.strip().rstrip("/")

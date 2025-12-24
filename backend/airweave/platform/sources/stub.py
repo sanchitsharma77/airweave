@@ -432,7 +432,7 @@ class ContentGenerator:
     oauth_type=None,
     auth_config_class="StubAuthConfig",
     config_class="StubConfig",
-    labels=["Testing"],
+    labels=["Internal", "Testing"],
     supports_continuous=False,
 )
 class StubSource(BaseSource):

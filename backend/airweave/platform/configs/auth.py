@@ -763,5 +763,33 @@ class StubAuthConfig(AuthConfig):
     stub_key: str = Field(
         default="stub",
         title="Stub Key",
-        description="Placeholder field (any value works, stub source doesn't require real authentication)",
+        description="Placeholder field (any value works, stub source doesn't require "
+        "real authentication)",
+    )
+
+
+class SnapshotAuthConfig(BaseConfig):
+    """Optional authentication for blob storage access.
+
+    For local filesystem paths, no auth is needed.
+    For Azure blob URLs, provide either:
+    - SAS token for direct blob access
+    - Or rely on DefaultAzureCredential (az login)
+    """
+
+    # Placeholder to satisfy DirectAuthentication's non-empty credentials requirement
+    placeholder: str = Field(
+        default="snapshot",
+        title="Placeholder",
+        description="Internal placeholder (ignored)",
+        json_schema_extra={"exclude_from_ui": True},
+    )
+
+    sas_token: Optional[str] = Field(
+        default=None,
+        title="SAS Token",
+        description=(
+            "Azure SAS token for blob storage access. "
+            "If not provided, uses DefaultAzureCredential (az login)."
+        ),
     )

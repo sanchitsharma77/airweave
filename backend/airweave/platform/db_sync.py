@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud, schemas
+from airweave.core.config import settings
 from airweave.core.logging import logger
 from airweave.models.entity_definition import EntityType
 from airweave.platform.auth_providers._base import BaseAuthProvider
@@ -167,6 +168,9 @@ def _get_decorated_classes(directory: str) -> Dict[str, list[Type | Callable]]:
         ImportError: If any module cannot be imported. This ensures the sync process fails if there
         are any issues.
     """
+    # Internal source files that should only be loaded when ENABLE_INTERNAL_SOURCES=true
+    internal_source_files = {"snapshot.py", "stub.py"}
+
     components = {
         "sources": [],
         "destinations": [],
@@ -183,6 +187,16 @@ def _get_decorated_classes(directory: str) -> Dict[str, list[Type | Callable]]:
         for filename in files:
             if not filename.endswith(".py") or filename.startswith("_"):
                 continue
+
+            # Skip internal source files when ENABLE_INTERNAL_SOURCES is False
+            is_sources_dir = root.endswith("sources")
+            if is_sources_dir and filename in internal_source_files:
+                if not settings.ENABLE_INTERNAL_SOURCES:
+                    sync_logger.debug(
+                        f"Skipping internal source {filename} "
+                        "(set ENABLE_INTERNAL_SOURCES=true to enable)"
+                    )
+                    continue
 
             relative_path = os.path.relpath(root, directory)
             module_path = os.path.join(relative_path, filename[:-3]).replace("/", ".")
@@ -416,8 +430,19 @@ async def _sync_sources(
     """
     sync_logger.info("Syncing sources to database.")
 
+    # Filter out internal sources if ENABLE_INTERNAL_SOURCES is False
+    filtered_sources = sources
+    if not settings.ENABLE_INTERNAL_SOURCES:
+        filtered_sources = [s for s in sources if "Internal" not in getattr(s, "_labels", [])]
+        skipped_count = len(sources) - len(filtered_sources)
+        if skipped_count > 0:
+            sync_logger.info(
+                f"Skipping {skipped_count} internal source(s) "
+                "(set ENABLE_INTERNAL_SOURCES=true to enable)"
+            )
+
     source_definitions = []
-    for source_class in sources:
+    for source_class in filtered_sources:
         # Get the source's short name (e.g., "slack" for SlackSource)
         source_module_name = source_class._short_name
 
