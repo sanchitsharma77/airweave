@@ -759,5 +759,9 @@ class StubAuthConfig(AuthConfig):
     This config is a placeholder for consistency with other sources.
     """
 
-    # No authentication required - stub source generates data locally
-    pass
+    # Dummy field to satisfy frontend validation (can be left empty)
+    stub_key: str = Field(
+        default="stub",
+        title="Stub Key",
+        description="Placeholder field (any value works, stub source doesn't require real authentication)",
+    )
