@@ -552,6 +552,9 @@ class SourceConnectionService:
             # Clean up Temporal schedules
             await self._cleanup_temporal_schedules(source_conn.sync_id, db, ctx)
 
+            # Clean up raw data store (if enabled)
+            await self._cleanup_raw_data(source_conn.sync_id, ctx)
+
         # Delete the source connection
         await crud.source_connection.remove(db, id=id, ctx=ctx)
 
@@ -1854,6 +1857,20 @@ class SourceConnectionService:
                             )
 
         return source_conn_response
+
+    async def _cleanup_raw_data(self, sync_id: UUID, ctx: ApiContext) -> None:
+        """Clean up raw data store for a sync."""
+        try:
+            from airweave.platform.sync import raw_data_service
+
+            sync_id_str = str(sync_id)
+            if await raw_data_service.sync_exists(sync_id_str):
+                deleted = await raw_data_service.delete_sync(sync_id_str)
+                if deleted:
+                    ctx.logger.info(f"Deleted raw data store for sync {sync_id}")
+        except Exception as e:
+            # Log but don't fail deletion
+            ctx.logger.warning(f"Failed to cleanup raw data for sync {sync_id}: {e}")
 
     # Import helper methods from existing helpers
     from airweave.core.source_connection_service_helpers import (
