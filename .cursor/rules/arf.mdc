@@ -1,3 +1,6 @@
+---
+alwaysApply: false
+---
 # Airweave Raw Format (ARF)
 
 Raw entity capture for replay, debugging, and evals.
