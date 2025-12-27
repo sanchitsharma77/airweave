@@ -267,6 +267,8 @@ class AzureBlobBackend(StorageBackend):
 
     Uses DefaultAzureCredential for authentication (works with Azure CLI,
     managed identity, service principal, etc.).
+
+    Uses the async Azure SDK (azure.storage.blob.aio) for non-blocking operations.
     """
 
     def __init__(
@@ -287,25 +289,25 @@ class AzureBlobBackend(StorageBackend):
         self.prefix = prefix.rstrip("/") + "/" if prefix else ""
         self._blob_service_client = None
         self._container_client = None
+        self._credential = None
 
         logger.debug(
             f"AzureBlobBackend initialized: {storage_account}/{container}"
             f"{f'/{prefix}' if prefix else ''}"
         )
 
-    @property
-    def blob_service_client(self):
-        """Lazy-load blob service client."""
+    async def _get_blob_service_client(self):
+        """Lazy-load async blob service client."""
         if self._blob_service_client is None:
             try:
-                from azure.identity import DefaultAzureCredential
-                from azure.storage.blob import BlobServiceClient
+                from azure.identity.aio import DefaultAzureCredential
+                from azure.storage.blob.aio import BlobServiceClient
 
                 account_url = f"https://{self.storage_account}.blob.core.windows.net"
-                credential = DefaultAzureCredential()
+                self._credential = DefaultAzureCredential()
                 self._blob_service_client = BlobServiceClient(
                     account_url=account_url,
-                    credential=credential,
+                    credential=self._credential,
                 )
             except ImportError as e:
                 raise StorageException(
@@ -314,26 +316,38 @@ class AzureBlobBackend(StorageBackend):
                 ) from e
         return self._blob_service_client
 
-    @property
-    def container_client(self):
-        """Lazy-load container client."""
+    async def _get_container_client(self):
+        """Lazy-load async container client."""
         if self._container_client is None:
-            self._container_client = self.blob_service_client.get_container_client(
-                self.container_name
-            )
+            blob_service_client = await self._get_blob_service_client()
+            self._container_client = blob_service_client.get_container_client(self.container_name)
         return self._container_client
 
     def _resolve(self, path: str) -> str:
         """Resolve path with prefix."""
         return f"{self.prefix}{path}"
 
+    async def close(self) -> None:
+        """Close async clients and release resources.
+
+        Should be called when the backend is no longer needed.
+        """
+        if self._blob_service_client is not None:
+            await self._blob_service_client.close()
+            self._blob_service_client = None
+            self._container_client = None
+        if self._credential is not None:
+            await self._credential.close()
+            self._credential = None
+
     async def write_json(self, path: str, data: Dict[str, Any]) -> None:
         """Write JSON to Azure Blob."""
         blob_path = self._resolve(path)
         try:
             content = json.dumps(data, indent=2, default=str)
-            blob_client = self.container_client.get_blob_client(blob_path)
-            blob_client.upload_blob(content, overwrite=True)
+            container_client = await self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_path)
+            await blob_client.upload_blob(content, overwrite=True)
         except Exception as e:
             raise StorageException(f"Failed to write JSON to {path}: {e}")
 
@@ -341,10 +355,12 @@ class AzureBlobBackend(StorageBackend):
         """Read JSON from Azure Blob."""
         blob_path = self._resolve(path)
         try:
-            blob_client = self.container_client.get_blob_client(blob_path)
-            if not blob_client.exists():
+            container_client = await self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_path)
+            if not await blob_client.exists():
                 raise StorageNotFoundError(f"Path not found: {path}")
-            content = blob_client.download_blob().readall().decode("utf-8")
+            download_stream = await blob_client.download_blob()
+            content = (await download_stream.readall()).decode("utf-8")
             return json.loads(content)
         except StorageNotFoundError:
             raise
@@ -357,8 +373,9 @@ class AzureBlobBackend(StorageBackend):
         """Write binary content to Azure Blob."""
         blob_path = self._resolve(path)
         try:
-            blob_client = self.container_client.get_blob_client(blob_path)
-            blob_client.upload_blob(content, overwrite=True)
+            container_client = await self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_path)
+            await blob_client.upload_blob(content, overwrite=True)
         except Exception as e:
             raise StorageException(f"Failed to write file to {path}: {e}")
 
@@ -366,10 +383,12 @@ class AzureBlobBackend(StorageBackend):
         """Read binary content from Azure Blob."""
         blob_path = self._resolve(path)
         try:
-            blob_client = self.container_client.get_blob_client(blob_path)
-            if not blob_client.exists():
+            container_client = await self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_path)
+            if not await blob_client.exists():
                 raise StorageNotFoundError(f"Path not found: {path}")
-            return blob_client.download_blob().readall()
+            download_stream = await blob_client.download_blob()
+            return await download_stream.readall()
         except StorageNotFoundError:
             raise
         except Exception as e:
@@ -379,8 +398,9 @@ class AzureBlobBackend(StorageBackend):
         """Check if blob exists."""
         blob_path = self._resolve(path)
         try:
-            blob_client = self.container_client.get_blob_client(blob_path)
-            return blob_client.exists()
+            container_client = await self._get_container_client()
+            blob_client = container_client.get_blob_client(blob_path)
+            return await blob_client.exists()
         except Exception:
             return False
 
@@ -390,16 +410,19 @@ class AzureBlobBackend(StorageBackend):
 
         deleted_count = 0
         try:
+            container_client = await self._get_container_client()
+
             # Try direct blob delete first
-            blob_client = self.container_client.get_blob_client(blob_path)
-            if blob_client.exists():
-                blob_client.delete_blob()
+            blob_client = container_client.get_blob_client(blob_path)
+            if await blob_client.exists():
+                await blob_client.delete_blob()
                 return True
 
             # If not a blob, try as prefix (directory-like)
             prefix = blob_path if blob_path.endswith("/") else blob_path + "/"
-            for blob in self.container_client.list_blobs(name_starts_with=prefix):
-                self.container_client.get_blob_client(blob.name).delete_blob()
+            async for blob in container_client.list_blobs(name_starts_with=prefix):
+                blob_to_delete = container_client.get_blob_client(blob.name)
+                await blob_to_delete.delete_blob()
                 deleted_count += 1
 
             return deleted_count > 0
@@ -416,7 +439,8 @@ class AzureBlobBackend(StorageBackend):
 
         files = []
         try:
-            for blob in self.container_client.list_blobs(name_starts_with=full_prefix):
+            container_client = await self._get_container_client()
+            async for blob in container_client.list_blobs(name_starts_with=full_prefix):
                 # Return path relative to our prefix
                 rel_path = blob.name
                 if self.prefix and rel_path.startswith(self.prefix):
@@ -435,7 +459,8 @@ class AzureBlobBackend(StorageBackend):
 
         dirs = set()
         try:
-            for blob in self.container_client.list_blobs(name_starts_with=full_prefix):
+            container_client = await self._get_container_client()
+            async for blob in container_client.list_blobs(name_starts_with=full_prefix):
                 # Extract first path component after prefix
                 rel_path = blob.name[len(full_prefix) :]
                 if "/" in rel_path:
