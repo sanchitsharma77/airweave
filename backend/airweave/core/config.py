@@ -111,6 +111,7 @@ class Settings(BaseSettings):
 
     RUN_ALEMBIC_MIGRATIONS: bool = True
     RUN_DB_SYNC: bool = True
+    ENABLE_INTERNAL_SOURCES: bool = False  # Enable internal/testing sources (stub, snapshot)
 
     # Redis configuration
     REDIS_HOST: str = "localhost"

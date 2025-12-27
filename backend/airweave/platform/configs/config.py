@@ -551,6 +551,99 @@ class TodoistConfig(SourceConfig):
     pass
 
 
+class StubConfig(SourceConfig):
+    """Stub source configuration schema for testing.
+
+    Configures the generation of deterministic test entities with various
+    content sizes and types. Uses weighted distribution for entity type selection.
+    """
+
+    entity_count: int = Field(
+        default=10,
+        title="Entity Count",
+        description="Total number of entities to generate",
+        ge=1,
+        le=100000,
+    )
+    seed: int = Field(
+        default=42,
+        title="Random Seed",
+        description="Random seed for reproducible content generation",
+    )
+    generation_delay_ms: int = Field(
+        default=0,
+        title="Generation Delay (ms)",
+        description="Delay between entity generations in milliseconds (0 for no delay)",
+        ge=0,
+        le=10000,
+    )
+
+    # Distribution weights (will be normalized to sum to 100)
+    small_entity_weight: int = Field(
+        default=30,
+        title="Small Entity Weight",
+        description="Weight for small entities (~100-200 chars, like comments)",
+        ge=0,
+        le=100,
+    )
+    medium_entity_weight: int = Field(
+        default=30,
+        title="Medium Entity Weight",
+        description="Weight for medium entities (~500-1000 chars, like tasks)",
+        ge=0,
+        le=100,
+    )
+    large_entity_weight: int = Field(
+        default=10,
+        title="Large Entity Weight",
+        description="Weight for large entities (~3000-5000 chars, like articles)",
+        ge=0,
+        le=100,
+    )
+    small_file_weight: int = Field(
+        default=15,
+        title="Small File Weight",
+        description="Weight for small file entities (~1-5 KB)",
+        ge=0,
+        le=100,
+    )
+    large_file_weight: int = Field(
+        default=5,
+        title="Large File Weight",
+        description="Weight for large file entities (~50-100 KB)",
+        ge=0,
+        le=100,
+    )
+    code_file_weight: int = Field(
+        default=10,
+        title="Code File Weight",
+        description="Weight for code file entities (~2-10 KB)",
+        ge=0,
+        le=100,
+    )
+
+    @field_validator(
+        "small_entity_weight",
+        "medium_entity_weight",
+        "large_entity_weight",
+        "small_file_weight",
+        "large_file_weight",
+        "code_file_weight",
+        mode="before",
+    )
+    @classmethod
+    def parse_weight(cls, value):
+        """Convert string input to integer if needed."""
+        if isinstance(value, str):
+            if not value.strip():
+                return 0
+            try:
+                return int(value.strip())
+            except ValueError as e:
+                raise ValueError("Weight must be a valid integer") from e
+        return value
+
+
 class TrelloConfig(SourceConfig):
     """Trello configuration schema."""
 
@@ -621,3 +714,35 @@ class PipedreamConfig(AuthProviderConfig):
         title="Environment",
         description="Pipedream environment (production or development)",
     )
+
+
+class SnapshotConfig(BaseConfig):
+    """Configuration for SnapshotSource.
+
+    Specifies the path to raw data captured during a previous sync.
+    Supports both local filesystem paths and Azure blob URLs.
+    """
+
+    path: str = Field(
+        title="Raw Data Path",
+        description=(
+            "Path to the raw data directory containing manifest.json, entities/, and files/. "
+            "Can be a local filesystem path (e.g., '/path/to/raw/sync-id') or "
+            "Azure blob URL (e.g., 'https://account.blob.core.windows.net/container/raw/sync-id')"
+        ),
+        min_length=1,
+    )
+
+    restore_files: bool = Field(
+        default=True,
+        title="Restore Files",
+        description="Whether to restore file attachments from the files/ directory",
+    )
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: str) -> str:
+        """Validate and normalize path."""
+        if not v or not v.strip():
+            raise ValueError("Path is required")
+        return v.strip().rstrip("/")
