@@ -39,8 +39,8 @@ def _get_storage_backend() -> StorageBackend:
         return FilesystemBackend(base_path=settings.STORAGE_PATH)
     elif settings.ENVIRONMENT in ["dev", "prd"]:
         return AzureBlobBackend(
-            account_name=settings.AZURE_STORAGE_ACCOUNT_NAME,
-            container_name=settings.AZURE_RAW_DATA_CONTAINER,
+            storage_account=settings.AZURE_STORAGE_ACCOUNT_NAME,
+            container=settings.AZURE_RAW_DATA_CONTAINER,
         )
     else:
         raise ValueError(f"Unsupported environment for storage backend: {settings.ENVIRONMENT}")

@@ -183,7 +183,7 @@ class Settings(BaseSettings):
 
     # Azure storage config for non-local environments (auto-resolved from ENVIRONMENT)
     AZURE_STORAGE_ACCOUNT_NAME: Optional[str] = None  # Auto-resolved if not set
-    AZURE_RAW_DATA_CONTAINER: str = "raw-data"  # Container for raw data
+    AZURE_RAW_DATA_CONTAINER: str = "raw"  # Container for raw data
 
     API_REQUEST_BODY_SIZE_LIMIT: int = 10 * 1024 * 1024  # 10MB default
     API_REQUEST_TIMEOUT_SECONDS: int = 60
