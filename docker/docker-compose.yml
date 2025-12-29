@@ -214,7 +214,26 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  # Vespa single-node for development (config server + content + container combined)
+  vespa:
+    container_name: airweave-vespa
+    image: vespaengine/vespa:8
+    hostname: vespa
+    ports:
+      - "8081:8081"   # Query/Document API
+      - "19071:19071" # Config server (for deployment)
+    volumes:
+      - vespa_data:/opt/vespa/var
+      - ./vespa-config:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19071/state/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: on-failure
+
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  vespa_data:
