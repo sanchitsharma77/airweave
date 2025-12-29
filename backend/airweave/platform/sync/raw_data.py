@@ -71,7 +71,7 @@ class RawDataService:
     Handles:
     - Entity-level storage (one file per entity_id)
     - File attachments for FileEntities
-    - Full sync support (track seen entities, delete stale)
+    - Full sync support (delete stale entities using tracker)
     - Incremental sync support (upsert/delete as events come)
     - Entity reconstruction for replay
     """
@@ -83,8 +83,6 @@ class RawDataService:
             storage: Storage backend. Uses singleton if not provided.
         """
         self._storage = storage
-        # Track entities seen during current sync job (for full sync cleanup)
-        self._seen_entities: Dict[str, set] = {}  # sync_id -> set of entity_ids
 
     @property
     def storage(self) -> StorageBackend:
@@ -185,11 +183,6 @@ class RawDataService:
         """
         sync_id = str(sync_context.sync.id)
         entity_id = str(entity.entity_id)
-
-        # Track as seen for full sync cleanup
-        if sync_id not in self._seen_entities:
-            self._seen_entities[sync_id] = set()
-        self._seen_entities[sync_id].add(entity_id)
 
         # Check if this is an update (entity already exists)
         entity_path = self._entity_path(sync_id, entity_id)
@@ -400,13 +393,6 @@ class RawDataService:
     # Full sync support
     # =========================================================================
 
-    def start_sync_tracking(self, sync_id: str) -> None:
-        """Start tracking seen entities for a full sync.
-
-        Call at the start of a full sync to enable cleanup of stale entities.
-        """
-        self._seen_entities[sync_id] = set()
-
     async def cleanup_stale_entities(self, sync_context: "SyncContext") -> int:
         """Delete entities not seen during the current sync.
 
@@ -414,21 +400,18 @@ class RawDataService:
         in the source.
 
         Args:
-            sync_context: Sync context
+            sync_context: Sync context with EntityTracker
 
         Returns:
             Number of stale entities deleted
         """
         sync_id = str(sync_context.sync.id)
 
-        if sync_id not in self._seen_entities:
-            sync_context.logger.warning("No tracking data for sync - skipping cleanup")
-            return 0
+        # Get set of all encountered entity IDs
+        seen_ids = sync_context.entity_tracker.get_all_encountered_ids_flat()
 
-        seen = self._seen_entities[sync_id]
         current_ids = await self.list_entity_ids(sync_id)
-
-        stale_ids = [eid for eid in current_ids if eid not in seen]
+        stale_ids = [eid for eid in current_ids if eid not in seen_ids]
 
         if stale_ids:
             sync_context.logger.info(f"Cleaning up {len(stale_ids)} stale entities from raw store")
@@ -436,10 +419,6 @@ class RawDataService:
             return deleted
 
         return 0
-
-    def end_sync_tracking(self, sync_id: str) -> None:
-        """End tracking for a sync (cleanup memory)."""
-        self._seen_entities.pop(sync_id, None)
 
     # =========================================================================
     # Manifest management

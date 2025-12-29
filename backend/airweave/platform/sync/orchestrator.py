@@ -121,7 +121,7 @@ class SyncOrchestrator:
             raise
         finally:
             # Note: Removed aggregate metrics recording (histograms/counters)
-            # Real-time visibility via Gauge metrics (airweave_worker_active_sync_info) which clear on completion
+            # Real-time visibility via Gauge metrics which clear on completion
 
             # Unregister worker pool from metrics
             try:
@@ -171,9 +171,6 @@ class SyncOrchestrator:
 
         # Start the stream (worker pool doesn't need starting)
         await self.stream.start()
-
-        # Start raw data tracking for full syncs (to cleanup stale entities later)
-        await self._start_raw_data_tracking_if_needed()
 
         started_at = utc_now_naive()
         await sync_job_service.update_status(
@@ -310,7 +307,7 @@ class SyncOrchestrator:
 
         # Track entity failures
         if entity_failures:
-            await self.sync_context.progress.increment("skipped", len(entity_failures))
+            await self.sync_context.entity_tracker.record_skipped(len(entity_failures))
 
         return pending_tasks
 
@@ -365,7 +362,7 @@ class SyncOrchestrator:
 
         # Increment skipped count for entity failures
         if entity_failures:
-            await self.sync_context.progress.increment("skipped", len(entity_failures))
+            await self.sync_context.entity_tracker.record_skipped(len(entity_failures))
             self.sync_context.logger.info(
                 f"Skipped {len(entity_failures)} entities due to processing errors"
             )
@@ -385,7 +382,7 @@ class SyncOrchestrator:
 
             # Increment skipped count for entity failures
             if entity_failures:
-                await self.sync_context.progress.increment("skipped", len(entity_failures))
+                await self.sync_context.entity_tracker.record_skipped(len(entity_failures))
                 self.sync_context.logger.info(
                     f"Skipped {len(entity_failures)} entities due to processing errors"
                 )
@@ -464,47 +461,16 @@ class SyncOrchestrator:
                 "(cursor data exists, only changed entities are processed)"
             )
 
-    async def _start_raw_data_tracking_if_needed(self) -> None:
-        """Start tracking raw data entities for full sync cleanup."""
-        # Determine if this is a full sync
-        has_cursor_data = bool(
-            hasattr(self.sync_context, "cursor")
-            and self.sync_context.cursor
-            and self.sync_context.cursor.cursor_data
-        )
-        source_supports_continuous = getattr(
-            self.sync_context.source, "_supports_continuous", False
-        )
-        is_full_sync = (
-            self.sync_context.force_full_sync
-            or not has_cursor_data
-            or not source_supports_continuous
-        )
-
-        if is_full_sync:
-            try:
-                from airweave.platform.sync import raw_data_service
-
-                sync_id = str(self.sync_context.sync.id)
-                raw_data_service.start_sync_tracking(sync_id)
-                self.sync_context.logger.debug(f"Started raw data tracking for full sync {sync_id}")
-            except Exception as e:
-                self.sync_context.logger.warning(f"Failed to start raw data tracking: {e}")
-
     async def _cleanup_stale_raw_data_if_needed(self) -> None:
         """Cleanup stale raw data entities after full sync."""
         try:
             from airweave.platform.sync import raw_data_service
-
-            sync_id = str(self.sync_context.sync.id)
 
             # Only cleanup if we were tracking
             deleted = await raw_data_service.cleanup_stale_entities(self.sync_context)
             if deleted:
                 self.sync_context.logger.info(f"🧹 Cleaned up {deleted} stale raw data entities")
 
-            # End tracking
-            raw_data_service.end_sync_tracking(sync_id)
         except Exception as e:
             self.sync_context.logger.warning(f"Failed to cleanup stale raw data: {e}")
 
@@ -517,16 +483,12 @@ class SyncOrchestrator:
             status: The final status of the sync job
             error: Optional error message if the sync failed
         """
-        # Publish progress finalization
-        await self.sync_context.progress.finalize(status)
-
-        # Publish entity state tracker finalization with error message if available
-        if getattr(self.sync_context, "entity_state_tracker", None):
-            await self.sync_context.entity_state_tracker.finalize(status, error)
+        # Publish completion via SyncStatePublisher
+        await self.sync_context.state_publisher.publish_completion(status, error)
 
     async def _complete_sync(self) -> None:
         """Mark sync job as completed with final statistics."""
-        stats = getattr(self.sync_context.progress, "stats", None)
+        stats = self.sync_context.entity_tracker.get_stats()
 
         # Save cursor data if it exists (for incremental syncs)
         await self._save_cursor_data()
@@ -618,7 +580,7 @@ class SyncOrchestrator:
             f"Sync job {self.sync_context.sync_job.id} failed: {error_message}", exc_info=True
         )
 
-        stats = getattr(self.sync_context.progress, "stats", None)
+        stats = self.sync_context.entity_tracker.get_stats()
 
         await sync_job_service.update_status(
             sync_job_id=self.sync_context.sync_job.id,
