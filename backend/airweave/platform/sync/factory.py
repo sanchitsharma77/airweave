@@ -29,7 +29,6 @@ from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.handlers import (
     PostgresMetadataHandler,
     RawDataHandler,
-    SelfProcessingHandler,
     VectorDBHandler,
 )
 from airweave.platform.sync.orchestrator import SyncOrchestrator
@@ -615,7 +614,6 @@ class SyncFactory:
         This method groups destinations by their processing requirements and creates
         appropriate handlers:
         - VectorDBHandler: For destinations needing chunking/embedding (Qdrant, Pinecone)
-        - SelfProcessingHandler: For destinations that handle their own NLP (Vespa)
 
         Args:
             sync_context: Sync context with destinations and logger
@@ -653,15 +651,6 @@ class SyncFactory:
                 f"Created VectorDBHandler for {len(vector_db_destinations)} destination(s): "
                 f"{[d.__class__.__name__ for d in vector_db_destinations]}"
             )
-
-        if self_processing_destinations:
-            self_handler = SelfProcessingHandler(destinations=self_processing_destinations)
-            handlers.append(self_handler)
-        dest_names = [d.__class__.__name__ for d in self_processing_destinations]
-        sync_context.logger.info(
-            f"Created SelfProcessingHandler for {len(self_processing_destinations)} "
-            f"destination(s): {dest_names}"
-        )
 
         if not handlers:
             sync_context.logger.warning(
