@@ -481,7 +481,7 @@ class TextualRepresentationBuilder:
             if entity in entities:
                 entities.remove(entity)
 
-        await sync_context.progress.increment("skipped", len(failed_entities))
+        await sync_context.entity_tracker.record_skipped(len(failed_entities))
         sync_context.logger.warning(
             f"Removed {len(failed_entities)} entities that failed conversion"
         )

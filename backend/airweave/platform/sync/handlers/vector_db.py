@@ -304,7 +304,7 @@ class VectorDBHandler(ActionHandler):
 
         skipped = len(entities) - len(valid_entities)
         if skipped:
-            await sync_context.progress.increment("skipped", skipped)
+            await sync_context.entity_tracker.record_skipped(skipped)
 
         return valid_entities
 
@@ -371,7 +371,7 @@ class VectorDBHandler(ActionHandler):
         )
 
         if unsupported:
-            await sync_context.progress.increment("skipped", len(unsupported))
+            await sync_context.entity_tracker.record_skipped(len(unsupported))
 
         if not supported:
             return []
@@ -501,7 +501,7 @@ class VectorDBHandler(ActionHandler):
                 chunk_entities.append(chunk_entity)
 
         if failed_count:
-            await sync_context.progress.increment("skipped", failed_count)
+            await sync_context.entity_tracker.record_skipped(failed_count)
 
         return chunk_entities
 
