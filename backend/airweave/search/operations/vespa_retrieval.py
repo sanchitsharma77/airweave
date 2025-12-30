@@ -206,13 +206,14 @@ class VespaRetrieval(SearchOperation):
     def _extract_breadcrumbs(self, fields: Dict[str, Any]) -> List[Dict[str, str]]:
         """Extract breadcrumbs from Vespa fields.
 
-        Vespa stores breadcrumbs as an array of structs with 'label' and 'url' fields.
+        Vespa stores breadcrumbs as an array of structs with 'entity_id', 'name',
+        and 'entity_type' fields (matching the Breadcrumb model in _base.py).
 
         Args:
             fields: Vespa document fields
 
         Returns:
-            List of breadcrumb dicts with 'label' and 'url' keys
+            List of breadcrumb dicts with 'entity_id', 'name', and 'entity_type' keys
         """
         breadcrumbs = fields.get("breadcrumbs", [])
 
@@ -222,7 +223,11 @@ class VespaRetrieval(SearchOperation):
         # Breadcrumbs should already be in the right format from Vespa
         if isinstance(breadcrumbs, list):
             return [
-                {"label": b.get("label", ""), "url": b.get("url", "")}
+                {
+                    "entity_id": b.get("entity_id", ""),
+                    "name": b.get("name", ""),
+                    "entity_type": b.get("entity_type", ""),
+                }
                 for b in breadcrumbs
                 if isinstance(b, dict)
             ]

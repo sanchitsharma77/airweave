@@ -39,7 +39,8 @@ class EntityPipeline:
     """Pipeline for processing entities with stateful tracking across sync lifecycle."""
 
     # Entity types not yet supported by Vespa (need custom schemas)
-    VESPA_UNSUPPORTED_TYPES = (FileEntity, CodeFileEntity, PolymorphicEntity, WebEntity)
+    # FileEntity, CodeFileEntity, EmailEntity, and WebEntity are now supported via schema inheritance
+    VESPA_UNSUPPORTED_TYPES = (PolymorphicEntity,)
 
     def __init__(self):
         """Initialize pipeline with empty entity tracking."""
@@ -90,8 +91,7 @@ class EntityPipeline:
 
         if skipped:
             sync_context.logger.info(
-                f"Skipped {len(skipped)} entities for Vespa "
-                f"(FileEntity/CodeFileEntity/PolymorphicEntity/WebEntity not yet supported)"
+                f"Skipped {len(skipped)} entities for Vespa (PolymorphicEntity not yet supported)"
             )
 
         return compatible, skipped
@@ -301,23 +301,23 @@ class EntityPipeline:
             # Traditional Qdrant path: chunk + embed + persist
             await self._build_textual_representations(entities_to_process, sync_context)
 
-        # Filter out entities with empty textual_representation
-        valid_entities = []
-        for entity in entities_to_process:
-            text = entity.textual_representation
-            if not text or not text.strip():
-                sync_context.logger.warning(
-                    "Entity %s[%s] has empty textual_representation, skipping.",
-                    entity.__class__.__name__,
-                    entity.entity_id,
-                )
-                continue
-            valid_entities.append(entity)
+            # Filter out entities with empty textual_representation
+            valid_entities = []
+            for entity in entities_to_process:
+                text = entity.textual_representation
+                if not text or not text.strip():
+                    sync_context.logger.warning(
+                        "Entity %s[%s] has empty textual_representation, skipping.",
+                        entity.__class__.__name__,
+                        entity.entity_id,
+                    )
+                    continue
+                valid_entities.append(entity)
 
-        skipped = len(entities_to_process) - len(valid_entities)
-        if skipped:
-            await sync_context.progress.increment("skipped", skipped)
-        entities_to_process = valid_entities
+            skipped = len(entities_to_process) - len(valid_entities)
+            if skipped:
+                await sync_context.progress.increment("skipped", skipped)
+            entities_to_process = valid_entities
 
             # Chunk entities (entity multiplication: 1 entity → N chunk entities)
             # entities_to_process may be empty if all failed conversion (handled in method)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import defaultdict
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
@@ -19,22 +20,21 @@ from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.decorators import destination
 from airweave.platform.destinations._base import VectorDBDestination
-from airweave.platform.entities._base import BaseEntity
+from airweave.platform.entities._base import (
+    BaseEntity,
+    CodeFileEntity,
+    EmailEntity,
+    FileEntity,
+    WebEntity,
+)
 
 if TYPE_CHECKING:
     from vespa.application import Vespa
 
 
-# Fields that belong to the base_entity schema (not payload)
-# These are either explicit document fields or come from airweave_system_metadata
-BASE_FIELDS = {
-    "entity_id",
-    "breadcrumbs",
-    "name",
-    "created_at",
-    "updated_at",
-    "textual_representation",
-    # Flattened system metadata fields
+# Flattened system metadata fields that are stored as top-level Vespa fields
+# These come from AirweaveSystemMetadata but are flattened for Vespa compatibility
+SYSTEM_METADATA_FIELDS = {
     "airweave_system_metadata",  # Original nested field (excluded from entity_dict)
     "collection_id",
     "sync_id",
@@ -44,6 +44,39 @@ BASE_FIELDS = {
     "source_name",
     "entity_type",
 }
+
+
+def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
+    """Get all fields that have Vespa schema columns (not payload) for an entity.
+
+    This derives the field list dynamically from the entity class hierarchy,
+    making the entity class definitions the single source of truth.
+
+    Args:
+        entity: The entity to get schema fields for
+
+    Returns:
+        Set of field names that should NOT go into the payload JSON
+    """
+    # Start with BaseEntity fields
+    fields = set(BaseEntity.model_fields.keys())
+
+    # Add system metadata fields (flattened)
+    fields |= SYSTEM_METADATA_FIELDS
+
+    # Add type-specific fields based on entity class hierarchy
+    if isinstance(entity, WebEntity):
+        # WebEntity adds crawl_url
+        fields |= set(WebEntity.model_fields.keys()) - set(BaseEntity.model_fields.keys())
+    if isinstance(entity, FileEntity):
+        # FileEntity adds url, size, file_type, mime_type, local_path
+        fields |= set(FileEntity.model_fields.keys()) - set(BaseEntity.model_fields.keys())
+    if isinstance(entity, CodeFileEntity):
+        # CodeFileEntity adds repo_name, path_in_repo, repo_owner, language, commit_id
+        fields |= set(CodeFileEntity.model_fields.keys()) - set(FileEntity.model_fields.keys())
+    # EmailEntity doesn't add any fields beyond FileEntity
+
+    return fields
 
 
 @destination("Vespa", "vespa", supports_vector=True)
@@ -98,14 +131,35 @@ class VespaDestination(VectorDBDestination):
 
         return instance
 
-    def _transform_entity(self, entity: BaseEntity) -> dict:
+    def _get_vespa_schema(self, entity: BaseEntity) -> str:
+        """Determine the Vespa schema name for an entity.
+
+        Args:
+            entity: The entity to get schema for
+
+        Returns:
+            Vespa schema name (e.g., "base_entity", "file_entity", "code_file_entity")
+        """
+        # Check in order of specificity (most specific first)
+        if isinstance(entity, CodeFileEntity):
+            return "code_file_entity"
+        elif isinstance(entity, EmailEntity):
+            return "email_entity"
+        elif isinstance(entity, FileEntity):
+            return "file_entity"
+        elif isinstance(entity, WebEntity):
+            return "web_entity"
+        else:
+            return "base_entity"
+
+    def _transform_entity(self, entity: BaseEntity) -> tuple[str, dict]:
         """Transform BaseEntity to Vespa document format.
 
         Args:
             entity: The entity to transform
 
         Returns:
-            Dict in Vespa feed format with 'id' and 'fields' keys
+            Tuple of (schema_name, doc_dict) where doc_dict has 'id' and 'fields' keys
         """
         # Get entity type from metadata or class name
         entity_type = (
@@ -114,10 +168,13 @@ class VespaDestination(VectorDBDestination):
             else entity.__class__.__name__
         )
 
+        # Determine the Vespa schema for this entity
+        schema = self._get_vespa_schema(entity)
+
         # Composite document ID: entity_type + entity_id for uniqueness
         doc_id = f"{entity_type}_{entity.entity_id}"
 
-        # Build fields dict
+        # Build fields dict with base entity fields
         fields = {
             "entity_id": entity.entity_id,
             "name": entity.name,
@@ -150,16 +207,40 @@ class VespaDestination(VectorDBDestination):
             fields["original_entity_id"] = entity.entity_id  # Parent tracking for chunk deletion
             fields["source_name"] = meta.source_name
 
+        # Add web-specific fields if this is a WebEntity
+        if isinstance(entity, WebEntity):
+            fields["crawl_url"] = entity.crawl_url
+
+        # Add file-specific fields if this is a FileEntity
+        if isinstance(entity, FileEntity):
+            fields["url"] = entity.url
+            fields["size"] = entity.size
+            fields["file_type"] = entity.file_type
+            if entity.mime_type:
+                fields["mime_type"] = entity.mime_type
+            if entity.local_path:
+                fields["local_path"] = entity.local_path
+
+        # Add code-specific fields if this is a CodeFileEntity
+        if isinstance(entity, CodeFileEntity):
+            fields["repo_name"] = entity.repo_name
+            fields["path_in_repo"] = entity.path_in_repo
+            fields["repo_owner"] = entity.repo_owner
+            fields["language"] = entity.language
+            fields["commit_id"] = entity.commit_id
+
         # Extract extra fields into payload JSON
+        # Use dynamic field derivation so entity class definitions are the single source of truth
+        schema_fields = _get_schema_fields_for_entity(entity)
         entity_dict = entity.model_dump(mode="json")
-        payload = {k: v for k, v in entity_dict.items() if k not in BASE_FIELDS}
+        payload = {k: v for k, v in entity_dict.items() if k not in schema_fields}
         if payload:
             fields["payload"] = json.dumps(payload)
 
         # Remove None values from top-level fields
         fields = {k: v for k, v in fields.items() if v is not None}
 
-        return {
+        return schema, {
             "id": doc_id,
             "fields": fields,
         }
@@ -186,6 +267,8 @@ class VespaDestination(VectorDBDestination):
         Uses pyvespa's feed_iterable for efficient concurrent feeding via HTTP/2
         multiplexing. This is much faster than sequential feed_data_point calls.
 
+        Entities are grouped by schema type and fed separately to the correct schema.
+
         IMPORTANT: feed_iterable is synchronous, so we run it in a thread pool
         to avoid blocking the async event loop.
 
@@ -200,16 +283,17 @@ class VespaDestination(VectorDBDestination):
 
         self.logger.info(f"Feeding {len(entities)} entities to Vespa (batch)")
 
-        # Transform all entities to Vespa format
-        vespa_docs = []
+        # Transform all entities to Vespa format, grouped by schema
+        docs_by_schema: dict[str, list[dict]] = defaultdict(list)
         for entity in entities:
             try:
-                vespa_doc = self._transform_entity(entity)
-                vespa_docs.append(vespa_doc)
+                schema, vespa_doc = self._transform_entity(entity)
+                docs_by_schema[schema].append(vespa_doc)
             except Exception as e:
                 self.logger.error(f"Failed to transform entity {entity.entity_id}: {e}")
 
-        if not vespa_docs:
+        total_docs = sum(len(docs) for docs in docs_by_schema.values())
+        if total_docs == 0:
             self.logger.warning("No documents to feed after transformation")
             return
 
@@ -224,11 +308,11 @@ class VespaDestination(VectorDBDestination):
             else:
                 failed_docs.append((doc_id, response.status_code, response.json))
 
-        # Define the synchronous feed operation
-        def _feed_sync():
+        # Define the synchronous feed operation for a specific schema
+        def _feed_schema_sync(schema: str, docs: list[dict]):
             self.app.feed_iterable(
-                iter=vespa_docs,
-                schema="base_entity",
+                iter=docs,
+                schema=schema,
                 namespace="airweave",
                 callback=callback,
                 max_queue_size=500,
@@ -236,13 +320,15 @@ class VespaDestination(VectorDBDestination):
                 max_connections=16,
             )
 
-        # Run synchronous pyvespa method in thread pool to avoid blocking event loop
-        await asyncio.to_thread(_feed_sync)
+        # Feed each schema's documents
+        for schema, docs in docs_by_schema.items():
+            self.logger.debug(f"Feeding {len(docs)} documents to schema '{schema}'")
+            await asyncio.to_thread(_feed_schema_sync, schema, docs)
 
         self.logger.info(f"Vespa feed complete: {success_count} success, {len(failed_docs)} failed")
 
         if failed_docs:
-            self.logger.error(f"{len(failed_docs)}/{len(vespa_docs)} documents failed to feed")
+            self.logger.error(f"{len(failed_docs)}/{total_docs} documents failed to feed")
             # Log first few failures for debugging
             for doc_id, status, body in failed_docs[:5]:
                 self.logger.error(f"  Failed {doc_id}: status={status}, body={body}")
@@ -255,9 +341,12 @@ class VespaDestination(VectorDBDestination):
                 else str(first_body)
             )
             raise RuntimeError(
-                f"Vespa feed failed: {len(failed_docs)}/{len(vespa_docs)} documents. "
+                f"Vespa feed failed: {len(failed_docs)}/{total_docs} documents. "
                 f"First error ({first_doc_id}): {error_msg}"
             )
+
+    # All Vespa schemas that we need to query/delete from
+    VESPA_SCHEMAS = ["base_entity", "file_entity", "code_file_entity", "email_entity", "web_entity"]
 
     async def delete(self, db_entity_id: UUID) -> None:
         """Delete a single entity from Vespa by db_entity_id.
@@ -270,13 +359,14 @@ class VespaDestination(VectorDBDestination):
 
         # Query for documents with this db_entity_id in the collection
         # Note: we don't have db_entity_id as a field - using original_entity_id instead
-        yql = (
-            f"select documentid from base_entity where "
-            f"original_entity_id contains '{db_entity_id}' and "
-            f"collection_id contains '{self.collection_id}'"
-        )
-
-        await self._delete_by_query(yql)
+        # Search across all schemas
+        for schema in self.VESPA_SCHEMAS:
+            yql = (
+                f"select documentid from {schema} where "
+                f"original_entity_id contains '{db_entity_id}' and "
+                f"collection_id contains '{self.collection_id}'"
+            )
+            await self._delete_by_query(yql, schema)
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
         """Delete all documents from a sync run.
@@ -287,13 +377,14 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        yql = (
-            f"select documentid from base_entity where "
-            f"sync_id contains '{sync_id}' and "
-            f"collection_id contains '{self.collection_id}'"
-        )
-
-        await self._delete_by_query(yql)
+        # Search across all schemas
+        for schema in self.VESPA_SCHEMAS:
+            yql = (
+                f"select documentid from {schema} where "
+                f"sync_id contains '{sync_id}' and "
+                f"collection_id contains '{self.collection_id}'"
+            )
+            await self._delete_by_query(yql, schema)
 
     async def delete_by_collection_id(self, collection_id: UUID) -> None:
         """Delete all documents for a collection.
@@ -306,9 +397,10 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        yql = f"select documentid from base_entity where collection_id contains '{collection_id}'"
-
-        await self._delete_by_query(yql)
+        # Search across all schemas
+        for schema in self.VESPA_SCHEMAS:
+            yql = f"select documentid from {schema} where collection_id contains '{collection_id}'"
+            await self._delete_by_query(yql, schema)
 
     async def bulk_delete(self, entity_ids: list[str], sync_id: UUID) -> None:
         """Delete specific entities by entity_id within a sync.
@@ -320,15 +412,16 @@ class VespaDestination(VectorDBDestination):
         if not entity_ids or not self.app:
             return
 
-        # Delete each entity
+        # Delete each entity from all schemas
         for entity_id in entity_ids:
-            yql = (
-                f"select documentid from base_entity where "
-                f"entity_id contains '{entity_id}' and "
-                f"sync_id contains '{sync_id}' and "
-                f"collection_id contains '{self.collection_id}'"
-            )
-            await self._delete_by_query(yql)
+            for schema in self.VESPA_SCHEMAS:
+                yql = (
+                    f"select documentid from {schema} where "
+                    f"entity_id contains '{entity_id}' and "
+                    f"sync_id contains '{sync_id}' and "
+                    f"collection_id contains '{self.collection_id}'"
+                )
+                await self._delete_by_query(yql, schema)
 
     async def bulk_delete_by_parent_id(self, parent_id: str, sync_id: UUID | str) -> None:
         """Delete all chunks for a parent entity.
@@ -340,13 +433,14 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        yql = (
-            f"select documentid from base_entity where "
-            f"original_entity_id contains '{parent_id}' and "
-            f"collection_id contains '{self.collection_id}'"
-        )
-
-        await self._delete_by_query(yql)
+        # Search across all schemas
+        for schema in self.VESPA_SCHEMAS:
+            yql = (
+                f"select documentid from {schema} where "
+                f"original_entity_id contains '{parent_id}' and "
+                f"collection_id contains '{self.collection_id}'"
+            )
+            await self._delete_by_query(yql, schema)
 
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
         """Delete all documents for multiple parent IDs.
@@ -358,60 +452,85 @@ class VespaDestination(VectorDBDestination):
         for parent_id in parent_ids:
             await self.bulk_delete_by_parent_id(parent_id, sync_id)
 
-    async def _delete_by_query(self, yql: str) -> None:
-        """Execute a delete operation based on a YQL query.
+    async def _delete_by_query(self, yql: str, schema: str) -> None:
+        """Execute a delete operation based on a YQL query with pagination.
 
         IMPORTANT: pyvespa query() and delete_data() are synchronous,
         so we run them in a thread pool to avoid blocking the event loop.
 
+        Uses pagination to handle large result sets that may exceed Vespa's
+        configured max hits limit.
+
         Args:
             yql: YQL query to find documents to delete
+            schema: The Vespa schema to delete from
         """
         if not self.app:
             return
 
+        batch_size = 400  # Vespa's default maxHits limit
+        total_deleted = 0
+
         try:
-            # Run synchronous query in thread pool
-            response = await asyncio.to_thread(self.app.query, yql=yql, hits=10000)
+            # Paginate through all matching documents
+            while True:
+                # Run synchronous query in thread pool
+                response = await asyncio.to_thread(self.app.query, yql=yql, hits=batch_size)
 
-            if not response.is_successful():
-                self.logger.error(f"Query failed: {response.json}")
-                return
+                if not response.is_successful():
+                    self.logger.error(f"Error during delete operation: {response.json}")
+                    return
 
-            hits = response.hits or []
-            if not hits:
-                self.logger.debug("No documents found to delete")
-                return
+                hits = response.hits or []
+                if not hits:
+                    if total_deleted > 0:
+                        self.logger.info(
+                            f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
+                        )
+                    else:
+                        self.logger.debug(f"No documents found to delete from {schema}")
+                    return
 
-            self.logger.info(f"Deleting {len(hits)} documents from Vespa")
+                self.logger.debug(
+                    f"Deleting batch of {len(hits)} documents from Vespa schema '{schema}'"
+                )
 
-            # Collect document IDs to delete
-            doc_ids_to_delete = []
-            for hit in hits:
-                doc_id = hit.get("id", "")
-                if doc_id:
-                    # Extract the user-specified ID from the full document ID
-                    # Format: id:namespace:doctype::user_id
-                    parts = doc_id.split("::")
-                    if len(parts) >= 2:
-                        doc_ids_to_delete.append(parts[-1])
+                # Collect document IDs to delete
+                doc_ids_to_delete = []
+                for hit in hits:
+                    doc_id = hit.get("id", "")
+                    if doc_id:
+                        # Extract the user-specified ID from the full document ID
+                        # Format: id:namespace:doctype::user_id
+                        parts = doc_id.split("::")
+                        if len(parts) >= 2:
+                            doc_ids_to_delete.append(parts[-1])
 
-            # Define synchronous delete operation for batch
-            def _delete_batch_sync() -> int:
-                deleted = 0
-                for user_id in doc_ids_to_delete:
-                    delete_response = self.app.delete_data(
-                        schema="base_entity",
-                        data_id=user_id,
-                        namespace="airweave",
-                    )
-                    if delete_response.is_successful():
-                        deleted += 1
-                return deleted
+                # Define synchronous delete operation for batch
+                # Use default arg to bind loop variable (avoids late binding issues)
+                def _delete_batch_sync(ids: list = doc_ids_to_delete) -> int:
+                    deleted = 0
+                    for user_id in ids:
+                        delete_response = self.app.delete_data(
+                            schema=schema,
+                            data_id=user_id,
+                            namespace="airweave",
+                        )
+                        if delete_response.is_successful():
+                            deleted += 1
+                    return deleted
 
-            # Run synchronous deletes in thread pool
-            deleted = await asyncio.to_thread(_delete_batch_sync)
-            self.logger.info(f"Deleted {deleted} documents from Vespa")
+                # Run synchronous deletes in thread pool
+                deleted = await asyncio.to_thread(_delete_batch_sync)
+                total_deleted += deleted
+
+                # If we got fewer hits than batch_size, we're done
+                if len(hits) < batch_size:
+                    if total_deleted > 0:
+                        self.logger.info(
+                            f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
+                        )
+                    break
 
         except Exception as e:
             self.logger.error(f"Error during delete operation: {e}")

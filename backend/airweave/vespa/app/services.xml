@@ -47,6 +47,10 @@
     <redundancy>2</redundancy>
     <documents>
       <document type="base_entity" mode="index"/>
+      <document type="file_entity" mode="index"/>
+      <document type="code_file_entity" mode="index"/>
+      <document type="email_entity" mode="index"/>
+      <document type="web_entity" mode="index"/>
     </documents>
     <nodes>
       <node hostalias="content0" distribution-key="0"/>
