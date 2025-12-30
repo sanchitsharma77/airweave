@@ -203,9 +203,32 @@ class EntityPipeline:
         sync_context: SyncContext,
     ) -> None:
         """Process a list of entities."""
+        # Eval data capture (if enabled via config)
         # Populate BaseEntity fields from flagged fields BEFORE duplicate detection
+        # This sets entity_id, name, created_at, updated_at from flagged source fields
         for entity in entities:
             self._populate_base_entity_fields_from_flags(entity)
+
+        # Eval data capture (AFTER field population so entity_id is set)
+        # Captures raw entity snapshots to Azure Blob Storage for evaluation
+        from airweave.core.config import settings
+
+        if settings.EVAL_DATA_CAPTURE_ENABLED:
+            try:
+                from airweave_evals.capture import EvalDataCapture
+
+                capture = EvalDataCapture()
+                snapshot_name = capture.capture(entities=entities, sync_context=sync_context)
+                sync_context.logger.info(
+                    f"Captured {len(entities)} entities to Azure Blob: {snapshot_name}"
+                )
+            except ImportError:
+                sync_context.logger.warning(
+                    "EVAL_DATA_CAPTURE_ENABLED but airweave_evals not installed. "
+                    "Install with: pip install -e /path/to/evals2"
+                )
+            except Exception as e:
+                sync_context.logger.error(f"Failed to capture eval data: {e}")
 
         unique_entities = await self._filter_duplicates(entities, sync_context)
 
@@ -278,17 +301,23 @@ class EntityPipeline:
             # Traditional Qdrant path: chunk + embed + persist
             await self._build_textual_representations(entities_to_process, sync_context)
 
-            for entity in entities_to_process:
-                if not hasattr(entity, "textual_representation"):
-                    raise SyncFailureError(
-                        f"Entity {entity.__class__.__name__}[{entity.entity_id}] "
-                        f"has no textual_representation after build step."
-                    )
-                if not entity.textual_representation:
-                    raise SyncFailureError(
-                        f"Entity {entity.__class__.__name__}[{entity.entity_id}] "
-                        f"has empty textual_representation."
-                    )
+        # Filter out entities with empty textual_representation
+        valid_entities = []
+        for entity in entities_to_process:
+            text = entity.textual_representation
+            if not text or not text.strip():
+                sync_context.logger.warning(
+                    "Entity %s[%s] has empty textual_representation, skipping.",
+                    entity.__class__.__name__,
+                    entity.entity_id,
+                )
+                continue
+            valid_entities.append(entity)
+
+        skipped = len(entities_to_process) - len(valid_entities)
+        if skipped:
+            await sync_context.progress.increment("skipped", skipped)
+        entities_to_process = valid_entities
 
             # Chunk entities (entity multiplication: 1 entity → N chunk entities)
             # entities_to_process may be empty if all failed conversion (handled in method)

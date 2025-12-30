@@ -8,6 +8,8 @@
             "module": "uvicorn",
             "args": [
                 "--reload",
+                "--reload-exclude",
+                "local_storage",
                 "--host",
                 "127.0.0.1",
                 "--port",

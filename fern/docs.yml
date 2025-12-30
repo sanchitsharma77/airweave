@@ -33,6 +33,12 @@ navigation:
     path: docs/pages/add-new-source.mdx
   - page: Rate Limits
     path: docs/pages/rate-limits.mdx
+  - section: Framework Integrations
+    contents:
+    - page: LlamaIndex
+      path: docs/pages/framework-integrations/llamaindex.mdx
+    - page: Vercel AI SDK
+      path: docs/pages/framework-integrations/vercel-ai-sdk.mdx
   - section: Authentication
     contents:
     - section: Auth Providers
