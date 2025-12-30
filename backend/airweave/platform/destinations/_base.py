@@ -1,12 +1,15 @@
 """Base destination classes."""
 
 from abc import ABC, abstractmethod
-from typing import ClassVar, List, Optional
+from typing import Any, ClassVar, List, Optional
 from uuid import UUID
+
+from qdrant_client.http.models import Filter as QdrantFilter
 
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.entities._base import BaseEntity
+from airweave.schemas.search import AirweaveTemporalConfig, SearchResult
 
 
 class BaseDestination(ABC):
@@ -99,9 +102,66 @@ class BaseDestination(ABC):
             await self.bulk_delete_by_parent_id(pid, sync_id)
 
     @abstractmethod
-    async def search(self, query_vector: list[float]) -> None:
-        """Search for a sync_id in the destination."""
+    async def search(
+        self,
+        query: str,
+        collection_id: UUID,
+        limit: int,
+        offset: int,
+        filter: Optional[QdrantFilter] = None,
+        embeddings: Optional[List[List[float]]] = None,
+        sparse_embeddings: Optional[List[Any]] = None,
+        search_method: str = "hybrid",
+        temporal_config: Optional[AirweaveTemporalConfig] = None,
+    ) -> List[SearchResult]:
+        """Execute search against the destination.
+
+        This is the standard search interface that all destinations must implement.
+        Destinations handle embedding generation (if needed) and filter translation internally.
+
+        Args:
+            query: The search query text
+            collection_id: Collection UUID for multi-tenant filtering
+            limit: Maximum number of results to return
+            offset: Number of results to skip (pagination)
+            filter: Optional Qdrant-format filter (destination translates if needed)
+            embeddings: Pre-computed dense embeddings (if available from client-side)
+            sparse_embeddings: Pre-computed sparse embeddings for hybrid search
+            search_method: Search strategy - "hybrid", "neural", or "keyword"
+            temporal_config: Optional temporal relevance configuration
+
+        Returns:
+            List of SearchResult objects in the standard format
+        """
         pass
+
+    def translate_filter(self, filter: Optional[QdrantFilter]) -> Any:
+        """Translate Qdrant filter to destination-native format.
+
+        Default implementation is passthrough (for Qdrant-compatible destinations).
+        Override this method for destinations that use different filter formats.
+
+        Args:
+            filter: Qdrant-format filter object
+
+        Returns:
+            Destination-native filter format
+        """
+        return filter
+
+    def translate_temporal(self, config: Optional[AirweaveTemporalConfig]) -> Any:
+        """Translate Airweave temporal config to destination-native format.
+
+        Default implementation is passthrough. Override for destinations that
+        require different temporal relevance configurations.
+
+        Args:
+            config: Airweave temporal relevance configuration
+
+        Returns:
+            Destination-native temporal config (or None if not supported)
+        """
+        return config
 
     @abstractmethod
     async def has_keyword_index(self) -> bool:

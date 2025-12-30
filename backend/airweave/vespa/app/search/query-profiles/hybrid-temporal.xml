@@ -1,0 +1,50 @@
+<query-profile id="hybrid-temporal">
+    <!-- 
+    Hybrid search with temporal relevance boosting.
+    Inherits all settings from hybrid profile but uses temporal ranking.
+    
+    Query parameters:
+    - query(temporal_weight): 0.0-1.0, how much to weight recency (default: 0.3)
+    - ranking.properties.freshness(updated_at).maxAge: decay window in seconds
+    -->
+
+    <!-- Schema and document type -->
+    <field name="schema">base_entity</field>
+
+    <!-- Query embeddings: int8 for ANN matching (hamming), float for ranking -->
+    <field name="ranking.features.query(embedding)">embed(nomicmb, @query)</field>
+    <field name="ranking.features.query(float_embedding)">embed(nomicmb, @query)</field>
+
+    <!-- 
+    Default temporal weight (can be overridden per-query).
+    0.3 provides moderate recency bias without overwhelming relevance.
+    -->
+    <field name="ranking.features.query(temporal_weight)">0.3</field>
+
+    <!-- 
+    Hybrid retrieval combining lexical and semantic search.
+    Same YQL as hybrid profile - only ranking differs.
+    -->
+    <field name="yql">
+        select *
+        from %{schema}
+        where collection_id contains @collection_id and
+              (({targetHits:30}userInput(@query)) or
+               ({label:"chunks_label", targetHits:30}nearestNeighbor(chunk_small_embeddings, embedding)))
+    </field>
+
+    <!-- 
+    Use temporal rank profile - adds freshness scoring to RRF.
+    -->
+    <field name="ranking.profile">hybrid-temporal</field>
+
+    <!-- Return only the top-3 most similar chunks per document -->
+    <field name="presentation.summary">top_3_chunks</field>
+
+    <!-- Default number of hits returned to client -->
+    <field name="hits">5</field>
+
+    <!-- Enable timing info for debugging -->
+    <field name="presentation.timing">true</field>
+</query-profile>
+

@@ -7,7 +7,6 @@ from .reranking import Reranking
 from .retrieval import Retrieval
 from .temporal_relevance import TemporalRelevance
 from .user_filter import UserFilter
-from .vespa_retrieval import VespaRetrieval
 
 __all__ = [
     "EmbedQuery",
@@ -19,5 +18,4 @@ __all__ = [
     "Retrieval",
     "TemporalRelevance",
     "UserFilter",
-    "VespaRetrieval",
 ]

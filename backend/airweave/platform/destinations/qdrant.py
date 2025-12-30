@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, List, Literal, Optional
 from uuid import UUID
 
 # Prefer SparseTextEmbedding (newer fastembed), fallback to SparseEmbedding (older)
@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+from qdrant_client.http.models import Filter as QdrantFilter
 from qdrant_client.local.local_collection import DEFAULT_VECTOR_NAME
 
 from airweave.core.config import settings
@@ -44,6 +45,7 @@ from airweave.platform.destinations.collection_strategy import (
     get_physical_collection_name,
 )
 from airweave.platform.entities._base import BaseEntity
+from airweave.schemas.search import AirweaveTemporalConfig, SearchResult
 
 if TYPE_CHECKING:
     from airweave.search.operations.temporal_relevance import DecayConfig
@@ -51,7 +53,13 @@ if TYPE_CHECKING:
 KEYWORD_VECTOR_NAME = "bm25"
 
 
-@destination("Qdrant", "qdrant", auth_config_class=QdrantAuthConfig, supports_vector=True)
+@destination(
+    "Qdrant",
+    "qdrant",
+    auth_config_class=QdrantAuthConfig,
+    supports_vector=True,
+    requires_client_embedding=True,
+)
 class QdrantDestination(VectorDBDestination):
     """Qdrant destination with multi-tenant support and legacy compatibility."""
 
@@ -1242,32 +1250,124 @@ class QdrantDestination(VectorDBDestination):
         return all_results
 
     # ----------------------------------------------------------------------------------
-    # Public search API (legacy-compatible signatures)
+    # Public search API (destination-agnostic interface)
     # ----------------------------------------------------------------------------------
     async def search(
         self,
-        query_vector: list[float],
-        limit: int = 100,
-        score_threshold: float | None = None,
-        with_payload: bool = True,
-        filter: dict | None = None,
-        decay_config: Optional[DecayConfig] = None,
-        sparse_vector: SparseEmbedding | dict | None = None,
-        search_method: Literal["hybrid", "neural", "keyword"] = "hybrid",
-        offset: int = 0,
-    ) -> list[dict]:
-        """Search a single query vector; thin wrapper over `bulk_search`."""
-        return await self.bulk_search(
-            query_vectors=[query_vector],
+        query: str,
+        collection_id: UUID,
+        limit: int,
+        offset: int,
+        filter: Optional[QdrantFilter] = None,
+        embeddings: Optional[List[List[float]]] = None,
+        sparse_embeddings: Optional[List[Any]] = None,
+        search_method: str = "hybrid",
+        temporal_config: Optional[AirweaveTemporalConfig] = None,
+        decay_config: Optional["DecayConfig"] = None,
+    ) -> List[SearchResult]:
+        """Execute search against Qdrant using pre-computed embeddings.
+
+        Qdrant requires client-side embeddings (unlike Vespa which embeds server-side).
+        The embeddings must be provided via the embeddings parameter.
+
+        Args:
+            query: The search query text (for logging only - Qdrant uses embeddings)
+            collection_id: Collection UUID for multi-tenant filtering
+            limit: Maximum number of results to return
+            offset: Number of results to skip (pagination)
+            filter: Optional Qdrant-format filter (passthrough - native format)
+            embeddings: Pre-computed dense embeddings (required for Qdrant)
+            sparse_embeddings: Pre-computed sparse embeddings for hybrid search
+            search_method: Search strategy - "hybrid", "neural", or "keyword"
+            temporal_config: Optional temporal config (translated to DecayConfig)
+            decay_config: Optional pre-built DecayConfig (takes precedence if provided)
+
+        Returns:
+            List of SearchResult objects
+
+        Raises:
+            ValueError: If embeddings are not provided
+        """
+        if not embeddings:
+            raise ValueError(
+                "Qdrant requires pre-computed embeddings. "
+                "Ensure EmbedQuery operation ran before Retrieval."
+            )
+
+        self.logger.debug(
+            f"[QdrantSearch] Executing search: query='{query[:50]}...', "
+            f"limit={limit}, embeddings={len(embeddings)}"
+        )
+
+        # Convert filter to dict format if needed
+        filter_dict = None
+        if filter:
+            filter_dict = self.translate_filter(filter)
+
+        # Call bulk_search directly with proper parameter mapping
+        num_queries = len(embeddings)
+        raw_results = await self.bulk_search(
+            query_vectors=embeddings,
             limit=limit,
-            score_threshold=score_threshold,
-            with_payload=with_payload,
-            filter_conditions=[filter] if filter else None,
-            sparse_vectors=[sparse_vector] if sparse_vector else None,
+            with_payload=True,
+            filter_conditions=[filter_dict] * num_queries if filter_dict else None,
+            sparse_vectors=sparse_embeddings,
             search_method=search_method,
             decay_config=decay_config,
             offset=offset,
         )
+
+        # Convert to SearchResult format
+        results = []
+        for r in raw_results:
+            result = SearchResult(
+                id=str(r.get("id", "")),
+                score=r.get("score", 0.0),
+                payload=r.get("payload", {}),
+            )
+            results.append(result)
+
+        self.logger.debug(f"[QdrantSearch] Retrieved {len(results)} results")
+        return results
+
+    def translate_filter(self, filter: Optional[QdrantFilter]) -> Optional[dict]:
+        """Translate filter to Qdrant dict format.
+
+        Qdrant uses its native filter format, so this is essentially a passthrough
+        that converts the Pydantic model to a dict.
+
+        Args:
+            filter: Qdrant Filter object
+
+        Returns:
+            Filter as dict, or None
+        """
+        if filter is None:
+            return None
+        # Convert Pydantic model to dict if needed
+        if hasattr(filter, "model_dump"):
+            return filter.model_dump(exclude_none=True)
+        return filter
+
+    def translate_temporal(
+        self, config: Optional[AirweaveTemporalConfig]
+    ) -> Optional["DecayConfig"]:
+        """Translate Airweave temporal config to Qdrant DecayConfig.
+
+        For now, this returns None to use the existing temporal relevance operation
+        flow which builds DecayConfig internally. Future enhancement can convert
+        AirweaveTemporalConfig to DecayConfig directly.
+
+        Args:
+            config: Airweave temporal relevance configuration
+
+        Returns:
+            None (uses existing TemporalRelevance operation flow)
+        """
+        # The existing TemporalRelevance operation builds DecayConfig internally
+        # with more complex logic (datetime calculations, scale conversion, etc.)
+        # For now, return None and let that flow continue working.
+        return None
 
     async def bulk_search(
         self,

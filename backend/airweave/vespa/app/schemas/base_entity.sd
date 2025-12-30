@@ -348,5 +348,96 @@ schema base_entity {
             top_3_chunk_sim_scores
         }
     }
+
+    # =========================================================================
+    # HYBRID-TEMPORAL: RRF ranking with temporal freshness boost
+    # Uses freshness(updated_at) to boost recent documents
+    # Weight controlled via query(temporal_weight) parameter
+    # =========================================================================
+    rank-profile hybrid-temporal inherits hybrid-rrf {
+        inputs {
+            # Inherit embeddings from default
+            query(embedding) tensor<int8>(x[96])
+            query(float_embedding) tensor<float>(x[768])
+            # Temporal relevance weight (0 = no temporal boost, 1 = max boost)
+            query(temporal_weight) double: 0.3
+        }
+
+        # Configure freshness function
+        # Default maxAge: 90 days (7776000 seconds)
+        # Can be overridden per-query via ranking.properties.freshness(updated_at).maxAge
+        rank-properties {
+            freshness(updated_at).maxAge: 7776000
+        }
+
+        # -----------------------------------------------------------------------
+        # Temporal freshness score
+        # freshness(field) returns 1.0 for current time, decays to 0 at maxAge
+        # Uses linear decay: max(1 - age/maxAge, 0)
+        # -----------------------------------------------------------------------
+        function temporal_score() {
+            expression: freshness(updated_at)
+        }
+
+        # -----------------------------------------------------------------------
+        # Combined relevance with temporal boost
+        # Blends semantic score with temporal freshness based on weight
+        # When temporal_weight=0: pure relevance
+        # When temporal_weight=1: pure freshness (not recommended)
+        # Recommended: 0.2-0.4 for balanced recency bias
+        # -----------------------------------------------------------------------
+        function relevance_with_temporal() {
+            expression: (1 - query(temporal_weight)) + query(temporal_weight) * temporal_score()
+        }
+
+        # -----------------------------------------------------------------------
+        # FIRST PHASE: Same as hybrid-rrf but with temporal multiplier
+        # -----------------------------------------------------------------------
+        first-phase {
+            expression: (bm25_score() + semantic_score()) * relevance_with_temporal()
+        }
+
+        # -----------------------------------------------------------------------
+        # SECOND PHASE: Expensive features with temporal boost
+        # -----------------------------------------------------------------------
+        second-phase {
+            rerank-count: 15
+            expression {
+                (firstPhase +
+                 max_chunk_sim_score() +
+                 avg_top_3_chunk_sim_scores()) * relevance_with_temporal()
+            }
+        }
+
+        # -----------------------------------------------------------------------
+        # GLOBAL PHASE: RRF with temporal component
+        # Adds temporal freshness as a third signal in RRF fusion
+        # -----------------------------------------------------------------------
+        global-phase {
+            rerank-count: 15
+            expression {
+                reciprocal_rank(bm25_score) +
+                reciprocal_rank(max_chunk_sim_score) +
+                query(temporal_weight) * reciprocal_rank(temporal_score)
+            }
+        }
+
+        match-features {
+            bm25(chunks)
+            bm25(payload)
+            bm25_score
+            semantic_score
+            temporal_score
+            max_chunk_sim_score
+            max_chunk_text_score
+            avg_top_3_chunk_sim_scores
+            avg_top_3_chunk_text_scores
+        }
+
+        summary-features {
+            top_3_chunk_sim_scores
+            temporal_score
+        }
+    }
 }
 

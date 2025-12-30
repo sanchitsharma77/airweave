@@ -612,7 +612,7 @@ class SourceConnectionService:
 
             # Handle sync creation with schedule
             sync_id, sync, sync_job = await self._handle_sync_creation(
-                uow, obj_in, source, connection.id, collection.id, ctx
+                uow, obj_in, source, connection.id, collection.id, collection.readable_id, ctx
             )
 
             # Create source connection
@@ -969,7 +969,7 @@ class SourceConnectionService:
 
             # Handle sync creation with schedule
             sync_id, sync, sync_job = await self._handle_sync_creation(
-                uow, obj_in, source, connection.id, collection.id, ctx
+                uow, obj_in, source, connection.id, collection.id, collection.readable_id, ctx
             )
 
             # Create source connection
@@ -1155,7 +1155,7 @@ class SourceConnectionService:
 
             # Handle sync creation with schedule
             sync_id, sync, sync_job = await self._handle_sync_creation(
-                uow, obj_in, source, connection.id, collection.id, ctx
+                uow, obj_in, source, connection.id, collection.id, collection.readable_id, ctx
             )
 
             # Create source connection
@@ -1216,6 +1216,7 @@ class SourceConnectionService:
         source: schemas.Source,
         connection_id: UUID,
         collection_id: UUID,
+        collection_readable_id: str,
         ctx: ApiContext,
     ) -> Tuple[Optional[UUID], Optional[schemas.Sync], Optional[schemas.SyncJob]]:
         """Common logic for creating sync with schedule during source connection creation.
@@ -1226,6 +1227,7 @@ class SourceConnectionService:
             source: Source model
             connection_id: Connection ID (model.connection.id)
             collection_id: Collection ID
+            collection_readable_id: Collection readable ID
             ctx: API context
 
         Returns:
@@ -1257,6 +1259,7 @@ class SourceConnectionService:
             obj_in.name,
             connection_id,
             collection_id,
+            collection_readable_id,
             cron_schedule,
             obj_in.sync_immediately,
             ctx,
@@ -1361,6 +1364,7 @@ class SourceConnectionService:
                 source_conn.name,
                 source_conn.connection_id,
                 collection.id,
+                collection.readable_id,
                 new_cron,
                 False,  # Don't run immediately on update
                 ctx,

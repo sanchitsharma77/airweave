@@ -1,11 +1,10 @@
 """Search schemas for Airweave's search API."""
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import tiktoken
 from pydantic import BaseModel, Field, field_validator
-from qdrant_client.http.models import Filter as QdrantFilter
 
 
 class RetrievalStrategy(str, Enum):
@@ -14,6 +13,48 @@ class RetrievalStrategy(str, Enum):
     HYBRID = "hybrid"
     NEURAL = "neural"
     KEYWORD = "keyword"
+
+
+class SearchResult(BaseModel):
+    """Standard search result format returned by all destinations.
+
+    This is the canonical result format that all destination search implementations
+    must return, ensuring the search module remains destination-agnostic.
+    """
+
+    id: str = Field(..., description="Unique identifier for the search result")
+    score: float = Field(..., description="Relevance score from the search backend")
+    payload: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Document fields and metadata associated with the result",
+    )
+
+
+class AirweaveTemporalConfig(BaseModel):
+    """Destination-agnostic temporal relevance configuration.
+
+    This configuration is translated to destination-specific formats:
+    - Qdrant: DecayConfig (passthrough - this schema matches DecayConfig intentionally)
+    - Vespa: Freshness ranking function (future implementation)
+
+    The structure intentionally mirrors Qdrant's DecayConfig so that the Qdrant
+    destination can use a simple passthrough translation.
+    """
+
+    weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight of temporal relevance in final ranking (0-1)",
+    )
+    decay_scale: Optional[str] = Field(
+        default=None,
+        description="Time scale for decay (e.g., '7d' for 7 days, '30d' for 30 days)",
+    )
+    reference_field: str = Field(
+        default="airweave_created_at",
+        description="Timestamp field to use for temporal relevance calculation",
+    )
 
 
 class SearchRequest(BaseModel):
@@ -60,8 +101,8 @@ class SearchRequest(BaseModel):
     retrieval_strategy: Optional[RetrievalStrategy] = Field(
         default=None, description="The retrieval strategy to use"
     )
-    filter: Optional[QdrantFilter] = Field(
-        default=None, description="Qdrant native filter for metadata-based filtering"
+    filter: Optional[AirweaveFilter] = Field(
+        default=None, description="Filter for metadata-based filtering"
     )
     offset: Optional[int] = Field(default=None, description="Number of results to skip")
     limit: Optional[int] = Field(default=None, description="Maximum number of results to return")
