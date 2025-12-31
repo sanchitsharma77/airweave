@@ -18,15 +18,22 @@ from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.db.init_db_native import init_db_with_entity_definitions
 from airweave.platform.auth_providers._base import BaseAuthProvider
-from airweave.platform.destinations._base import BaseDestination
+from airweave.platform.destinations._base import BaseDestination, ProcessingRequirement
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sync.actions import ActionDispatcher, ActionResolver
 from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.cursor import SyncCursor
 from airweave.platform.sync.entity_pipeline import EntityPipeline
+from airweave.platform.sync.handlers import (
+    PostgresMetadataHandler,
+    RawDataHandler,
+    VectorDBHandler,
+)
 from airweave.platform.sync.orchestrator import SyncOrchestrator
-from airweave.platform.sync.pubsub import SyncEntityStateTracker, SyncProgress
+from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
+from airweave.platform.sync.state_publisher import SyncStatePublisher
 from airweave.platform.sync.stream import AsyncSourceStream
 from airweave.platform.sync.token_manager import TokenManager
 from airweave.platform.sync.worker_pool import AsyncWorkerPool
@@ -94,8 +101,26 @@ class SyncFactory:
         )
         logger.debug(f"Sync context created in {time.time() - context_start:.2f}s")
 
-        # Create entity pipeline
-        entity_pipeline = EntityPipeline()
+        # Create pipeline components
+        logger.debug("Initializing pipeline components...")
+
+        # 1. Action Resolver
+        action_resolver = ActionResolver(entity_map=sync_context.entity_map)
+
+        # 2. Handlers - grouped by destination processing requirements
+        handlers = cls._create_destination_handlers(sync_context)
+        handlers.append(RawDataHandler())  # Raw data storage
+        handlers.append(PostgresMetadataHandler())  # Metadata (runs last)
+
+        # 3. Action Dispatcher
+        action_dispatcher = ActionDispatcher(handlers=handlers)
+
+        # 4. Entity Pipeline
+        entity_pipeline = EntityPipeline(
+            entity_tracker=sync_context.entity_tracker,
+            action_resolver=action_resolver,
+            action_dispatcher=action_dispatcher,
+        )
 
         # Create worker pool
         worker_pool = AsyncWorkerPool(max_workers=max_workers, logger=sync_context.logger)
@@ -179,8 +204,6 @@ class SyncFactory:
         )
         entity_map = await cls._get_entity_definition_map(db=db)
 
-        progress = SyncProgress(sync_job.id, logger=logger)
-
         # NEW: Load initial entity counts from database for state tracking
         initial_counts = await crud.entity_count.get_counts_per_sync_and_type(db, sync.id)
 
@@ -190,15 +213,23 @@ class SyncFactory:
         for count in initial_counts:
             logger.debug(f"  - {count.entity_definition_name}: {count.count} entities")
 
-        # NEW: Create state-aware tracker (parallel to existing progress)
-        entity_state_tracker = SyncEntityStateTracker(
-            job_id=sync_job.id, sync_id=sync.id, initial_counts=initial_counts, logger=logger
+        # Create EntityTracker (pure state tracking)
+        entity_tracker = EntityTracker(
+            job_id=sync_job.id,
+            sync_id=sync.id,
+            logger=logger,
+            initial_counts=initial_counts,
         )
 
-        logger.info(
-            f"✅ Created SyncEntityStateTracker for job {sync_job.id}, "
-            f"channel: sync_job_state:{sync_job.id}"
+        # Create SyncStatePublisher (handles pubsub publishing)
+        state_publisher = SyncStatePublisher(
+            job_id=sync_job.id,
+            sync_id=sync.id,
+            entity_tracker=entity_tracker,
+            logger=logger,
         )
+
+        logger.info(f"✅ Created EntityTracker and SyncStatePublisher for job {sync_job.id}")
 
         logger.info("Sync context created")
 
@@ -262,8 +293,8 @@ class SyncFactory:
             sync_job=sync_job,
             collection=collection,
             connection=connection,  # Unused parameter
-            progress=progress,
-            entity_state_tracker=entity_state_tracker,
+            entity_tracker=entity_tracker,
+            state_publisher=state_publisher,
             cursor=cursor,
             entity_map=entity_map,
             ctx=ctx,
@@ -574,6 +605,61 @@ class SyncFactory:
             )
 
     @classmethod
+    def _create_destination_handlers(
+        cls,
+        sync_context: SyncContext,
+    ) -> list:
+        """Create destination handlers grouped by processing requirements.
+
+        This method groups destinations by their processing requirements and creates
+        appropriate handlers:
+        - VectorDBHandler: For destinations needing chunking/embedding (Qdrant, Pinecone)
+
+        Args:
+            sync_context: Sync context with destinations and logger
+
+        Returns:
+            List of destination handlers (may be empty if no destinations)
+        """
+        from airweave.platform.sync.handlers.base import ActionHandler
+
+        handlers: list[ActionHandler] = []
+
+        # Group destinations by processing requirement
+        vector_db_destinations: list[BaseDestination] = []
+        self_processing_destinations: list[BaseDestination] = []
+
+        for dest in sync_context.destinations:
+            requirement = dest.processing_requirement
+            if requirement == ProcessingRequirement.CHUNKS_AND_EMBEDDINGS:
+                vector_db_destinations.append(dest)
+            elif requirement == ProcessingRequirement.RAW_ENTITIES:
+                self_processing_destinations.append(dest)
+            else:
+                # Default to vector DB for unknown requirements (backward compat)
+                sync_context.logger.warning(
+                    f"Unknown processing requirement {requirement} for {dest.__class__.__name__}, "
+                    "defaulting to CHUNKS_AND_EMBEDDINGS"
+                )
+                vector_db_destinations.append(dest)
+
+        # Create handlers for each non-empty group
+        if vector_db_destinations:
+            vector_handler = VectorDBHandler(destinations=vector_db_destinations)
+            handlers.append(vector_handler)
+            sync_context.logger.info(
+                f"Created VectorDBHandler for {len(vector_db_destinations)} destination(s): "
+                f"{[d.__class__.__name__ for d in vector_db_destinations]}"
+            )
+
+        if not handlers:
+            sync_context.logger.warning(
+                "No destination handlers created - sync has no valid destinations"
+            )
+
+        return handlers
+
+    @classmethod
     async def _create_destination_instances(  # noqa: C901
         cls,
         db: AsyncSession,
@@ -714,7 +800,8 @@ class SyncFactory:
 
         return destinations
 
-    # NOTE: Transformers removed - chunking now happens in entity_pipeline.py
+    # NOTE: Transformers removed - chunking now happens in VectorDBHandler
+    # (for destinations requiring CHUNKS_AND_EMBEDDINGS processing)
 
     @classmethod
     async def _get_entity_definition_map(cls, db: AsyncSession) -> dict[type[BaseEntity], UUID]:

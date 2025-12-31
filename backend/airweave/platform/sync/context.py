@@ -1,6 +1,5 @@
 """Module for sync context."""
 
-from typing import Optional
 from uuid import UUID
 
 from airweave import schemas
@@ -11,7 +10,8 @@ from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.sources._base import BaseSource
 from airweave.platform.sync.cursor import SyncCursor
-from airweave.platform.sync.pubsub import SyncEntityStateTracker, SyncProgress
+from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
+from airweave.platform.sync.state_publisher import SyncStatePublisher
 
 
 class SyncContext:
@@ -23,6 +23,8 @@ class SyncContext:
     - sync - the main sync object
     - sync job - the sync job that is created for the sync
     - progress - the progress tracker, interfaces with PubSub
+    - entity_tracker - centralized entity state tracker
+    - state_publisher - publishes entity state to Redis pubsub
     - cursor - the cursor for the sync
     - collection - the collection that the sync is for
     - connection - the source connection that the sync is for
@@ -39,8 +41,8 @@ class SyncContext:
     destinations: list[BaseDestination]
     sync: schemas.Sync
     sync_job: schemas.SyncJob
-    progress: SyncProgress
-    entity_state_tracker: Optional[SyncEntityStateTracker]
+    entity_tracker: EntityTracker
+    state_publisher: SyncStatePublisher
     cursor: SyncCursor
     collection: schemas.Collection
     connection: schemas.Connection
@@ -64,8 +66,8 @@ class SyncContext:
         destinations: list[BaseDestination],
         sync: schemas.Sync,
         sync_job: schemas.SyncJob,
-        progress: SyncProgress,
-        entity_state_tracker: Optional[SyncEntityStateTracker],
+        entity_tracker: EntityTracker,
+        state_publisher: SyncStatePublisher,
         cursor: SyncCursor,
         collection: schemas.Collection,
         connection: schemas.Connection,
@@ -85,8 +87,8 @@ class SyncContext:
         self.destinations = destinations
         self.sync = sync
         self.sync_job = sync_job
-        self.progress = progress
-        self.entity_state_tracker = entity_state_tracker
+        self.entity_tracker = entity_tracker
+        self.state_publisher = state_publisher
         self.cursor = cursor
         self.collection = collection
         self.connection = connection
