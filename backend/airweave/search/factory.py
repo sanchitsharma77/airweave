@@ -317,6 +317,12 @@ class SearchFactory:
         # TODO: Make these destination-agnostic when filter DSL is abstracted
         needs_embedding_ops = has_vector_sources and requires_client_embedding
 
+        # Temporal relevance requires vector sources AND destination support
+        # Note: needs_embedding_ops is wrong here - we need vector sources, not client embedding
+        supports_temporal = (
+            getattr(destination, "_supports_temporal_relevance", True) if destination else False
+        )
+
         return {
             "query_expansion": (
                 QueryExpansion(providers=providers["expansion"]) if params["expand_query"] else None
@@ -339,11 +345,14 @@ class SearchFactory:
             ),
             "temporal_relevance": (
                 TemporalRelevance(
-                    weight=params["temporal_weight"], supporting_sources=temporal_supporting_sources
+                    weight=params["temporal_weight"],
+                    destination=destination,
+                    supporting_sources=temporal_supporting_sources,
                 )
                 if (
                     params["temporal_weight"] > 0
-                    and needs_embedding_ops
+                    and has_vector_sources
+                    and supports_temporal
                     # Skip only if explicitly empty list (no sources support it)
                     and temporal_supporting_sources != []
                 )

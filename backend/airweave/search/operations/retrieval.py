@@ -88,9 +88,14 @@ class Retrieval(SearchOperation):
         fetch_limit = self._calculate_fetch_limit(has_reranking, include_offset=True)
         ctx.logger.debug(f"[Retrieval] Fetch limit: {fetch_limit}")
 
+        # Build queries list - includes original query plus any expanded queries
+        # If query expansion ran, state may have expanded_queries; otherwise use original
+        expanded_queries = state.get("expanded_queries", [])
+        queries = [context.query] + expanded_queries if expanded_queries else [context.query]
+
         # Execute search via destination interface
         raw_results = await self.destination.search(
-            query=context.query,
+            queries=queries,
             airweave_collection_id=context.collection_id,
             limit=fetch_limit,
             offset=0,  # We handle pagination ourselves for deduplication

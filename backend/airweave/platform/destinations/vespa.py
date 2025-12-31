@@ -602,16 +602,22 @@ class VespaDestination(VectorDBDestination):
         retrieval_strategy: str = "hybrid",
         temporal_config: Optional[AirweaveTemporalConfig] = None,
     ) -> List[SearchResult]:
-        """Execute hybrid search against Vespa.
+        """Execute hybrid search against Vespa with multi-query support.
 
         Vespa handles embedding generation server-side, so dense_embeddings is ignored.
         YQL is built at runtime with proper filter injection into WHERE clause.
+
+        Multi-Query Support:
+            When query expansion provides multiple queries (primary + expanded), each
+            query gets its own nearestNeighbor operator combined with OR. This improves
+            recall by retrieving documents similar to any of the query variants.
 
         Note: temporal_config is accepted for interface compatibility but ignored.
         Vespa temporal relevance ranking is not yet implemented.
 
         Args:
-            queries: List of search query texts (primary + expanded queries)
+            queries: List of search query texts. First query is primary (used for
+                userInput/lexical). All queries are used for nearestNeighbor/semantic.
             airweave_collection_id: Airweave collection UUID for multi-tenant filtering
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
@@ -630,6 +636,13 @@ class VespaDestination(VectorDBDestination):
         # Use first query as primary (for logging and userInput)
         primary_query = queries[0] if queries else ""
 
+        # Log query expansion usage
+        if len(queries) > 1:
+            self.logger.info(
+                f"[VespaSearch] Using query expansion with {len(queries)} queries "
+                f"(primary + {len(queries) - 1} expanded)"
+            )
+
         self.logger.debug(
             f"[VespaSearch] Executing search: query='{primary_query[:50]}...', "
             f"num_queries={len(queries)}, limit={limit}, has_filter={filter is not None}"
@@ -638,21 +651,12 @@ class VespaDestination(VectorDBDestination):
         # Translate filter to YQL clause (if present)
         yql_filter = self.translate_filter(filter) if filter else None
 
-        # Build YQL with proper filter injection
-        yql = self._build_search_yql(primary_query, airweave_collection_id, yql_filter)
+        # Build YQL with proper filter injection and multi-query support
+        yql = self._build_search_yql(queries, airweave_collection_id, yql_filter)
 
-        # Build query parameters
-        escaped_query = self._escape_query_for_yql(primary_query)
-        query_params: Dict[str, Any] = {
-            "yql": yql,
-            "query": primary_query,  # For userInput(@query) in YQL
-            # Server-side embeddings for nearestNeighbor
-            "ranking.features.query(embedding)": f'embed(nomicmb, "{escaped_query}")',
-            "ranking.features.query(float_embedding)": f'embed(nomicmb, "{escaped_query}")',
-            "ranking.profile": "hybrid-rrf",
-            "hits": limit + offset,
-            "presentation.summary": "full",
-        }
+        # Build query parameters with embeddings for all queries
+        query_params = self._build_query_params(queries, primary_query, limit, offset)
+        query_params["yql"] = yql
 
         self.logger.debug(f"[VespaSearch] YQL: {yql}")
 
@@ -685,29 +689,55 @@ class VespaDestination(VectorDBDestination):
 
     def _build_search_yql(
         self,
-        query: str,
+        queries: List[str],
         airweave_collection_id: UUID,
         yql_filter: Optional[str] = None,
     ) -> str:
-        """Build YQL query with hybrid retrieval and proper filter injection.
+        """Build YQL query with hybrid retrieval and multi-query support.
 
         Combines lexical (userInput/weakAnd) and semantic (nearestNeighbor) retrieval
         with collection filtering and optional user filters.
 
+        Multi-Query Support (Query Expansion):
+            When multiple queries are provided (primary + expanded), creates a separate
+            nearestNeighbor operator for each query, combined with OR. This allows
+            expanded queries from query expansion to participate in retrieval.
+
+            Example YQL for 2 queries:
+                ({label:"q0", targetHits:400}nearestNeighbor(chunk_small_embeddings, q0) OR
+                 {label:"q1", targetHits:400}nearestNeighbor(chunk_small_embeddings, q1))
+
+            The rank profile's closeness(field, chunk_small_embeddings) automatically
+            returns the maximum closeness across all operators. Labels (q0, q1, etc.)
+            can be used with closeness(label, q0) for per-query similarity if needed.
+
         Args:
-            query: Search query text
+            queries: List of search query texts (primary + expanded)
             airweave_collection_id: Airweave collection UUID for multi-tenant filtering
             yql_filter: Optional translated filter clause (e.g., "source_name contains 'GitHub'")
 
         Returns:
             Complete YQL query string
         """
+        # Build nearestNeighbor operators for all queries
+        # Use labels (q0, q1, q2, ...) so closeness can be computed per query
+        nn_parts = []
+        for i in range(len(queries)):
+            # Use label annotation to distinguish closeness from different queries
+            nn_parts.append(
+                f'{{label:"q{i}", targetHits:{self.TARGET_HITS}}}'
+                f"nearestNeighbor(chunk_small_embeddings, q{i})"
+            )
+
+        # Combine all nearestNeighbor operators with OR
+        nn_clause = " OR ".join(nn_parts)
+
         # Base WHERE clause with collection filter and hybrid retrieval
-        # targetHits: 400 per method → ~800 candidates before deduplication
+        # - userInput uses the primary query (index 0)
+        # - nearestNeighbor uses all queries (combined with OR)
         where_parts = [
             f"collection_id contains '{airweave_collection_id}'",
-            f"({{targetHits:{self.TARGET_HITS}}}userInput(@query) OR "
-            f"{{targetHits:{self.TARGET_HITS}}}nearestNeighbor(chunk_small_embeddings, embedding))",
+            f"({{targetHits:{self.TARGET_HITS}}}userInput(@query) OR {nn_clause})",
         ]
 
         # Inject user filter if present
@@ -716,6 +746,46 @@ class VespaDestination(VectorDBDestination):
 
         yql = f"select * from base_entity where {' AND '.join(where_parts)}"
         return yql
+
+    def _build_query_params(
+        self,
+        queries: List[str],
+        primary_query: str,
+        limit: int,
+        offset: int,
+    ) -> Dict[str, Any]:
+        """Build Vespa query parameters with embeddings for all queries.
+
+        Creates embedding parameters for each query (q0, q1, q2, ...) to support
+        multiple nearestNeighbor operators in the YQL.
+
+        Args:
+            queries: List of search query texts
+            primary_query: The primary query (first in list)
+            limit: Maximum number of results
+            offset: Results to skip (pagination)
+
+        Returns:
+            Dict of Vespa query parameters
+        """
+        escaped_primary = self._escape_query_for_yql(primary_query)
+
+        query_params: Dict[str, Any] = {
+            "query": primary_query,  # For userInput(@query) in YQL
+            "ranking.profile": "hybrid-rrf",
+            "hits": limit + offset,
+            "presentation.summary": "full",
+            # Keep legacy embedding params for backward compatibility with rank profile
+            "ranking.features.query(embedding)": f'embed(nomicmb, "{escaped_primary}")',
+            "ranking.features.query(float_embedding)": f'embed(nomicmb, "{escaped_primary}")',
+        }
+
+        # Add embedding for each query (q0, q1, q2, ...)
+        for i, q in enumerate(queries):
+            escaped_q = self._escape_query_for_yql(q)
+            query_params[f"ranking.features.query(q{i})"] = f'embed(nomicmb, "{escaped_q}")'
+
+        return query_params
 
     def _escape_query_for_yql(self, query: str) -> str:
         """Escape a query string for safe inclusion in YQL.

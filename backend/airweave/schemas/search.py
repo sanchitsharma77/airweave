@@ -7,6 +7,11 @@ from typing import Any, Dict, Optional
 import tiktoken
 from pydantic import BaseModel, Field, field_validator
 
+# Type alias for the canonical Airweave filter format.
+# This follows the Qdrant filter structure (must/should/must_not) which is
+# translated to destination-specific formats by each destination's translate_filter().
+AirweaveFilter = Dict[str, Any]
+
 
 class RetrievalStrategy(str, Enum):
     """Retrieval strategies for search."""
