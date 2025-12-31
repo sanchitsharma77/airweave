@@ -15,14 +15,13 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import UUID
 
-from qdrant_client.http.models import Filter as QdrantFilter
-
 from airweave.core.config import settings
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.decorators import destination
 from airweave.platform.destinations._base import VectorDBDestination
 from airweave.platform.entities._base import (
+    AirweaveSystemMetadata,
     BaseEntity,
     CodeFileEntity,
     EmailEntity,
@@ -35,18 +34,28 @@ if TYPE_CHECKING:
     from vespa.application import Vespa
 
 
-# Flattened system metadata fields that are stored as top-level Vespa fields
-# These come from AirweaveSystemMetadata but are flattened for Vespa compatibility
-SYSTEM_METADATA_FIELDS = {
-    "airweave_system_metadata",  # Original nested field (excluded from entity_dict)
-    "collection_id",
-    "sync_id",
-    "sync_job_id",
-    "content_hash",
-    "original_entity_id",
-    "source_name",
-    "entity_type",
-}
+def _get_system_metadata_fields() -> set[str]:
+    """Get system metadata fields from AirweaveSystemMetadata class.
+
+    Derives the field set dynamically from AirweaveSystemMetadata.model_fields,
+    ensuring this stays in sync with the entity definitions (single source of truth).
+
+    Returns:
+        Set of field names that are system metadata (not payload)
+    """
+    # Get fields from the actual AirweaveSystemMetadata class
+    fields = set(AirweaveSystemMetadata.model_fields.keys())
+
+    # Add the parent field name itself (it's excluded from entity_dict)
+    fields.add("airweave_system_metadata")
+
+    # Add fields that are flattened for Vespa but not in AirweaveSystemMetadata
+    # (these are derived/transformed fields)
+    fields.add("collection_id")  # From sync context, not entity metadata
+    fields.add("original_entity_id")  # Maps to entity_id for chunk tracking
+    fields.add("content_hash")  # Maps to AirweaveSystemMetadata.hash
+
+    return fields
 
 
 def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
@@ -64,8 +73,8 @@ def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
     # Start with BaseEntity fields
     fields = set(BaseEntity.model_fields.keys())
 
-    # Add system metadata fields (flattened)
-    fields |= SYSTEM_METADATA_FIELDS
+    # Add system metadata fields (derived dynamically)
+    fields |= _get_system_metadata_fields()
 
     # Add type-specific fields based on entity class hierarchy
     if isinstance(entity, WebEntity):
@@ -82,7 +91,13 @@ def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
     return fields
 
 
-@destination("Vespa", "vespa", supports_vector=True, requires_client_embedding=False)
+@destination(
+    "Vespa",
+    "vespa",
+    supports_vector=True,
+    requires_client_embedding=False,
+    supports_temporal_relevance=False,
+)
 class VespaDestination(VectorDBDestination):
     """Vespa destination - Vespa handles chunking/embedding internally."""
 
@@ -349,8 +364,38 @@ class VespaDestination(VectorDBDestination):
                 f"First error ({first_doc_id}): {error_msg}"
             )
 
-    # All Vespa schemas that we need to query/delete from
-    VESPA_SCHEMAS = ["base_entity", "file_entity", "code_file_entity", "email_entity", "web_entity"]
+    # Vespa schema names derived from entity class hierarchy
+    # These match the _get_vespa_schema() method mapping
+    @staticmethod
+    def _get_all_vespa_schemas() -> list[str]:
+        """Get all Vespa schema names.
+
+        Derives from entity class names to stay in sync with _get_vespa_schema().
+        Converting CamelCase to snake_case for Vespa schema names.
+
+        Returns:
+            List of all Vespa schema names
+        """
+        entity_classes = [BaseEntity, FileEntity, CodeFileEntity, EmailEntity, WebEntity]
+        return [VespaDestination._class_to_schema_name(cls) for cls in entity_classes]
+
+    @staticmethod
+    def _class_to_schema_name(cls: type) -> str:
+        """Convert entity class name to Vespa schema name.
+
+        Args:
+            cls: Entity class
+
+        Returns:
+            Snake_case schema name (e.g., CodeFileEntity -> code_file_entity)
+        """
+        import re
+
+        # Convert CamelCase to snake_case
+        name = cls.__name__
+        # Insert underscore before uppercase letters and lowercase
+        s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
     async def delete(self, db_entity_id: UUID) -> None:
         """Delete a single entity from Vespa by db_entity_id.
@@ -364,7 +409,7 @@ class VespaDestination(VectorDBDestination):
         # Query for documents with this db_entity_id in the collection
         # Note: we don't have db_entity_id as a field - using original_entity_id instead
         # Search across all schemas
-        for schema in self.VESPA_SCHEMAS:
+        for schema in self._get_all_vespa_schemas():
             yql = (
                 f"select documentid from {schema} where "
                 f"original_entity_id contains '{db_entity_id}' and "
@@ -382,7 +427,7 @@ class VespaDestination(VectorDBDestination):
             raise RuntimeError("Vespa client not initialized")
 
         # Search across all schemas
-        for schema in self.VESPA_SCHEMAS:
+        for schema in self._get_all_vespa_schemas():
             yql = (
                 f"select documentid from {schema} where "
                 f"sync_id contains '{sync_id}' and "
@@ -402,7 +447,7 @@ class VespaDestination(VectorDBDestination):
             raise RuntimeError("Vespa client not initialized")
 
         # Search across all schemas
-        for schema in self.VESPA_SCHEMAS:
+        for schema in self._get_all_vespa_schemas():
             yql = f"select documentid from {schema} where collection_id contains '{collection_id}'"
             await self._delete_by_query(yql, schema)
 
@@ -418,7 +463,7 @@ class VespaDestination(VectorDBDestination):
 
         # Delete each entity from all schemas
         for entity_id in entity_ids:
-            for schema in self.VESPA_SCHEMAS:
+            for schema in self._get_all_vespa_schemas():
                 yql = (
                     f"select documentid from {schema} where "
                     f"entity_id contains '{entity_id}' and "
@@ -438,7 +483,7 @@ class VespaDestination(VectorDBDestination):
             raise RuntimeError("Vespa client not initialized")
 
         # Search across all schemas
-        for schema in self.VESPA_SCHEMAS:
+        for schema in self._get_all_vespa_schemas():
             yql = (
                 f"select documentid from {schema} where "
                 f"original_entity_id contains '{parent_id}' and "
@@ -539,42 +584,42 @@ class VespaDestination(VectorDBDestination):
         except Exception as e:
             self.logger.error(f"Error during delete operation: {e}")
 
+    # Production search settings (100k+ entities, LLM input)
+    # targetHits: 400 per method → ~800 candidates before deduplication
+    # rerank-count: 200 (second phase), 100 (global phase)
+    # Final output: up to 100 results
+    TARGET_HITS = 400  # Candidate pool per retrieval method
+
     async def search(
         self,
-        query: str,
-        collection_id: UUID,
+        queries: List[str],
+        airweave_collection_id: UUID,
         limit: int,
         offset: int,
-        filter: Optional[QdrantFilter] = None,
-        embeddings: Optional[List[List[float]]] = None,
+        filter: Optional[Dict[str, Any]] = None,
+        dense_embeddings: Optional[List[List[float]]] = None,
         sparse_embeddings: Optional[List[Any]] = None,
-        search_method: str = "hybrid",
-        expanded_queries: Optional[List[str]] = None,
+        retrieval_strategy: str = "hybrid",
         temporal_config: Optional[AirweaveTemporalConfig] = None,
     ) -> List[SearchResult]:
-        """Execute hybrid search against Vespa with native multi-query support.
+        """Execute hybrid search against Vespa.
 
-        Vespa handles embedding generation server-side, so embeddings parameter is ignored.
-        Filter translation from Qdrant format to YQL is handled via translate_filter().
+        Vespa handles embedding generation server-side, so dense_embeddings is ignored.
+        YQL is built at runtime with proper filter injection into WHERE clause.
 
-        When expanded_queries is provided, Vespa executes all queries in parallel within
-        a single HTTP request using multiple nearestNeighbor operators combined with OR.
-        This is Vespa's native support for query expansion use cases.
-
-        When temporal_config is provided, uses the hybrid-temporal ranking profile with
-        freshness-based scoring that boosts recent documents.
+        Note: temporal_config is accepted for interface compatibility but ignored.
+        Vespa temporal relevance ranking is not yet implemented.
 
         Args:
-            query: The primary search query text
-            collection_id: Collection UUID for multi-tenant filtering
+            queries: List of search query texts (primary + expanded queries)
+            airweave_collection_id: Airweave collection UUID for multi-tenant filtering
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
-            filter: Optional Qdrant-format filter (translated to YQL)
-            embeddings: Ignored - Vespa embeds server-side
+            filter: Optional filter dict (translated to YQL WHERE clause)
+            dense_embeddings: Ignored - Vespa embeds server-side
             sparse_embeddings: Ignored - Vespa handles BM25 server-side
-            search_method: Search strategy (Vespa uses hybrid query profile)
-            expanded_queries: Optional list of expanded query variants for multi-query search
-            temporal_config: Optional temporal relevance configuration
+            retrieval_strategy: Search strategy (currently always hybrid)
+            temporal_config: Ignored - temporal relevance not yet supported for Vespa
 
         Returns:
             List of SearchResult objects
@@ -582,56 +627,38 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized. Call create() first.")
 
-        # Collect all queries (primary + expanded)
-        all_queries = [query] + (expanded_queries or [])
-
-        # Determine if we should use temporal ranking
-        use_temporal = temporal_config is not None and temporal_config.weight > 0
+        # Use first query as primary (for logging and userInput)
+        primary_query = queries[0] if queries else ""
 
         self.logger.debug(
-            f"[VespaSearch] Executing search: query='{query[:50]}...', "
-            f"expanded_queries={len(expanded_queries or [])}, limit={limit}, "
-            f"temporal={use_temporal}"
+            f"[VespaSearch] Executing search: query='{primary_query[:50]}...', "
+            f"num_queries={len(queries)}, limit={limit}, has_filter={filter is not None}"
         )
 
+        # Translate filter to YQL clause (if present)
+        yql_filter = self.translate_filter(filter) if filter else None
+
+        # Build YQL with proper filter injection
+        yql = self._build_search_yql(primary_query, airweave_collection_id, yql_filter)
+
         # Build query parameters
-        if len(all_queries) == 1:
-            # Single query - use standard or temporal query profile
-            query_profile = "hybrid-temporal" if use_temporal else "hybrid"
-            query_params = {
-                "query": query,
-                "queryProfile": query_profile,
-                "collection_id": str(collection_id),
-                "hits": limit + offset,
-                "presentation.summary": "default",
-            }
-        else:
-            # Multiple queries - use native multi-query support
-            # Each query gets its own nearestNeighbor operator with server-side embedding
-            query_params = self._build_multi_query_params(
-                all_queries, collection_id, limit + offset
-            )
-            # Set temporal ranking profile if needed
-            if use_temporal:
-                query_params["ranking"] = "hybrid-temporal"
+        escaped_query = self._escape_query_for_yql(primary_query)
+        query_params: Dict[str, Any] = {
+            "yql": yql,
+            "query": primary_query,  # For userInput(@query) in YQL
+            # Server-side embeddings for nearestNeighbor
+            "ranking.features.query(embedding)": f'embed(nomicmb, "{escaped_query}")',
+            "ranking.features.query(float_embedding)": f'embed(nomicmb, "{escaped_query}")',
+            "ranking.profile": "hybrid-rrf",
+            "hits": limit + offset,
+            "presentation.summary": "full",
+        }
 
-        # Apply temporal configuration parameters
-        if use_temporal:
-            temporal_params = self.translate_temporal(temporal_config)
-            if temporal_params:
-                query_params.update(temporal_params)
-
-        # Translate and apply filter if present
-        if filter:
-            yql_filter = self.translate_filter(filter)
-            if yql_filter:
-                query_params["filter"] = yql_filter
-
-        self.logger.debug(f"[VespaSearch] Query params: {query_params}")
+        self.logger.debug(f"[VespaSearch] YQL: {yql}")
 
         # Execute query in thread pool (pyvespa is synchronous)
         try:
-            response = await asyncio.to_thread(self.app.query, query_params)
+            response = await asyncio.to_thread(self.app.query, body=query_params)
         except Exception as e:
             self.logger.error(f"[VespaSearch] Vespa query failed: {e}")
             raise RuntimeError(f"Vespa search failed: {e}") from e
@@ -656,51 +683,39 @@ class VespaDestination(VectorDBDestination):
 
         return final_results
 
-    def _build_multi_query_params(
+    def _build_search_yql(
         self,
-        queries: List[str],
-        collection_id: UUID,
-        hits: int,
-    ) -> Dict[str, Any]:
-        """Build query parameters for Vespa native multi-query search.
+        query: str,
+        airweave_collection_id: UUID,
+        yql_filter: Optional[str] = None,
+    ) -> str:
+        """Build YQL query with hybrid retrieval and proper filter injection.
 
-        Uses multiple nearestNeighbor operators combined with OR to execute
-        all query variants in a single HTTP request with parallel server-side
-        embedding and retrieval.
+        Combines lexical (userInput/weakAnd) and semantic (nearestNeighbor) retrieval
+        with collection filtering and optional user filters.
 
         Args:
-            queries: List of query strings (primary + expanded)
-            collection_id: Collection UUID for filtering
-            hits: Number of hits to retrieve
+            query: Search query text
+            airweave_collection_id: Airweave collection UUID for multi-tenant filtering
+            yql_filter: Optional translated filter clause (e.g., "source_name contains 'GitHub'")
 
         Returns:
-            Query parameters dict for Vespa
+            Complete YQL query string
         """
-        # Build YQL with multiple nearestNeighbor operators
-        # Each references a different query tensor (q0, q1, q2, etc.)
-        nn_clauses = []
-        query_params: Dict[str, Any] = {
-            "ranking": "hybrid",
-            "hits": hits,
-            "presentation.summary": "default",
-        }
+        # Base WHERE clause with collection filter and hybrid retrieval
+        # targetHits: 400 per method → ~800 candidates before deduplication
+        where_parts = [
+            f"collection_id contains '{airweave_collection_id}'",
+            f"({{targetHits:{self.TARGET_HITS}}}userInput(@query) OR "
+            f"{{targetHits:{self.TARGET_HITS}}}nearestNeighbor(chunk_small_embeddings, embedding))",
+        ]
 
-        for i, q in enumerate(queries):
-            # Add nearestNeighbor clause for this query
-            nn_clauses.append(f"({{targetHits:{hits * 2}}}nearestNeighbor(embedding, q{i}))")
-            # Server-side embedding using Vespa's embed function
-            escaped_query = self._escape_query_for_yql(q)
-            query_params[f"input.query(q{i})"] = f'embed(e5, "{escaped_query}")'
+        # Inject user filter if present
+        if yql_filter:
+            where_parts.append(f"({yql_filter})")
 
-        # Build full YQL with OR-combined nearestNeighbor clauses + collection filter
-        yql = (
-            f"select * from base_entity where "
-            f"({' OR '.join(nn_clauses)}) AND "
-            f"collection_id contains '{collection_id}'"
-        )
-        query_params["yql"] = yql
-
-        return query_params
+        yql = f"select * from base_entity where {' AND '.join(where_parts)}"
+        return yql
 
     def _escape_query_for_yql(self, query: str) -> str:
         """Escape a query string for safe inclusion in YQL.
@@ -714,10 +729,10 @@ class VespaDestination(VectorDBDestination):
         # Escape backslashes first, then quotes
         return query.replace("\\", "\\\\").replace('"', '\\"')
 
-    def translate_filter(self, filter: Optional[QdrantFilter]) -> Optional[str]:
-        """Translate Qdrant filter to Vespa YQL filter string.
+    def translate_filter(self, filter: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Translate Airweave filter to Vespa YQL filter string.
 
-        Converts Qdrant filter format to Vespa YQL WHERE clause components:
+        Converts Airweave canonical filter format to Vespa YQL WHERE clause components:
         - must conditions -> AND
         - should conditions -> OR
         - must_not conditions -> NOT (AND)
@@ -725,7 +740,7 @@ class VespaDestination(VectorDBDestination):
         - FieldCondition with range -> comparison operators
 
         Args:
-            filter: Qdrant-format filter object
+            filter: Airweave canonical filter dict
 
         Returns:
             YQL filter string or None
@@ -733,7 +748,7 @@ class VespaDestination(VectorDBDestination):
         if filter is None:
             return None
 
-        # Convert Pydantic model to dict if needed
+        # Filter should already be a dict, but handle Pydantic models for safety
         if hasattr(filter, "model_dump"):
             filter_dict = filter.model_dump(exclude_none=True)
         elif isinstance(filter, dict):
@@ -790,80 +805,17 @@ class VespaDestination(VectorDBDestination):
     ) -> Optional[Dict[str, Any]]:
         """Translate Airweave temporal config to Vespa ranking parameters.
 
-        Vespa uses the freshness(field_name) ranking function for temporal relevance.
-        This returns query parameters that can be merged into the Vespa query.
-
-        Key Vespa concepts:
-        - freshness(field): Linear decay from 1 to 0 based on age vs maxAge
-        - freshness(field).logscale: Logarithmic decay using halfResponse
-        - maxAge: Maximum age in seconds (default ~90 days = 7,776,000s)
-        - halfResponse: Age where logscale returns 0.5 (default 7 days = 604,800s)
+        Note: Temporal relevance ranking is not yet implemented for Vespa.
+        This method is kept for interface compatibility and future implementation.
 
         Args:
             config: Airweave temporal relevance configuration
 
         Returns:
-            Dict with Vespa ranking parameters, or None if no config
+            None - temporal relevance not yet supported for Vespa
         """
-        if config is None:
-            return None
-
-        vespa_params: Dict[str, Any] = {}
-
-        # Map reference_field to Vespa freshness field
-        # Vespa uses freshness(field_name) in ranking expressions
-        field_name = config.reference_field
-
-        # Convert decay_scale string (e.g., "7d", "30d") to maxAge in seconds
-        if config.decay_scale:
-            max_age_seconds = self._parse_decay_scale(config.decay_scale)
-            if max_age_seconds:
-                # Set maxAge via ranking properties
-                vespa_params[f"ranking.properties.freshness({field_name}).maxAge"] = (
-                    str(max_age_seconds)
-                )
-
-        # The weight affects how freshness combines with other signals
-        # This is typically handled in the ranking profile expression
-        # We pass it as a query feature for potential use in ranking
-        vespa_params["ranking.features.query(temporal_weight)"] = str(config.weight)
-
-        self.logger.debug(
-            f"[VespaSearch] Translated temporal config: field={field_name}, "
-            f"weight={config.weight}, decay_scale={config.decay_scale}"
-        )
-
-        return vespa_params if vespa_params else None
-
-    def _parse_decay_scale(self, decay_scale: str) -> Optional[int]:
-        """Parse decay scale string to seconds.
-
-        Args:
-            decay_scale: Time scale like "7d", "30d", "1h", "24h"
-
-        Returns:
-            Number of seconds, or None if unparseable
-        """
-        import re
-
-        match = re.match(r"^(\d+)([hdwm])$", decay_scale.lower())
-        if not match:
-            self.logger.warning(
-                f"[VespaSearch] Could not parse decay_scale: {decay_scale}"
-            )
-            return None
-
-        value = int(match.group(1))
-        unit = match.group(2)
-
-        multipliers = {
-            "h": 3600,        # hours
-            "d": 86400,       # days
-            "w": 604800,      # weeks
-            "m": 2592000,     # months (30 days)
-        }
-
-        return value * multipliers.get(unit, 86400)
+        # Temporal relevance not yet supported for Vespa
+        return None
 
     def _translate_condition(self, condition: Dict[str, Any]) -> str:
         """Translate a single Qdrant filter condition to YQL.

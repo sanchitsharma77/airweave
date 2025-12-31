@@ -61,10 +61,10 @@ class Retrieval(SearchOperation):
         dense_embeddings = state.get("dense_embeddings")
         sparse_embeddings = state.get("sparse_embeddings")
         filter_obj = state.get("filter")
-        decay_config = state.get("decay_config")
+        temporal_config = state.get("temporal_config")
 
-        # Determine search method from strategy
-        search_method = self._get_search_method()
+        # Determine search strategy from strategy enum
+        retrieval_strategy = self._get_search_method()
 
         # Check if this is a bulk search (multiple query expansions)
         is_bulk = dense_embeddings and len(dense_embeddings) > 1
@@ -74,10 +74,10 @@ class Retrieval(SearchOperation):
         await context.emitter.emit(
             "vector_search_start",
             {
-                "method": search_method,
+                "method": retrieval_strategy,
                 "embeddings": num_embeddings,
                 "has_filter": filter_obj is not None,
-                "decay_weight": decay_config.weight if decay_config else None,
+                "temporal_weight": temporal_config.weight if temporal_config else None,
             },
             op_name=self.__class__.__name__,
         )
@@ -91,14 +91,14 @@ class Retrieval(SearchOperation):
         # Execute search via destination interface
         raw_results = await self.destination.search(
             query=context.query,
-            collection_id=context.collection_id,
+            airweave_collection_id=context.collection_id,
             limit=fetch_limit,
             offset=0,  # We handle pagination ourselves for deduplication
             filter=filter_obj,
-            embeddings=dense_embeddings,
+            dense_embeddings=dense_embeddings,
             sparse_embeddings=sparse_embeddings,
-            search_method=search_method,
-            decay_config=decay_config,
+            retrieval_strategy=retrieval_strategy,
+            temporal_config=temporal_config,
         )
 
         # Convert SearchResult objects to dicts for downstream compatibility
@@ -127,10 +127,10 @@ class Retrieval(SearchOperation):
             state,
             output_count=len(results_as_dicts),
             final_count=final_count,
-            search_method=search_method,
+            search_method=retrieval_strategy,
             has_filter=filter_obj is not None,
-            has_temporal_decay=decay_config is not None,
-            decay_weight=decay_config.weight if decay_config else 0.0,
+            has_temporal_decay=temporal_config is not None,
+            decay_weight=temporal_config.weight if temporal_config else 0.0,
             prefetch_multiplier=self.RERANK_PREFETCH_MULTIPLIER if has_reranking else 1.0,
             actual_fetch_limit=fetch_limit,
             embeddings_used=num_embeddings,

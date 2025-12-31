@@ -86,11 +86,13 @@ class SearchFactory:
         # Get the destination for this collection (destination-agnostic search)
         destination = await self._get_destination_for_collection(db, collection, ctx)
         requires_embedding = getattr(destination, "_requires_client_embedding", True)
+        supports_temporal = getattr(destination, "_supports_temporal_relevance", True)
 
         self._log_source_modes(ctx, federated_sources, has_vector_sources)
         ctx.logger.info(
             f"[SearchFactory] Destination: {destination.__class__.__name__}, "
-            f"requires_client_embedding: {requires_embedding}"
+            f"requires_client_embedding: {requires_embedding}, "
+            f"supports_temporal_relevance: {supports_temporal}"
         )
 
         if not has_federated_sources and not has_vector_sources:
@@ -121,8 +123,9 @@ class SearchFactory:
         await self._emit_skip_notices_if_needed(emitter, has_vector_sources, params, search_request)
 
         # Get sources that support temporal relevance (for filtering when enabled)
+        # Only check if destination supports temporal relevance
         temporal_supporting_sources = None
-        if params["temporal_weight"] > 0 and has_vector_sources:
+        if params["temporal_weight"] > 0 and has_vector_sources and supports_temporal:
             try:
                 temporal_supporting_sources = await self._get_temporal_supporting_sources(
                     db, collection, ctx, emitter
@@ -130,6 +133,13 @@ class SearchFactory:
             except Exception as e:
                 # If we can't determine source support, raise the error
                 raise ValueError(f"Failed to check temporal relevance support: {e}") from e
+        elif params["temporal_weight"] > 0 and not supports_temporal:
+            # Destination doesn't support temporal relevance, skip the operation
+            ctx.logger.info(
+                f"[SearchFactory] Skipping temporal relevance: destination "
+                f"{destination.__class__.__name__} does not support it"
+            )
+            temporal_supporting_sources = []  # Empty list signals "skip operation"
 
         # Build operations with destination (destination-agnostic)
         operations = self._build_operations(

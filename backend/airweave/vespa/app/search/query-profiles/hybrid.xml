@@ -9,8 +9,8 @@
     <!-- 
     Hybrid retrieval combining lexical and semantic search.
     
-    From Vespa docs (RAG Blueprint & Hybrid Text Search Tutorial):
-    - targetHits: 100 is recommended default for both operators
+    Production settings (100k+ entities, LLM input):
+    - targetHits: 400 per method → ~800 candidates before deduplication
     - weakAnd (via userInput) retrieves by lexical matching
     - nearestNeighbor retrieves by semantic similarity
     - OR combines them for maximum recall
@@ -18,27 +18,26 @@
     Collection filtering:
     - collection_id filters by Airweave collection
     - This is CRITICAL for multi-tenant isolation
+    
+    NOTE: This query profile is documentation only!
+    The VespaDestination.search() builds YQL at runtime to support filter injection.
     -->
     <field name="yql">
         select *
         from %{schema}
         where collection_id contains @collection_id and
-              (({targetHits:30}userInput(@query)) or
-               ({label:"chunks_label", targetHits:30}nearestNeighbor(chunk_small_embeddings, embedding)))
+              (({targetHits:400}userInput(@query)) or
+               ({label:"chunks_label", targetHits:400}nearestNeighbor(chunk_small_embeddings, embedding)))
     </field>
 
-    <!-- 
-    Use RRF rank profile - recommended when you don't have training data.
-    RRF normalizes by rank position, making scores comparable without learned weights.
-    Alternative: hybrid-linear for simpler setups with manual normalization.
-    -->
+    <!-- Use RRF rank profile - recommended when you don't have training data -->
     <field name="ranking.profile">hybrid-rrf</field>
 
-    <!-- Return only the top-3 most similar chunks per document -->
-    <field name="presentation.summary">top_3_chunks</field>
+    <!-- Return full document summary for reranking and answer generation -->
+    <field name="presentation.summary">full</field>
 
-    <!-- Default number of hits returned to client -->
-    <field name="hits">5</field>
+    <!-- Default number of hits -->
+    <field name="hits">100</field>
 
     <!-- Enable timing info for debugging -->
     <field name="presentation.timing">true</field>

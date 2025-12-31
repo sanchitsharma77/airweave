@@ -8,31 +8,16 @@ ranking that respects the dataset's time distribution.
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional
 
-from pydantic import BaseModel
 from qdrant_client.http import models as rest
 
 from airweave.api.context import ApiContext
+from airweave.schemas.search import AirweaveTemporalConfig
 from airweave.search.context import SearchContext
 
 from ._base import SearchOperation
 
 if TYPE_CHECKING:
     from airweave.platform.destinations.qdrant import QdrantDestination
-
-
-class DecayConfig(BaseModel):
-    """Configuration for time-based decay in Qdrant queries."""
-
-    decay_type: str  # "linear", "exponential", "gaussian"
-    datetime_field: str
-    target_datetime: datetime
-    scale_seconds: float
-    midpoint: float
-    weight: float
-
-    def get_scale_seconds(self) -> float:
-        """Get scale in seconds for decay calculation."""
-        return self.scale_seconds
 
 
 class TemporalRelevance(SearchOperation):
@@ -211,19 +196,17 @@ class TemporalRelevance(SearchOperation):
             op_name=self.__class__.__name__,
         )
 
-        # Build decay config
-        decay_config = DecayConfig(
-            decay_type=self.DECAY_TYPE,
-            datetime_field=self.DATETIME_FIELD,
+        # Build destination-agnostic temporal config
+        temporal_config = AirweaveTemporalConfig(
+            weight=self.weight,
+            reference_field=self.DATETIME_FIELD,
             target_datetime=newest,  # Use newest item time, not current time
             scale_seconds=scale_seconds,
-            midpoint=self.MIDPOINT,
-            weight=self.weight,
         )
-        ctx.logger.debug(f"[TemporalRelevance] Decay config: {decay_config}")
+        ctx.logger.debug(f"[TemporalRelevance] Temporal config: {temporal_config}")
 
-        # Write to state - includes both decay config AND updated filter with timestamp requirement
-        state["decay_config"] = decay_config
+        # Write to state - includes both temporal config AND updated filter with timestamp requirement
+        state["temporal_config"] = temporal_config
 
         # CRITICAL: Update the filter in state to exclude documents without timestamps
         # This ensures Retrieval operation only searches documents compatible with decay formula

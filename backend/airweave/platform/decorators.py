@@ -113,6 +113,7 @@ def destination(
     supports_vector: bool = False,
     max_batch_size: int = 1000,
     requires_client_embedding: bool = True,
+    supports_temporal_relevance: bool = True,
 ) -> Callable[[type], type]:
     """Decorator for destination connectors with separated auth and config.
 
@@ -127,6 +128,8 @@ def destination(
         max_batch_size: Maximum batch size for write operations
         requires_client_embedding: Whether the destination requires client-side embedding
             generation (True for Qdrant, False for Vespa which embeds server-side)
+        supports_temporal_relevance: Whether the destination supports temporal relevance
+            ranking (True for Qdrant with decay formulas, False for Vespa currently)
     """
 
     def decorator(cls: type) -> type:
@@ -142,6 +145,7 @@ def destination(
         cls._supports_vector = supports_vector
         cls._max_batch_size = max_batch_size
         cls._requires_client_embedding = requires_client_embedding
+        cls._supports_temporal_relevance = supports_temporal_relevance
 
         return cls
 

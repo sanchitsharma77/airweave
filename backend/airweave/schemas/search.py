@@ -1,5 +1,6 @@
 """Search schemas for Airweave's search API."""
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -34,11 +35,11 @@ class AirweaveTemporalConfig(BaseModel):
     """Destination-agnostic temporal relevance configuration.
 
     This configuration is translated to destination-specific formats:
-    - Qdrant: DecayConfig (passthrough - this schema matches DecayConfig intentionally)
+    - Qdrant: DecayConfig with linear decay
     - Vespa: Freshness ranking function (future implementation)
 
-    The structure intentionally mirrors Qdrant's DecayConfig so that the Qdrant
-    destination can use a simple passthrough translation.
+    The TemporalRelevance operation dynamically computes these values by analyzing
+    the actual timestamp distribution in the collection.
     """
 
     weight: float = Field(
@@ -47,13 +48,32 @@ class AirweaveTemporalConfig(BaseModel):
         le=1.0,
         description="Weight of temporal relevance in final ranking (0-1)",
     )
+    reference_field: str = Field(
+        default="updated_at",
+        description="Timestamp field to use for temporal relevance calculation",
+    )
+    target_datetime: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Reference point for decay calculation. When set dynamically by "
+            "TemporalRelevance operation, this is the newest timestamp in the collection. "
+            "If None, destinations should use datetime.now()."
+        ),
+    )
+    scale_seconds: Optional[float] = Field(
+        default=None,
+        description=(
+            "Time scale for decay in seconds. When set dynamically by TemporalRelevance "
+            "operation, this is the full time span from oldest to newest document. "
+            "If None, destinations should use a sensible default (e.g., 7 days)."
+        ),
+    )
     decay_scale: Optional[str] = Field(
         default=None,
-        description="Time scale for decay (e.g., '7d' for 7 days, '30d' for 30 days)",
-    )
-    reference_field: str = Field(
-        default="airweave_created_at",
-        description="Timestamp field to use for temporal relevance calculation",
+        description=(
+            "DEPRECATED: Use scale_seconds instead. "
+            "Time scale as string (e.g., '7d' for 7 days). Only used if scale_seconds is None."
+        ),
     )
 
 

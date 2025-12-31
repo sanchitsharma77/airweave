@@ -1,10 +1,8 @@
 """Base destination classes."""
 
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
-
-from qdrant_client.http.models import Filter as QdrantFilter
 
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
@@ -104,14 +102,14 @@ class BaseDestination(ABC):
     @abstractmethod
     async def search(
         self,
-        query: str,
-        collection_id: UUID,
+        queries: List[str],
+        airweave_collection_id: UUID,
         limit: int,
         offset: int,
-        filter: Optional[QdrantFilter] = None,
-        embeddings: Optional[List[List[float]]] = None,
+        filter: Optional[Dict[str, Any]] = None,
+        dense_embeddings: Optional[List[List[float]]] = None,
         sparse_embeddings: Optional[List[Any]] = None,
-        search_method: str = "hybrid",
+        retrieval_strategy: str = "hybrid",
         temporal_config: Optional[AirweaveTemporalConfig] = None,
     ) -> List[SearchResult]:
         """Execute search against the destination.
@@ -120,29 +118,29 @@ class BaseDestination(ABC):
         Destinations handle embedding generation (if needed) and filter translation internally.
 
         Args:
-            query: The search query text
-            collection_id: Collection UUID for multi-tenant filtering
+            queries: List of search query texts (supports query expansion)
+            airweave_collection_id: Airweave collection UUID for multi-tenant filtering
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
-            filter: Optional Qdrant-format filter (destination translates if needed)
-            embeddings: Pre-computed dense embeddings (if available from client-side)
+            filter: Optional filter dict (Airweave canonical format, destination translates)
+            dense_embeddings: Pre-computed dense embeddings (if client-side embedding)
             sparse_embeddings: Pre-computed sparse embeddings for hybrid search
-            search_method: Search strategy - "hybrid", "neural", or "keyword"
-            temporal_config: Optional temporal relevance configuration
+            retrieval_strategy: Search strategy - "hybrid", "neural", or "keyword"
+            temporal_config: Optional temporal relevance config (destination translates)
 
         Returns:
             List of SearchResult objects in the standard format
         """
         pass
 
-    def translate_filter(self, filter: Optional[QdrantFilter]) -> Any:
-        """Translate Qdrant filter to destination-native format.
+    def translate_filter(self, filter: Optional[Dict[str, Any]]) -> Any:
+        """Translate Airweave filter to destination-native format.
 
-        Default implementation is passthrough (for Qdrant-compatible destinations).
+        Default implementation is passthrough.
         Override this method for destinations that use different filter formats.
 
         Args:
-            filter: Qdrant-format filter object
+            filter: Airweave canonical filter dict
 
         Returns:
             Destination-native filter format

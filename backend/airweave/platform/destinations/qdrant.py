@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any, List, Literal, Optional
+from datetime import datetime
+from typing import Any, List, Literal, Optional
 from uuid import UUID
+
+from pydantic import BaseModel
 
 # Prefer SparseTextEmbedding (newer fastembed), fallback to SparseEmbedding (older)
 try:
@@ -31,7 +34,6 @@ except Exception:  # pragma: no cover
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as rest
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
-from qdrant_client.http.models import Filter as QdrantFilter
 from qdrant_client.local.local_collection import DEFAULT_VECTOR_NAME
 
 from airweave.core.config import settings
@@ -47,8 +49,25 @@ from airweave.platform.destinations.collection_strategy import (
 from airweave.platform.entities._base import BaseEntity
 from airweave.schemas.search import AirweaveTemporalConfig, SearchResult
 
-if TYPE_CHECKING:
-    from airweave.search.operations.temporal_relevance import DecayConfig
+
+class DecayConfig(BaseModel):
+    """Qdrant-specific configuration for time-based decay in queries.
+
+    This is the native format that Qdrant's query API expects for temporal
+    relevance scoring. Created by translating AirweaveTemporalConfig.
+    """
+
+    decay_type: str  # "linear", "exponential", "gaussian"
+    datetime_field: str
+    target_datetime: datetime
+    scale_seconds: float
+    midpoint: float
+    weight: float
+
+    def get_scale_seconds(self) -> float:
+        """Get scale in seconds for decay calculation."""
+        return self.scale_seconds
+
 
 KEYWORD_VECTOR_NAME = "bm25"
 
@@ -59,6 +78,7 @@ KEYWORD_VECTOR_NAME = "bm25"
     auth_config_class=QdrantAuthConfig,
     supports_vector=True,
     requires_client_embedding=True,
+    supports_temporal_relevance=True,
 )
 class QdrantDestination(VectorDBDestination):
     """Qdrant destination with multi-tenant support and legacy compatibility."""
@@ -1254,33 +1274,31 @@ class QdrantDestination(VectorDBDestination):
     # ----------------------------------------------------------------------------------
     async def search(
         self,
-        query: str,
-        collection_id: UUID,
+        queries: List[str],
+        airweave_collection_id: UUID,
         limit: int,
         offset: int,
-        filter: Optional[QdrantFilter] = None,
-        embeddings: Optional[List[List[float]]] = None,
+        filter: Optional[dict] = None,
+        dense_embeddings: Optional[List[List[float]]] = None,
         sparse_embeddings: Optional[List[Any]] = None,
-        search_method: str = "hybrid",
+        retrieval_strategy: str = "hybrid",
         temporal_config: Optional[AirweaveTemporalConfig] = None,
-        decay_config: Optional["DecayConfig"] = None,
     ) -> List[SearchResult]:
         """Execute search against Qdrant using pre-computed embeddings.
 
         Qdrant requires client-side embeddings (unlike Vespa which embeds server-side).
-        The embeddings must be provided via the embeddings parameter.
+        The embeddings must be provided via the dense_embeddings parameter.
 
         Args:
-            query: The search query text (for logging only - Qdrant uses embeddings)
-            collection_id: Collection UUID for multi-tenant filtering
+            queries: List of search query texts (for logging only - Qdrant uses embeddings)
+            airweave_collection_id: Airweave collection UUID for multi-tenant filtering
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
-            filter: Optional Qdrant-format filter (passthrough - native format)
-            embeddings: Pre-computed dense embeddings (required for Qdrant)
+            filter: Optional filter dict (Airweave canonical format, passed through)
+            dense_embeddings: Pre-computed dense embeddings (required for Qdrant)
             sparse_embeddings: Pre-computed sparse embeddings for hybrid search
-            search_method: Search strategy - "hybrid", "neural", or "keyword"
-            temporal_config: Optional temporal config (translated to DecayConfig)
-            decay_config: Optional pre-built DecayConfig (takes precedence if provided)
+            retrieval_strategy: Search strategy - "hybrid", "neural", or "keyword"
+            temporal_config: Optional temporal config (translated to DecayConfig internally)
 
         Returns:
             List of SearchResult objects
@@ -1288,31 +1306,33 @@ class QdrantDestination(VectorDBDestination):
         Raises:
             ValueError: If embeddings are not provided
         """
-        if not embeddings:
+        if not dense_embeddings:
             raise ValueError(
                 "Qdrant requires pre-computed embeddings. "
                 "Ensure EmbedQuery operation ran before Retrieval."
             )
 
+        primary_query = queries[0] if queries else ""
         self.logger.debug(
-            f"[QdrantSearch] Executing search: query='{query[:50]}...', "
-            f"limit={limit}, embeddings={len(embeddings)}"
+            f"[QdrantSearch] Executing search: query='{primary_query[:50]}...', "
+            f"limit={limit}, embeddings={len(dense_embeddings)}"
         )
 
-        # Convert filter to dict format if needed
-        filter_dict = None
-        if filter:
-            filter_dict = self.translate_filter(filter)
+        # Translate temporal config to Qdrant-native DecayConfig
+        decay_config = self.translate_temporal(temporal_config)
+
+        # Filter already in dict format (Airweave canonical = Qdrant-compatible)
+        filter_dict = self.translate_filter(filter)
 
         # Call bulk_search directly with proper parameter mapping
-        num_queries = len(embeddings)
+        num_queries = len(dense_embeddings)
         raw_results = await self.bulk_search(
-            query_vectors=embeddings,
+            query_vectors=dense_embeddings,
             limit=limit,
             with_payload=True,
             filter_conditions=[filter_dict] * num_queries if filter_dict else None,
             sparse_vectors=sparse_embeddings,
-            search_method=search_method,
+            search_method=retrieval_strategy,
             decay_config=decay_config,
             offset=offset,
         )
@@ -1330,44 +1350,86 @@ class QdrantDestination(VectorDBDestination):
         self.logger.debug(f"[QdrantSearch] Retrieved {len(results)} results")
         return results
 
-    def translate_filter(self, filter: Optional[QdrantFilter]) -> Optional[dict]:
+    def translate_filter(self, filter: Optional[dict]) -> Optional[dict]:
         """Translate filter to Qdrant dict format.
 
-        Qdrant uses its native filter format, so this is essentially a passthrough
-        that converts the Pydantic model to a dict.
+        Qdrant uses the Airweave canonical filter format natively, so this is passthrough.
 
         Args:
-            filter: Qdrant Filter object
+            filter: Airweave canonical filter dict
 
         Returns:
             Filter as dict, or None
         """
         if filter is None:
             return None
-        # Convert Pydantic model to dict if needed
+        # Convert Pydantic model to dict if needed (for safety)
         if hasattr(filter, "model_dump"):
             return filter.model_dump(exclude_none=True)
         return filter
 
-    def translate_temporal(
-        self, config: Optional[AirweaveTemporalConfig]
-    ) -> Optional["DecayConfig"]:
+    def translate_temporal(self, config: Optional[AirweaveTemporalConfig]) -> Optional[DecayConfig]:
         """Translate Airweave temporal config to Qdrant DecayConfig.
 
-        For now, this returns None to use the existing temporal relevance operation
-        flow which builds DecayConfig internally. Future enhancement can convert
-        AirweaveTemporalConfig to DecayConfig directly.
+        Converts the destination-agnostic AirweaveTemporalConfig to Qdrant's
+        native DecayConfig format.
+
+        The TemporalRelevance operation sets target_datetime and scale_seconds
+        dynamically based on actual collection data. If these are not set,
+        fallback defaults are used.
 
         Args:
             config: Airweave temporal relevance configuration
 
         Returns:
-            None (uses existing TemporalRelevance operation flow)
+            Qdrant DecayConfig, or None if config not provided
         """
-        # The existing TemporalRelevance operation builds DecayConfig internally
-        # with more complex logic (datetime calculations, scale conversion, etc.)
-        # For now, return None and let that flow continue working.
-        return None
+        if config is None:
+            return None
+
+        # Use dynamic scale_seconds if set by TemporalRelevance operation,
+        # otherwise parse decay_scale string, otherwise use 7 days default
+        if config.scale_seconds is not None:
+            scale_seconds = config.scale_seconds
+        elif config.decay_scale:
+            scale_seconds = self._parse_decay_scale(config.decay_scale)
+        else:
+            scale_seconds = 604800  # 7 days default
+
+        # Use dynamic target_datetime if set by TemporalRelevance operation,
+        # otherwise use current time
+        target_datetime = config.target_datetime or datetime.now()
+
+        return DecayConfig(
+            decay_type="linear",
+            datetime_field=config.reference_field,
+            target_datetime=target_datetime,
+            scale_seconds=scale_seconds,
+            midpoint=0.5,
+            weight=config.weight,
+        )
+
+    def _parse_decay_scale(self, scale: str) -> float:
+        """Parse decay scale string to seconds.
+
+        Args:
+            scale: Scale string like "7d", "30d", "1h"
+
+        Returns:
+            Scale in seconds
+        """
+        scale = scale.lower().strip()
+        if scale.endswith("d"):
+            return float(scale[:-1]) * 86400  # days to seconds
+        elif scale.endswith("h"):
+            return float(scale[:-1]) * 3600  # hours to seconds
+        elif scale.endswith("m"):
+            return float(scale[:-1]) * 60  # minutes to seconds
+        elif scale.endswith("s"):
+            return float(scale[:-1])  # seconds
+        else:
+            # Assume days if no unit
+            return float(scale) * 86400
 
     async def bulk_search(
         self,
