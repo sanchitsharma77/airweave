@@ -12,6 +12,8 @@ description: "Excel integration with Airweave"
   <h1 style={{ margin: 0 }}>Excel</h1>
 </div>
 
+This connector enables AI agents and RAG systems to retrieve context from Excel through Airweave's unified search layer.
+
 ## Configuration
 
 Microsoft Excel source connector integrates with the Microsoft Graph API.
@@ -57,14 +59,18 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| id | str | Drive item ID for the workbook. |
+| name | str | Workbook name (without extension). |
+| created_datetime | Optional[datetime] | When the workbook was created. |
+| last_modified_datetime | Optional[datetime] | When the workbook was last modified. |
 | file_name | str | The full file name including extension. |
-| web_url | Optional[str] | URL to open the workbook in Excel Online. |
 | size | Optional[int] | Size of the file in bytes. |
 | created_by | Optional[Dict[str, Any]] | Identity of the user who created the workbook. |
 | last_modified_by | Optional[Dict[str, Any]] | Identity of the user who last modified the workbook. |
 | parent_reference | Optional[Dict[str, Any]] | Information about the parent folder/drive location. |
 | drive_id | Optional[str] | ID of the drive containing this workbook. |
 | description | Optional[str] | Description of the workbook if available. |
+| web_url_override | Optional[str] | Direct URL to open the workbook in Excel Online. |
 
 </Accordion>
 <Accordion title="ExcelWorksheetEntity">
@@ -78,6 +84,8 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| id | str | Worksheet ID within the workbook. |
+| name | str | Worksheet display name. |
 | workbook_id | str | ID of the parent workbook. |
 | workbook_name | str | Name of the parent workbook. |
 | position | Optional[int] | The zero-based position of the worksheet within the workbook. |
@@ -86,7 +94,8 @@ Reference:
 | cell_content | Optional[str] | Formatted text representation of the cell content in the used range. |
 | row_count | Optional[int] | Number of rows with data in the worksheet. |
 | column_count | Optional[int] | Number of columns with data in the worksheet. |
-| last_modified_datetime | Optional[Any] | Timestamp at which the worksheet was last modified. |
+| last_modified_datetime | Optional[datetime] | Timestamp at which the worksheet was last modified. |
+| web_url_override | Optional[str] | URL that opens the containing workbook focused on this sheet. |
 
 </Accordion>
 <Accordion title="ExcelTableEntity">
@@ -100,6 +109,8 @@ Reference:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| id | str | Table ID within the workbook. |
+| name | str | Table name as defined in Excel. |
 | workbook_id | str | ID of the parent workbook. |
 | workbook_name | str | Name of the parent workbook. |
 | worksheet_id | str | ID of the parent worksheet. |
@@ -112,9 +123,10 @@ Reference:
 | highlight_last_column | Optional[bool] | Indicates whether the last column contains special formatting. |
 | row_count | Optional[int] | Number of rows in the table. |
 | column_count | Optional[int] | Number of columns in the table. |
-| column_names | Optional[List[str]] | Names of the columns in the table. |
+| column_names | List[str] | Names of the columns in the table. |
 | table_data | Optional[str] | The actual table data as formatted text (rows and columns). |
-| last_modified_datetime | Optional[Any] | Timestamp at which the table was last modified. |
+| last_modified_datetime | Optional[datetime] | Timestamp at which the table was last modified. |
+| web_url_override | Optional[str] | URL that opens the workbook focused on this table. |
 
 </Accordion>
 
