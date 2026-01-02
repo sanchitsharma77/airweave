@@ -107,12 +107,16 @@ navigation:
       path: docs/pages/connectors/outlook_calendar/main.mdx
     - page: Outlook Mail
       path: docs/pages/connectors/outlook_mail/main.mdx
+    - page: Pipedrive
+      path: docs/pages/connectors/pipedrive/main.mdx
     - page: Postgresql
       path: docs/pages/connectors/postgresql/main.mdx
     - page: Salesforce
       path: docs/pages/connectors/salesforce/main.mdx
     - page: Sharepoint
       path: docs/pages/connectors/sharepoint/main.mdx
+    - page: Shopify
+      path: docs/pages/connectors/shopify/main.mdx
     - page: Slack
       path: docs/pages/connectors/slack/main.mdx
     - page: Stripe
@@ -127,6 +131,8 @@ navigation:
       path: docs/pages/connectors/word/main.mdx
     - page: Zendesk
       path: docs/pages/connectors/zendesk/main.mdx
+    - page: Zoho Crm
+      path: docs/pages/connectors/zoho_crm/main.mdx
 - api: API Reference
   alphabetized: false
   display-errors: true

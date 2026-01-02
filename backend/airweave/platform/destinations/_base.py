@@ -1,6 +1,7 @@
 """Base destination classes."""
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 
@@ -8,6 +9,26 @@ from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.entities._base import BaseEntity
 from airweave.schemas.search import AirweaveTemporalConfig, SearchResult
+
+
+class ProcessingRequirement(Enum):
+    """What processing a destination expects from Airweave.
+
+    This enum determines how the sync pipeline processes entities before
+    sending them to the destination.
+
+    Values:
+        CHUNKS_AND_EMBEDDINGS: Destination expects pre-chunked, pre-embedded entities.
+            Airweave performs: text extraction → chunking → embedding
+            Used by: Qdrant, Pinecone, and other vector databases
+
+        RAW_ENTITIES: Destination handles its own chunking and embedding.
+            Airweave sends raw entities without chunking/embedding.
+            Used by: Vespa (handles NLP processing internally)
+    """
+
+    CHUNKS_AND_EMBEDDINGS = "chunks_embeddings"
+    RAW_ENTITIES = "raw"
 
 
 class BaseDestination(ABC):
@@ -165,6 +186,35 @@ class BaseDestination(ABC):
     async def has_keyword_index(self) -> bool:
         """Check if the destination has a keyword index."""
         pass
+
+    @property
+    def processing_requirement(self) -> ProcessingRequirement:
+        """What processing this destination requires from Airweave.
+
+        Override in subclasses to change behavior. Default is CHUNKS_AND_EMBEDDINGS
+        for backward compatibility with existing vector DBs.
+
+        Returns:
+            ProcessingRequirement indicating what processing Airweave should perform
+        """
+        return ProcessingRequirement.CHUNKS_AND_EMBEDDINGS
+
+    async def bulk_insert_raw(self, entities: list[BaseEntity]) -> None:
+        """Bulk insert raw (non-chunked, non-embedded) entities.
+
+        Used by destinations with processing_requirement=RAW_ENTITIES.
+        Default implementation raises NotImplementedError.
+
+        Args:
+            entities: Raw entities without chunking/embedding
+
+        Raises:
+            NotImplementedError: If destination doesn't support raw inserts
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support raw entity inserts. "
+            "Override bulk_insert_raw() or set processing_requirement to CHUNKS_AND_EMBEDDINGS."
+        )
 
 
 class VectorDBDestination(BaseDestination):
