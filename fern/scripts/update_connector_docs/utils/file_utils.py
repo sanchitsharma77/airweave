@@ -25,12 +25,19 @@ def get_connectors_from_sources():
     Returns:
         list: List of connector names found in source files
     """
+    # Internal/test sources to exclude from documentation
+    EXCLUDED_SOURCES = {"snapshot", "stub"}
+
     connectors = []
 
     # Scan all Python files in the sources directory
     for source_file in BACKEND_SOURCES_DIR.glob("*.py"):
         # Skip __init__.py and _base.py
         if source_file.name in ["__init__.py", "_base.py"]:
+            continue
+
+        # Skip excluded sources (test/internal)
+        if source_file.stem in EXCLUDED_SOURCES:
             continue
 
         connector_name = source_file.stem
