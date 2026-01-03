@@ -25,7 +25,7 @@
     <field name="yql">
         select *
         from %{schema}
-        where collection_id contains @collection_id and
+        where airweave_system_metadata.collection_id contains @collection_id and
               (({targetHits:400}userInput(@query)) or
                ({label:"chunks_label", targetHits:400}nearestNeighbor(chunk_small_embeddings, embedding)))
     </field>
