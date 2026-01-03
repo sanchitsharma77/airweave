@@ -1,9 +1,9 @@
 """Admin-only API endpoints for organization management."""
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Body, Depends, HTTPException, Query
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,9 @@ from airweave.core.context_cache_service import context_cache
 from airweave.core.exceptions import InvalidStateError, NotFoundException
 from airweave.core.organization_service import organization_service
 from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
+from airweave.core.source_connection_service_helpers import source_connection_helpers
+from airweave.core.sync_service import sync_service
+from airweave.core.temporal_service import temporal_service
 from airweave.crud.crud_organization_billing import organization_billing
 from airweave.db.unit_of_work import UnitOfWork
 from airweave.integrations.auth0_management import auth0_management_client
@@ -23,6 +26,7 @@ from airweave.integrations.stripe_client import stripe_client
 from airweave.models.organization import Organization
 from airweave.models.organization_billing import OrganizationBilling
 from airweave.models.user_organization import UserOrganization
+from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.schemas.organization_billing import BillingPlan, BillingStatus
 
 router = TrailingSlashRouter()
@@ -814,3 +818,99 @@ async def disable_feature_flag(
     ctx.logger.info(f"Admin disabled feature flag {flag} for org {organization_id}")
 
     return {"message": f"Feature flag '{flag}' disabled", "organization_id": str(organization_id)}
+
+
+@router.post("/resync/{sync_id}", response_model=schemas.SyncJob)
+async def resync_with_execution_config(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    sync_id: UUID,
+    ctx: ApiContext = Depends(deps.get_context),
+    execution_config: Optional[SyncExecutionConfig] = Body(
+        None,
+        description="Optional execution config for controlling sync behavior (handler toggles, flags, etc.)",
+        examples=[
+            {
+                "enable_vector_handlers": False,
+                "enable_postgres_handler": False,
+                "skip_cursor_load": True,
+                "skip_cursor_updates": True,
+            }
+        ],
+    ),
+) -> schemas.SyncJob:
+    """Admin-only: Trigger a sync with custom execution config via Temporal.
+
+    This endpoint allows admins to trigger syncs with custom execution configurations
+    for advanced use cases like ARF-only capture, destination-specific replays, or dry runs.
+
+    The sync is dispatched to Temporal and runs asynchronously in workers, not in the backend pod.
+
+    Args:
+        db: Database session
+        sync_id: ID of the sync to trigger
+        ctx: API context
+        execution_config: Optional dict with execution config parameters
+
+    Returns:
+        The created sync job
+
+    Raises:
+        HTTPException: If user is not admin or sync not found
+
+    Example execution configs:
+        - ARF capture only: {"enable_vector_handlers": False, "enable_postgres_handler": False}
+        - Dry run: {"enable_vector_handlers": False, "enable_raw_data_handler": False, "enable_postgres_handler": False}
+        - Target specific destination: {"target_destinations": ["<uuid>"]}
+    """
+    _require_admin(ctx)
+
+    ctx.logger.info(
+        f"Admin triggering resync for sync {sync_id} with execution config: {execution_config}"
+    )
+
+    # Get the sync to validate it exists
+    sync_obj = await crud.sync.get(db, id=sync_id, ctx=ctx)
+    if not sync_obj:
+        raise NotFoundException(f"Sync {sync_id} not found")
+
+    # Create sync job with execution config (convert Pydantic to dict for DB storage)
+    sync, sync_job = await sync_service.trigger_sync_run(
+        db=db,
+        sync_id=sync_id,
+        ctx=ctx,
+        execution_config=execution_config.model_dump() if execution_config else None,
+    )
+
+    # Get source connection and collection for Temporal workflow
+    source_conn = await crud.source_connection.get_by_sync_id(db=db, sync_id=sync.id, ctx=ctx)
+    if not source_conn:
+        raise NotFoundException(f"Source connection not found for sync {sync_id}")
+
+    collection = await crud.collection.get_by_readable_id(
+        db=db, readable_id=source_conn.readable_collection_id, ctx=ctx
+    )
+    if not collection:
+        raise NotFoundException(f"Collection {source_conn.readable_collection_id} not found")
+
+    collection_schema = schemas.Collection.model_validate(collection, from_attributes=True)
+
+    # Get the Connection object (not SourceConnection) for Temporal
+    connection_schema = await source_connection_helpers.get_connection_for_source_connection(
+        db=db, source_connection=source_conn, ctx=ctx
+    )
+
+    # Dispatch to Temporal
+    ctx.logger.info(f"Dispatching sync job {sync_job.id} to Temporal with execution config")
+    await temporal_service.run_source_connection_workflow(
+        sync=sync,
+        sync_job=sync_job,
+        collection=collection_schema,
+        connection=connection_schema,
+        ctx=ctx,
+        force_full_sync=False,
+    )
+
+    ctx.logger.info(f"✅ Admin resync job {sync_job.id} dispatched to Temporal")
+
+    return sync_job

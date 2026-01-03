@@ -23,6 +23,7 @@ from airweave.platform.entities._base import BaseEntity
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
 from airweave.platform.sync.actions import ActionDispatcher, ActionResolver
+from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.cursor import SyncCursor
 from airweave.platform.sync.entity_pipeline import EntityPipeline
@@ -53,11 +54,12 @@ class SyncFactory:
         sync: schemas.Sync,
         sync_job: schemas.SyncJob,
         collection: schemas.Collection,
-        connection: schemas.Connection,  # Passed but unused - we load from DB
+        connection: schemas.Connection,
         ctx: ApiContext,
         access_token: Optional[str] = None,
         max_workers: int = None,
         force_full_sync: bool = False,
+        execution_config: Optional[SyncExecutionConfig] = None,
     ) -> SyncOrchestrator:
         """Create a dedicated orchestrator instance for a sync run.
 
@@ -69,11 +71,12 @@ class SyncFactory:
             sync: The sync configuration
             sync_job: The sync job
             collection: The collection to sync to
-            connection: The connection (unused - we load source connection from DB)
+            connection: The connection
             ctx: The API context
             access_token: Optional token to use instead of stored credentials
             max_workers: Maximum number of concurrent workers (default: from settings)
             force_full_sync: If True, forces a full sync with orphaned entity deletion
+            execution_config: Optional execution config for controlling sync behavior
 
         Returns:
             A dedicated SyncOrchestrator instance
@@ -94,10 +97,11 @@ class SyncFactory:
             sync=sync,
             sync_job=sync_job,
             collection=collection,
-            connection=connection,  # Unused parameter
+            connection=connection,
             ctx=ctx,
             access_token=access_token,
             force_full_sync=force_full_sync,
+            execution_config=execution_config,
         )
         logger.debug(f"Sync context created in {time.time() - context_start:.2f}s")
 
@@ -107,10 +111,38 @@ class SyncFactory:
         # 1. Action Resolver
         action_resolver = ActionResolver(entity_map=sync_context.entity_map)
 
-        # 2. Handlers - grouped by destination processing requirements
-        handlers = cls._create_destination_handlers(sync_context)
-        handlers.append(RawDataHandler())  # Raw data storage
-        handlers.append(PostgresMetadataHandler())  # Metadata (runs last)
+        # 2. Handlers - conditionally created based on execution_config
+        config = sync_context.execution_config
+        enable_vector = config is None or config.enable_vector_handlers
+        enable_raw = config is None or config.enable_raw_data_handler
+        enable_postgres = config is None or config.enable_postgres_handler
+
+        handlers = []
+
+        # Add VectorDBHandler if enabled
+        if enable_vector:
+            vector_handlers = cls._create_destination_handlers(sync_context)
+            handlers.extend(vector_handlers)
+        elif sync_context.destinations:
+            logger.info(
+                f"Skipping VectorDBHandler (disabled by execution_config) for "
+                f"{len(sync_context.destinations)} destination(s)"
+            )
+
+        # Add RawDataHandler if enabled
+        if enable_raw:
+            handlers.append(RawDataHandler())
+        else:
+            logger.info("Skipping RawDataHandler (disabled by execution_config)")
+
+        # Add PostgresMetadataHandler if enabled (always runs last)
+        if enable_postgres:
+            handlers.append(PostgresMetadataHandler())
+        else:
+            logger.info("Skipping PostgresMetadataHandler (disabled by execution_config)")
+
+        if not handlers:
+            logger.warning("No handlers created - sync will fetch entities but not persist them")
 
         # 3. Action Dispatcher
         action_dispatcher = ActionDispatcher(handlers=handlers)
@@ -154,6 +186,7 @@ class SyncFactory:
         ctx: ApiContext,
         access_token: Optional[str] = None,
         force_full_sync: bool = False,
+        execution_config: Optional[SyncExecutionConfig] = None,
     ) -> SyncContext:
         """Create a sync context.
 
@@ -162,10 +195,11 @@ class SyncFactory:
             sync: The sync configuration
             sync_job: The sync job
             collection: The collection to sync to
-            connection: The connection (unused - we load source connection from DB)
+            connection: The connection
             ctx: The API context
             access_token: Optional token to use instead of stored credentials
             force_full_sync: If True, forces a full sync with orphaned entity deletion
+            execution_config: Optional execution config for controlling sync behavior
 
         Returns:
             SyncContext object with all required components
@@ -201,6 +235,7 @@ class SyncFactory:
             collection=collection,
             ctx=ctx,
             logger=logger,
+            execution_config=execution_config,
         )
         entity_map = await cls._get_entity_definition_map(db=db)
 
@@ -259,6 +294,11 @@ class SyncFactory:
                 "for accurate orphaned entity cleanup. Will still track cursor for next sync."
             )
             cursor_data = None  # Force full sync by not providing previous cursor data
+        elif execution_config and execution_config.skip_cursor_load:
+            logger.info(
+                "🔄 SKIP CURSOR LOAD: Fetching all entities (execution_config.skip_cursor_load=True)"
+            )
+            cursor_data = None  # Skip cursor loading as requested by execution config
         else:
             # Normal incremental sync - load cursor data
             cursor_data = await sync_cursor_service.get_cursor_data(db=db, sync_id=sync.id, ctx=ctx)
@@ -292,7 +332,7 @@ class SyncFactory:
             sync=sync,
             sync_job=sync_job,
             collection=collection,
-            connection=connection,  # Unused parameter
+            connection=connection,
             entity_tracker=entity_tracker,
             state_publisher=state_publisher,
             cursor=cursor,
@@ -302,6 +342,7 @@ class SyncFactory:
             guard_rail=guard_rail,
             force_full_sync=force_full_sync,
             has_keyword_index=has_keyword_index,
+            execution_config=execution_config,
         )
 
         # Set cursor on source so it can access cursor data
@@ -667,6 +708,7 @@ class SyncFactory:
         collection: schemas.Collection,
         ctx: ApiContext,
         logger: ContextualLogger,
+        execution_config: Optional[SyncExecutionConfig] = None,
     ) -> list[BaseDestination]:
         """Create destination instances with unified credentials pattern (matches sources).
 
@@ -681,6 +723,7 @@ class SyncFactory:
             collection (schemas.Collection): The collection object
             ctx (ApiContext): The API context
             logger (ContextualLogger): The contextual logger with sync metadata
+            execution_config (Optional[SyncExecutionConfig]): Optional execution config for filtering destinations
 
         Returns:
         --------
@@ -692,8 +735,13 @@ class SyncFactory:
         """
         destinations = []
 
-        # Create all destinations from destination_connection_ids
-        for destination_connection_id in sync.destination_connection_ids:
+        # Filter destination IDs based on execution_config
+        destination_ids = cls._filter_destination_ids(
+            sync.destination_connection_ids, execution_config, logger
+        )
+
+        # Create all destinations from filtered destination_connection_ids
+        for destination_connection_id in destination_ids:
             try:
                 # Special case: Native Qdrant (uses settings, no DB connection)
                 if destination_connection_id == NATIVE_QDRANT_UUID:
@@ -802,6 +850,55 @@ class SyncFactory:
 
     # NOTE: Transformers removed - chunking now happens in VectorDBHandler
     # (for destinations requiring CHUNKS_AND_EMBEDDINGS processing)
+
+    @staticmethod
+    def _filter_destination_ids(
+        destination_ids: list[UUID],
+        execution_config: Optional[SyncExecutionConfig],
+        logger: ContextualLogger,
+    ) -> list[UUID]:
+        """Filter destination IDs based on execution config.
+
+        Priority:
+        1. If target_destinations is set, use only those
+        2. If exclude_destinations is set, filter them out
+        3. Otherwise use all provided IDs
+
+        Args:
+            destination_ids: Original list of destination IDs from sync
+            execution_config: Optional execution config
+            logger: Logger for info messages
+
+        Returns:
+            Filtered list of destination IDs
+        """
+        if not execution_config:
+            return destination_ids
+
+        # Priority 1: If target_destinations is set, use only those
+        if execution_config.target_destinations:
+            logger.info(
+                f"Using target_destinations from config: {execution_config.target_destinations}"
+            )
+            return execution_config.target_destinations
+
+        # Priority 2: If exclude_destinations is set, filter them out
+        if execution_config.exclude_destinations:
+            original_count = len(destination_ids)
+            filtered_ids = [
+                dest_id
+                for dest_id in destination_ids
+                if dest_id not in execution_config.exclude_destinations
+            ]
+            excluded_count = original_count - len(filtered_ids)
+            if excluded_count > 0:
+                logger.info(
+                    f"Excluded {excluded_count} destination(s) from execution_config.exclude_destinations"
+                )
+            return filtered_ids
+
+        # No filtering
+        return destination_ids
 
     @classmethod
     async def _get_entity_definition_map(cls, db: AsyncSession) -> dict[type[BaseEntity], UUID]:

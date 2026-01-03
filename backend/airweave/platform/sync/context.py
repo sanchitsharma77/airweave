@@ -1,5 +1,6 @@
 """Module for sync context."""
 
+from typing import Optional
 from uuid import UUID
 
 from airweave import schemas
@@ -9,6 +10,7 @@ from airweave.core.logging import ContextualLogger
 from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.sources._base import BaseSource
+from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.cursor import SyncCursor
 from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
 from airweave.platform.sync.state_publisher import SyncStatePublisher
@@ -60,6 +62,9 @@ class SyncContext:
     batch_size: int = 64
     max_batch_latency_ms: int = 200
 
+    # Optional execution config for controlling sync behavior
+    execution_config: Optional[SyncExecutionConfig] = None
+
     def __init__(
         self,
         source: BaseSource,
@@ -81,6 +86,7 @@ class SyncContext:
         batch_size: int = 64,
         max_batch_latency_ms: int = 200,
         has_keyword_index: bool = False,
+        execution_config: Optional[SyncExecutionConfig] = None,
     ):
         """Initialize the sync context."""
         self.source = source
@@ -104,3 +110,5 @@ class SyncContext:
         self.max_batch_latency_ms = max_batch_latency_ms
         # Destination capabilities (precomputed)
         self.has_keyword_index = has_keyword_index
+        # Execution config for controlling sync behavior
+        self.execution_config = execution_config
