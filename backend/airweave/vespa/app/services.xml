@@ -3,15 +3,6 @@
 
   <admin version="2.0">
     <adminserver hostalias="container0"/>
-    <slobroks>
-      <slobrok hostalias="container0"/>
-    </slobroks>
-    <configservers>
-      <configserver hostalias="config0"/>
-    </configservers>
-    <cluster-controllers>
-      <cluster-controller hostalias="container0"/>
-    </cluster-controllers>
   </admin>
 
   <!-- Container cluster: handles queries and document API -->
@@ -44,7 +35,7 @@
 
   <!-- Content cluster: stores and indexes documents -->
   <content id="airweave" version="1.0">
-    <redundancy>2</redundancy>
+    <redundancy>1</redundancy>
     <documents>
       <document type="base_entity" mode="index"/>
       <document type="file_entity" mode="index"/>
@@ -61,4 +52,3 @@
   </content>
 
 </services>
-

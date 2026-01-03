@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <hosts>
-  <!-- Config server -->
-  <host name="vespa-config">
+  <!-- Single-node development setup: all services on one host -->
+  <host name="localhost">
     <alias>config0</alias>
-  </host>
-
-  <!-- Container nodes -->
-  <host name="vespa-container-0">
     <alias>container0</alias>
-  </host>
-
-  <host name="vespa-content-0">
     <alias>content0</alias>
   </host>
 </hosts>
-

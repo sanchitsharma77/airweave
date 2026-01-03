@@ -98,6 +98,11 @@ def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
 class VespaDestination(VectorDBDestination):
     """Vespa destination - Vespa handles chunking/embedding internally."""
 
+    # Vespa embeds server-side, only needs text extraction
+    from airweave.platform.destinations._base import ProcessingRequirement
+
+    processing_requirement = ProcessingRequirement.TEXT_ONLY
+
     def __init__(self):
         """Initialize the Vespa destination."""
         super().__init__()
@@ -105,18 +110,6 @@ class VespaDestination(VectorDBDestination):
         self.sync_id: UUID | None = None
         self.organization_id: UUID | None = None
         self.app: Optional[Vespa] = None
-
-    @property
-    def processing_requirement(self) -> "ProcessingRequirement":
-        """Vespa handles chunking and embedding server-side.
-
-        Returns:
-            ProcessingRequirement.RAW_ENTITIES - Airweave sends raw entities without
-            chunking/embedding. Vespa's schema handles NLP processing internally.
-        """
-        from airweave.platform.destinations._base import ProcessingRequirement
-
-        return ProcessingRequirement.RAW_ENTITIES
 
     @classmethod
     async def create(
@@ -309,14 +302,6 @@ class VespaDestination(VectorDBDestination):
         """
         self.logger.debug("Vespa schema is managed via vespa-deploy, skipping setup_collection")
 
-    async def insert(self, entity: BaseEntity) -> None:
-        """Insert a single entity into Vespa.
-
-        Args:
-            entity: The entity to insert
-        """
-        await self.bulk_insert([entity])
-
     async def bulk_insert(self, entities: list[BaseEntity]) -> None:
         """Transform entities and batch feed to Vespa using feed_iterable.
 
@@ -434,26 +419,6 @@ class VespaDestination(VectorDBDestination):
         s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
-    async def delete(self, db_entity_id: UUID) -> None:
-        """Delete a single entity from Vespa by db_entity_id.
-
-        Args:
-            db_entity_id: The database entity ID
-        """
-        if not self.app:
-            raise RuntimeError("Vespa client not initialized")
-
-        # Query for documents with this db_entity_id in the collection
-        # Note: we don't have db_entity_id as a field - using original_entity_id instead
-        # Search across all schemas
-        for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata.original_entity_id contains '{db_entity_id}' and "
-                f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
-
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
         """Delete all documents from a sync run.
 
@@ -491,46 +456,6 @@ class VespaDestination(VectorDBDestination):
             )
             await self._delete_by_query(yql, schema)
 
-    async def bulk_delete(self, entity_ids: list[str], sync_id: UUID) -> None:
-        """Delete specific entities by entity_id within a sync.
-
-        Args:
-            entity_ids: List of entity IDs to delete
-            sync_id: The sync ID for scoping
-        """
-        if not entity_ids or not self.app:
-            return
-
-        # Delete each entity from all schemas
-        for entity_id in entity_ids:
-            for schema in self._get_all_vespa_schemas():
-                yql = (
-                    f"select documentid from {schema} where "
-                    f"entity_id contains '{entity_id}' and "
-                    f"airweave_system_metadata.sync_id contains '{sync_id}' and "
-                    f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
-                )
-                await self._delete_by_query(yql, schema)
-
-    async def bulk_delete_by_parent_id(self, parent_id: str, sync_id: UUID | str) -> None:
-        """Delete all chunks for a parent entity.
-
-        Args:
-            parent_id: The original entity ID (before chunking)
-            sync_id: The sync ID for scoping
-        """
-        if not self.app:
-            raise RuntimeError("Vespa client not initialized")
-
-        # Search across all schemas
-        for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata.original_entity_id contains '{parent_id}' and "
-                f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
-
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
         """Delete all documents for multiple parent IDs.
 
@@ -538,8 +463,18 @@ class VespaDestination(VectorDBDestination):
             parent_ids: List of parent entity IDs
             sync_id: The sync ID for scoping
         """
+        if not parent_ids or not self.app:
+            return
+
+        # Delete each parent's documents from all schemas
         for parent_id in parent_ids:
-            await self.bulk_delete_by_parent_id(parent_id, sync_id)
+            for schema in self._get_all_vespa_schemas():
+                yql = (
+                    f"select documentid from {schema} where "
+                    f"airweave_system_metadata.original_entity_id contains '{parent_id}' and "
+                    f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
+                )
+                await self._delete_by_query(yql, schema)
 
     async def _delete_by_query(self, yql: str, schema: str) -> None:
         """Execute a delete operation based on a YQL query with pagination.

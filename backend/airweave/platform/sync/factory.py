@@ -22,7 +22,7 @@ from airweave.core.logging import ContextualLogger, LoggerConfigurator, logger
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.db.init_db_native import init_db_with_entity_definitions
 from airweave.platform.auth_providers._base import BaseAuthProvider
-from airweave.platform.destinations._base import BaseDestination, ProcessingRequirement
+from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
@@ -31,10 +31,9 @@ from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.cursor import SyncCursor
 from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.handlers import (
+    ArfHandler,
+    DestinationHandler,
     PostgresMetadataHandler,
-    RawDataHandler,
-    SelfProcessingHandler,
-    VectorDBHandler,
 )
 from airweave.platform.sync.orchestrator import SyncOrchestrator
 from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
@@ -114,7 +113,7 @@ class SyncFactory:
 
         # 2. Handlers - grouped by destination processing requirements
         handlers = cls._create_destination_handlers(sync_context)
-        handlers.append(RawDataHandler())  # Raw data storage
+        handlers.append(ArfHandler())  # ARF storage for audit/replay
         handlers.append(PostgresMetadataHandler())  # Metadata (runs last)
 
         # 3. Action Dispatcher
@@ -614,11 +613,10 @@ class SyncFactory:
         cls,
         sync_context: SyncContext,
     ) -> list:
-        """Create destination handlers grouped by processing requirements.
+        """Create destination handlers using ProcessingRequirement.
 
-        This method groups destinations by their processing requirements and creates
-        appropriate handlers:
-        - VectorDBHandler: For destinations needing chunking/embedding (Qdrant, Pinecone)
+        Each destination declares its processing needs via processing_requirement class var.
+        DestinationHandler maps requirements to processors (singletons).
 
         Args:
             sync_context: Sync context with destinations and logger
@@ -626,43 +624,21 @@ class SyncFactory:
         Returns:
             List of destination handlers (may be empty if no destinations)
         """
-        from airweave.platform.sync.handlers.base import ActionHandler
+        from airweave.platform.sync.handlers.protocol import ActionHandler
 
         handlers: list[ActionHandler] = []
 
-        # Group destinations by processing requirement
-        vector_db_destinations: list[BaseDestination] = []
-        self_processing_destinations: list[BaseDestination] = []
+        if sync_context.destinations:
+            handler = DestinationHandler(destinations=sync_context.destinations)
+            handlers.append(handler)
 
-        for dest in sync_context.destinations:
-            requirement = dest.processing_requirement
-            if requirement == ProcessingRequirement.CHUNKS_AND_EMBEDDINGS:
-                vector_db_destinations.append(dest)
-            elif requirement == ProcessingRequirement.RAW_ENTITIES:
-                self_processing_destinations.append(dest)
-            else:
-                # Default to vector DB for unknown requirements (backward compat)
-                sync_context.logger.warning(
-                    f"Unknown processing requirement {requirement} for {dest.__class__.__name__}, "
-                    "defaulting to CHUNKS_AND_EMBEDDINGS"
-                )
-                vector_db_destinations.append(dest)
-
-        # Create handlers for each non-empty group
-        if vector_db_destinations:
-            vector_handler = VectorDBHandler(destinations=vector_db_destinations)
-            handlers.append(vector_handler)
+            # Log what processing requirements are in use
+            processor_info = [
+                f"{d.__class__.__name__}→{d.processing_requirement.value}"
+                for d in sync_context.destinations
+            ]
             sync_context.logger.info(
-                f"Created VectorDBHandler for {len(vector_db_destinations)} destination(s): "
-                f"{[d.__class__.__name__ for d in vector_db_destinations]}"
-            )
-
-        if self_processing_destinations:
-            self_handler = SelfProcessingHandler(destinations=self_processing_destinations)
-            handlers.append(self_handler)
-            sync_context.logger.info(
-                f"Created SelfProcessingHandler for {len(self_processing_destinations)} destination(s): "
-                f"{[d.__class__.__name__ for d in self_processing_destinations]}"
+                f"Created DestinationHandler with requirements: {processor_info}"
             )
 
         if not handlers:
@@ -840,8 +816,8 @@ class SyncFactory:
 
         return destinations
 
-    # NOTE: Transformers removed - chunking now happens in VectorDBHandler
-    # (for destinations requiring CHUNKS_AND_EMBEDDINGS processing)
+    # NOTE: Transformers removed - chunking now happens in processors
+    # (ChunkEmbedProcessor for vector DBs, TextOnlyProcessor for self-embedding destinations)
 
     @classmethod
     async def _get_entity_definition_map(cls, db: AsyncSession) -> dict[type[BaseEntity], UUID]:
