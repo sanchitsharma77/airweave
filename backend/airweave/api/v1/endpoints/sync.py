@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from typing import AsyncGenerator, List, Optional, Union
+from typing import Any, AsyncGenerator, List, Optional, Union
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, Query
@@ -175,6 +175,7 @@ async def run_sync(
     sync_id: UUID,
     ctx: ApiContext = Depends(deps.get_context),
     background_tasks: BackgroundTasks,
+    execution_config: Optional[dict[str, Any]] = None,
 ) -> schemas.SyncJob:
     """Trigger a sync run.
 
@@ -184,13 +185,16 @@ async def run_sync(
         sync_id: The ID of the sync to run
         ctx: The current authentication context
         background_tasks: The background tasks
+        execution_config: Optional execution config for controlling sync behavior
 
     Returns:
     --------
         sync_job (schemas.SyncJob): The sync job
     """
     # Trigger the sync run - kinda, not really, we'll do that in the background
-    sync, sync_job = await sync_service.trigger_sync_run(db=db, sync_id=sync_id, ctx=ctx)
+    sync, sync_job = await sync_service.trigger_sync_run(
+        db=db, sync_id=sync_id, ctx=ctx, execution_config=execution_config
+    )
 
     # Get collection and source connection for sync.run
     source_conn = await crud.source_connection.get_by_sync_id(db=db, sync_id=sync.id, ctx=ctx)
