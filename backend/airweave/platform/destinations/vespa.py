@@ -106,6 +106,18 @@ class VespaDestination(VectorDBDestination):
         self.organization_id: UUID | None = None
         self.app: Optional[Vespa] = None
 
+    @property
+    def processing_requirement(self) -> "ProcessingRequirement":
+        """Vespa handles chunking and embedding server-side.
+
+        Returns:
+            ProcessingRequirement.RAW_ENTITIES - Airweave sends raw entities without
+            chunking/embedding. Vespa's schema handles NLP processing internally.
+        """
+        from airweave.platform.destinations._base import ProcessingRequirement
+
+        return ProcessingRequirement.RAW_ENTITIES
+
     @classmethod
     async def create(
         cls,

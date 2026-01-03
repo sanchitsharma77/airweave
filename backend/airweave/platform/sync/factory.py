@@ -33,6 +33,7 @@ from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.handlers import (
     PostgresMetadataHandler,
     RawDataHandler,
+    SelfProcessingHandler,
     VectorDBHandler,
 )
 from airweave.platform.sync.orchestrator import SyncOrchestrator
@@ -654,6 +655,14 @@ class SyncFactory:
             sync_context.logger.info(
                 f"Created VectorDBHandler for {len(vector_db_destinations)} destination(s): "
                 f"{[d.__class__.__name__ for d in vector_db_destinations]}"
+            )
+
+        if self_processing_destinations:
+            self_handler = SelfProcessingHandler(destinations=self_processing_destinations)
+            handlers.append(self_handler)
+            sync_context.logger.info(
+                f"Created SelfProcessingHandler for {len(self_processing_destinations)} destination(s): "
+                f"{[d.__class__.__name__ for d in self_processing_destinations]}"
             )
 
         if not handlers:
