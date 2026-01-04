@@ -132,11 +132,28 @@ services:
       - vespa_data:/opt/vespa/var
       - ../backend/airweave/vespa/app:/app
     healthcheck:
+      # Check config server is up (basic health for startup)
       test: ["CMD", "curl", "-f", "http://localhost:19071/state/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 30
     restart: on-failure
+
+  # Vespa init container - deploys the application package automatically
+  # This runs once after vespa is healthy, then exits
+  vespa-init:
+    container_name: airweave-vespa-init
+    image: alpine:3.19
+    volumes:
+      - ../backend/airweave/vespa/app:/app:ro
+      - ../backend/airweave/vespa/init-vespa.sh:/init-vespa.sh:ro
+    entrypoint: ["/bin/sh", "/init-vespa.sh"]
+    environment:
+      - VESPA_CONFIG_SERVER=http://vespa:19071
+    depends_on:
+      vespa:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres_data:

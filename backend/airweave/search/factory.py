@@ -645,7 +645,7 @@ class SearchFactory:
                 ctx.logger.info(f"[SearchFactory] Collection {collection.readable_id} uses Vespa")
                 return await VespaDestination.create(
                     collection_id=collection.id,
-                    organization_id=ctx.organization_id,
+                    organization_id=ctx.organization.id,
                     logger=ctx.logger,
                 )
 
@@ -654,7 +654,7 @@ class SearchFactory:
                 ctx.logger.info(f"[SearchFactory] Collection {collection.readable_id} uses Qdrant")
                 return await QdrantDestination.create(
                     collection_id=collection.id,
-                    organization_id=ctx.organization_id,
+                    organization_id=ctx.organization.id,
                     vector_size=collection.vector_size,
                     logger=ctx.logger,
                 )

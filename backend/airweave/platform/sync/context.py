@@ -1,114 +1,130 @@
-"""Module for sync context."""
+"""Module for sync context.
 
+SyncContext is the main context container used during sync execution.
+It holds bundles directly as first-class fields (depth 1 architecture).
+"""
+
+from dataclasses import dataclass
 from typing import Optional
-from uuid import UUID
 
 from airweave import schemas
-from airweave.api.context import ApiContext
-from airweave.core.guard_rail_service import GuardRailService
-from airweave.core.logging import ContextualLogger
-from airweave.platform.destinations._base import BaseDestination
-from airweave.platform.entities._base import BaseEntity
-from airweave.platform.sources._base import BaseSource
+from airweave.platform.sync.bundles import (
+    BatchConfig,
+    DestinationBundle,
+    InfraBundle,
+    SourceBundle,
+    SyncIdentity,
+    TrackingBundle,
+)
 from airweave.platform.sync.config import SyncExecutionConfig
-from airweave.platform.sync.cursor import SyncCursor
-from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
-from airweave.platform.sync.state_publisher import SyncStatePublisher
 
 
+@dataclass
 class SyncContext:
     """Context container for a sync.
 
-    Contains all the necessary components for a sync:
-    - source - the source instance
-    - destinations - the destination instances
-    - sync - the main sync object
-    - sync job - the sync job that is created for the sync
-    - progress - the progress tracker, interfaces with PubSub
-    - entity_tracker - centralized entity state tracker
-    - state_publisher - publishes entity state to Redis pubsub
-    - cursor - the cursor for the sync
-    - collection - the collection that the sync is for
-    - connection - the source connection that the sync is for
-    - guard rail - the guard rail service
-    - logger - contextual logger with sync job metadata
+    Holds bundles directly as first-class fields. Each bundle represents
+    a disjoint concern:
 
-    Concurrency / batching controls:
-    - should_batch - if True, use micro-batched pipeline; if False, process per-entity (legacy)
-    - batch_size - max parents per micro-batch (default 64)
-    - max_batch_latency_ms - max time to wait before flushing a non-full batch (default 200ms)
+    - identity: Immutable IDs (sync, collection, organization, job)
+    - infra: Core infrastructure (ctx, logger)
+    - source: Source pipeline (source instance, cursor)
+    - destinations: Destination pipeline (destinations, entity_map)
+    - tracking: Progress tracking (entity_tracker, state_publisher, guard_rail)
+    - batch_config: Micro-batching settings
+    - execution_config: Handler/destination filtering
+
+    Schema objects are kept at top level for convenience (sync, sync_job,
+    collection, connection).
     """
 
-    source: BaseSource
-    destinations: list[BaseDestination]
+    # Bundles (depth 1)
+    identity: SyncIdentity
+    infra: InfraBundle
+    source: SourceBundle
+    destinations: DestinationBundle
+    tracking: TrackingBundle
+    batch_config: BatchConfig
+
+    # Schema objects (frequently accessed, kept at top level)
     sync: schemas.Sync
     sync_job: schemas.SyncJob
-    entity_tracker: EntityTracker
-    state_publisher: SyncStatePublisher
-    cursor: SyncCursor
     collection: schemas.Collection
     connection: schemas.Connection
-    entity_map: dict[type[BaseEntity], UUID]
-    ctx: ApiContext
-    guard_rail: GuardRailService
-    logger: ContextualLogger
 
-    force_full_sync: bool = False
-    # Whether any destination supports keyword (sparse) indexing. Set once before run.
-    has_keyword_index: bool = False
-
-    # batching knobs (read by SyncOrchestrator at init)
-    should_batch: bool = True
-    batch_size: int = 64
-    max_batch_latency_ms: int = 200
-
-    # Optional execution config for controlling sync behavior
+    # Optional execution config
     execution_config: Optional[SyncExecutionConfig] = None
 
-    def __init__(
-        self,
-        source: BaseSource,
-        destinations: list[BaseDestination],
-        sync: schemas.Sync,
-        sync_job: schemas.SyncJob,
-        entity_tracker: EntityTracker,
-        state_publisher: SyncStatePublisher,
-        cursor: SyncCursor,
-        collection: schemas.Collection,
-        connection: schemas.Connection,
-        entity_map: dict[type[BaseEntity], UUID],
-        ctx: ApiContext,
-        guard_rail: GuardRailService,
-        logger: ContextualLogger,
-        force_full_sync: bool = False,
-        # Micro-batching controls
-        should_batch: bool = True,
-        batch_size: int = 64,
-        max_batch_latency_ms: int = 200,
-        has_keyword_index: bool = False,
-        execution_config: Optional[SyncExecutionConfig] = None,
-    ):
-        """Initialize the sync context."""
-        self.source = source
-        self.destinations = destinations
-        self.sync = sync
-        self.sync_job = sync_job
-        self.entity_tracker = entity_tracker
-        self.state_publisher = state_publisher
-        self.cursor = cursor
-        self.collection = collection
-        self.connection = connection
-        self.entity_map = entity_map
-        self.ctx = ctx
-        self.guard_rail = guard_rail
-        self.logger = logger
-        self.force_full_sync = force_full_sync
+    # -------------------------------------------------------------------------
+    # Convenience Accessors (for common patterns)
+    # -------------------------------------------------------------------------
 
-        # Concurrency / batching knobs
-        self.should_batch = should_batch
-        self.batch_size = batch_size
-        self.max_batch_latency_ms = max_batch_latency_ms
-        # Destination capabilities (precomputed)
-        self.has_keyword_index = has_keyword_index
-        # Execution config for controlling sync behavior
-        self.execution_config = execution_config
+    @property
+    def logger(self):
+        """Shortcut to infra.logger (used everywhere)."""
+        return self.infra.logger
+
+    @property
+    def ctx(self):
+        """Shortcut to infra.ctx (used everywhere)."""
+        return self.infra.ctx
+
+    @property
+    def entity_map(self):
+        """Shortcut to destinations.entity_map."""
+        return self.destinations.entity_map
+
+    @property
+    def cursor(self):
+        """Shortcut to source.cursor."""
+        return self.source.cursor
+
+    @property
+    def source_instance(self):
+        """Shortcut to source.source (the actual BaseSource instance)."""
+        return self.source.source
+
+    @property
+    def destination_list(self):
+        """Shortcut to destinations.destinations (the list of BaseDestination)."""
+        return self.destinations.destinations
+
+    @property
+    def entity_tracker(self):
+        """Shortcut to tracking.entity_tracker."""
+        return self.tracking.entity_tracker
+
+    @property
+    def state_publisher(self):
+        """Shortcut to tracking.state_publisher."""
+        return self.tracking.state_publisher
+
+    @property
+    def guard_rail(self):
+        """Shortcut to tracking.guard_rail."""
+        return self.tracking.guard_rail
+
+    @property
+    def force_full_sync(self) -> bool:
+        """Shortcut to batch_config.force_full_sync."""
+        return self.batch_config.force_full_sync
+
+    @property
+    def should_batch(self) -> bool:
+        """Shortcut to batch_config.should_batch."""
+        return self.batch_config.should_batch
+
+    @property
+    def batch_size(self) -> int:
+        """Shortcut to batch_config.batch_size."""
+        return self.batch_config.batch_size
+
+    @property
+    def max_batch_latency_ms(self) -> int:
+        """Shortcut to batch_config.max_batch_latency_ms."""
+        return self.batch_config.max_batch_latency_ms
+
+    @property
+    def has_keyword_index(self) -> bool:
+        """Shortcut to destinations.has_keyword_index."""
+        return self.destinations.has_keyword_index

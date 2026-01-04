@@ -97,7 +97,7 @@ class CleanupService:
                 )
                 return
 
-            downloader = sync_context.source.file_downloader
+            downloader = sync_context.source_instance.file_downloader
             if downloader is None:
                 sync_context.logger.debug("File downloader not initialized, skipping temp cleanup")
                 return
