@@ -1041,38 +1041,15 @@ class SearchFactory:
             source_instance._source_connection_id = str(source_connection.id)
 
             # Step 9: Setup token manager for OAuth sources that support refresh
-            # Skip for proxy mode (proxy client manages tokens internally)
-            from airweave.platform.auth_providers.auth_result import AuthProviderMode
-            from airweave.schemas.source_connection import OAuthType
-
-            auth_mode = auth_config.get("auth_mode")
-            is_proxy_mode = auth_mode == AuthProviderMode.PROXY
-
-            if source_model.oauth_type and not is_proxy_mode:
-                # Only create token manager for sources with refresh capability
-                if source_model.oauth_type in (
-                    OAuthType.WITH_REFRESH,
-                    OAuthType.WITH_ROTATING_REFRESH,
-                ):
-                    self._setup_token_manager(
-                        source_instance,
-                        db,
-                        source_connection,
-                        source_connection_data.get("integration_credential_id"),
-                        auth_config["credentials"],
-                        ctx,
-                        auth_provider_instance=auth_config.get("auth_provider_instance"),
-                    )
-                else:
-                    ctx.logger.debug(
-                        f"⏭️ Skipping token manager for {source_connection.short_name} - "
-                        f"oauth_type={source_model.oauth_type} does not support token refresh"
-                    )
-            elif is_proxy_mode:
-                ctx.logger.info(
-                    f"⏭️ Skipping token manager for {source_connection.short_name} - "
-                    f"proxy mode (proxy client manages tokens internally)"
-                )
+            self._maybe_setup_token_manager(
+                source_instance,
+                source_model,
+                db,
+                source_connection,
+                source_connection_data,
+                auth_config,
+                ctx,
+            )
 
             ctx.logger.info(
                 f"Successfully instantiated federated source: {source_connection.short_name}"
@@ -1090,6 +1067,51 @@ class SearchFactory:
                 f"This source is configured for your collection but cannot be searched. "
                 f"Error: {str(e)}"
             ) from e
+
+    def _maybe_setup_token_manager(
+        self,
+        source_instance: BaseSource,
+        source_model,
+        db: AsyncSession,
+        source_connection,
+        source_connection_data: dict,
+        auth_config: dict,
+        ctx: ApiContext,
+    ) -> None:
+        """Setup token manager if source requires it, skip for proxy mode."""
+        from airweave.platform.auth_providers.auth_result import AuthProviderMode
+        from airweave.schemas.source_connection import OAuthType
+
+        auth_mode = auth_config.get("auth_mode")
+        is_proxy_mode = auth_mode == AuthProviderMode.PROXY
+
+        if is_proxy_mode:
+            ctx.logger.info(
+                f"⏭️ Skipping token manager for {source_connection.short_name} - "
+                f"proxy mode (proxy client manages tokens internally)"
+            )
+            return
+
+        if not source_model.oauth_type:
+            return
+
+        # Only create token manager for sources with refresh capability
+        if source_model.oauth_type not in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
+            ctx.logger.debug(
+                f"⏭️ Skipping token manager for {source_connection.short_name} - "
+                f"oauth_type={source_model.oauth_type} does not support token refresh"
+            )
+            return
+
+        self._setup_token_manager(
+            source_instance,
+            db,
+            source_connection,
+            source_connection_data.get("integration_credential_id"),
+            auth_config["credentials"],
+            ctx,
+            auth_provider_instance=auth_config.get("auth_provider_instance"),
+        )
 
     def _setup_token_manager(
         self,

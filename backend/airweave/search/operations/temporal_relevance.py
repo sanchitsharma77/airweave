@@ -10,6 +10,7 @@ declare supports_temporal_relevance=False will be skipped by the factory.
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional
+from uuid import UUID
 
 from qdrant_client.http import models as rest
 
@@ -79,53 +80,7 @@ class TemporalRelevance(SearchOperation):
 
         # Get filter from state if available (respects filtered timespan)
         filter_dict = state.get("filter")
-        qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
-
-        # Inject tenant filter for multi-tenant isolation
-        tenant_condition = rest.FieldCondition(
-            key="airweave_collection_id",
-            match=rest.MatchValue(value=str(context.collection_id)),
-        )
-
-        # CRITICAL: Filter to only documents with updated_at field
-        # This prevents Qdrant decay formula errors on documents without timestamps
-        # IsEmpty matches: field doesn't exist OR is null OR is []
-        # We use must_not to require: field exists AND has a value
-        has_timestamp_condition = rest.IsEmptyCondition(
-            is_empty=rest.PayloadField(key=self.DATETIME_FIELD)
-        )
-
-        # Build must conditions list
-        must_conditions = [tenant_condition]
-
-        # Add source filter if we're restricting to temporal-supporting sources
-        if self.supporting_sources is not None:
-            source_condition = rest.FieldCondition(
-                key="airweave_system_metadata.source_name",
-                match=rest.MatchAny(any=self.supporting_sources),
-            )
-            must_conditions.append(source_condition)
-            ctx.logger.info(
-                f"[TemporalRelevance] Filtering to {len(self.supporting_sources)} "
-                f"temporal-supporting source(s): {self.supporting_sources}"
-            )
-
-        if qdrant_filter:
-            # Merge with existing filter
-            if not qdrant_filter.must:
-                qdrant_filter.must = []
-            qdrant_filter.must.extend(must_conditions)
-            # Ensure documents have the timestamp field for decay calculation
-            if not qdrant_filter.must_not:
-                qdrant_filter.must_not = []
-            qdrant_filter.must_not.append(has_timestamp_condition)
-        else:
-            # Create new filter with tenant, source, and timestamp requirements
-            qdrant_filter = rest.Filter(must=must_conditions, must_not=[has_timestamp_condition])
-
-        ctx.logger.debug(
-            f"[TemporalRelevance] Applied tenant filter: collection_id={context.collection_id}"
-        )
+        qdrant_filter = self._build_temporal_filter(filter_dict, context.collection_id, ctx)
 
         # Import QdrantDestination for type checking
         from airweave.platform.destinations.qdrant import QdrantDestination
@@ -139,7 +94,10 @@ class TemporalRelevance(SearchOperation):
             )
             await context.emitter.emit(
                 "recency_skipped",
-                {"reason": "destination_not_supported", "destination": type(self.destination).__name__},
+                {
+                    "reason": "destination_not_supported",
+                    "destination": type(self.destination).__name__,
+                },
                 op_name=self.__class__.__name__,
             )
             return
@@ -227,7 +185,7 @@ class TemporalRelevance(SearchOperation):
         )
         ctx.logger.debug(f"[TemporalRelevance] Temporal config: {temporal_config}")
 
-        # Write to state - includes both temporal config AND updated filter with timestamp requirement
+        # Write to state - includes temporal config AND updated filter with timestamp req
         state["temporal_config"] = temporal_config
 
         # CRITICAL: Update the filter in state to exclude documents without timestamps
@@ -238,6 +196,52 @@ class TemporalRelevance(SearchOperation):
             f"[TemporalRelevance] Updated filter to require {self.DATETIME_FIELD} field "
             "for decay calculation"
         )
+
+    def _build_temporal_filter(
+        self, filter_dict: Optional[dict], collection_id: UUID, ctx: ApiContext
+    ) -> rest.Filter:
+        """Build complete Qdrant filter with tenant isolation and timestamp requirements."""
+        qdrant_filter = self._convert_to_qdrant_filter(filter_dict)
+
+        # Build must conditions
+        tenant_condition = rest.FieldCondition(
+            key="airweave_collection_id",
+            match=rest.MatchValue(value=str(collection_id)),
+        )
+        must_conditions = [tenant_condition]
+
+        # Add source filter if we're restricting to temporal-supporting sources
+        if self.supporting_sources is not None:
+            source_condition = rest.FieldCondition(
+                key="airweave_system_metadata.source_name",
+                match=rest.MatchAny(any=self.supporting_sources),
+            )
+            must_conditions.append(source_condition)
+            ctx.logger.info(
+                f"[TemporalRelevance] Filtering to {len(self.supporting_sources)} "
+                f"temporal-supporting source(s): {self.supporting_sources}"
+            )
+
+        # Timestamp exclusion condition
+        has_timestamp_condition = rest.IsEmptyCondition(
+            is_empty=rest.PayloadField(key=self.DATETIME_FIELD)
+        )
+
+        if qdrant_filter:
+            # Merge with existing filter
+            if not qdrant_filter.must:
+                qdrant_filter.must = []
+            qdrant_filter.must.extend(must_conditions)
+            if not qdrant_filter.must_not:
+                qdrant_filter.must_not = []
+            qdrant_filter.must_not.append(has_timestamp_condition)
+        else:
+            qdrant_filter = rest.Filter(must=must_conditions, must_not=[has_timestamp_condition])
+
+        ctx.logger.debug(
+            f"[TemporalRelevance] Applied tenant filter: collection_id={collection_id}"
+        )
+        return qdrant_filter
 
     def _build_filter_excluding_null_timestamps(self, filter_dict: Optional[dict]) -> dict:
         """Build filter that excludes documents without updated_at field.

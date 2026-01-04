@@ -182,79 +182,97 @@ class VespaDestination(VectorDBDestination):
         Returns:
             Tuple of (schema_name, doc_dict) where doc_dict has 'id' and 'fields' keys
         """
-        # Get entity type from metadata or class name
-        entity_type = (
-            entity.airweave_system_metadata.entity_type
-            if entity.airweave_system_metadata and entity.airweave_system_metadata.entity_type
-            else entity.__class__.__name__
-        )
-
-        # Determine the Vespa schema for this entity
+        entity_type = self._get_entity_type(entity)
         schema = self._get_vespa_schema(entity)
-
-        # Composite document ID: entity_type + entity_id for uniqueness
         doc_id = f"{entity_type}_{entity.entity_id}"
 
-        # Build fields dict with base entity fields
-        fields = {
+        # Build fields from various sources
+        fields = self._build_base_fields(entity)
+        self._add_system_metadata_fields(fields, entity, entity_type)
+        self._add_type_specific_fields(fields, entity)
+        self._add_payload_field(fields, entity)
+
+        # Remove None values from top-level fields
+        fields = {k: v for k, v in fields.items() if v is not None}
+
+        return schema, {"id": doc_id, "fields": fields}
+
+    def _get_entity_type(self, entity: BaseEntity) -> str:
+        """Get entity type from metadata or class name."""
+        if entity.airweave_system_metadata and entity.airweave_system_metadata.entity_type:
+            return entity.airweave_system_metadata.entity_type
+        return entity.__class__.__name__
+
+    def _build_base_fields(self, entity: BaseEntity) -> dict[str, Any]:
+        """Build base fields dict from entity."""
+        fields: dict[str, Any] = {
             "entity_id": entity.entity_id,
             "name": entity.name,
         }
-
-        # Breadcrumbs (array of struct)
         if entity.breadcrumbs:
             fields["breadcrumbs"] = [b.model_dump() for b in entity.breadcrumbs]
-
-        # Timestamps as epoch seconds (Vespa expects long)
         if entity.created_at:
             fields["created_at"] = int(entity.created_at.timestamp())
         if entity.updated_at:
             fields["updated_at"] = int(entity.updated_at.timestamp())
-
-        # Textual representation - this is what Vespa chunks and embeds
         if entity.textual_representation:
             fields["textual_representation"] = entity.textual_representation
+        return fields
 
-        # System metadata (flattened - Vespa doesn't support struct-field
-        # attributes on plain structs, only on array<struct> or map types)
-        # Build meta_fields dict first, then prefix with airweave_system_metadata_
-        meta_fields: dict[str, Any] = {}
+    def _add_system_metadata_fields(
+        self, fields: dict[str, Any], entity: BaseEntity, entity_type: str
+    ) -> None:
+        """Add flattened system metadata fields with airweave_system_metadata_ prefix."""
+        meta_fields = self._build_system_metadata(entity)
 
+        # Add collection_id if available
         if self.collection_id:
             meta_fields["collection_id"] = str(self.collection_id)
 
-        if entity.airweave_system_metadata:
-            meta = entity.airweave_system_metadata
-            if meta.entity_type:
-                meta_fields["entity_type"] = meta.entity_type
-            if meta.sync_id:
-                meta_fields["sync_id"] = str(meta.sync_id)
-            if meta.sync_job_id:
-                meta_fields["sync_job_id"] = str(meta.sync_job_id)
-            if meta.hash:
-                meta_fields["hash"] = meta.hash
-            if meta.original_entity_id:
-                meta_fields["original_entity_id"] = meta.original_entity_id
-            if meta.source_name:
-                meta_fields["source_name"] = meta.source_name
-
         # Ensure critical metadata is always present
-        if "entity_type" not in meta_fields:
-            meta_fields["entity_type"] = entity_type
+        meta_fields.setdefault("entity_type", entity_type)
         if "original_entity_id" not in meta_fields and entity.entity_id:
             meta_fields["original_entity_id"] = entity.entity_id
 
-        # Flatten to Vespa fields with airweave_system_metadata_ prefix
         for key, value in meta_fields.items():
             if value is not None:
                 fields[f"airweave_system_metadata_{key}"] = value
 
-        # Add web-specific fields if this is a WebEntity
+    def _build_system_metadata(self, entity: BaseEntity) -> dict[str, Any]:
+        """Extract system metadata from entity."""
+        meta_fields: dict[str, Any] = {}
+        meta = entity.airweave_system_metadata
+        if not meta:
+            return meta_fields
+
+        # Map attribute names to field names and optional transforms
+        attr_mappings = [
+            ("entity_type", "entity_type", None),
+            ("sync_id", "sync_id", str),
+            ("sync_job_id", "sync_job_id", str),
+            ("hash", "hash", None),
+            ("original_entity_id", "original_entity_id", None),
+            ("source_name", "source_name", None),
+        ]
+
+        for attr, field_name, transform in attr_mappings:
+            value = getattr(meta, attr, None)
+            if value is not None:
+                meta_fields[field_name] = transform(value) if transform else value
+
+        return meta_fields
+
+    def _add_type_specific_fields(self, fields: dict[str, Any], entity: BaseEntity) -> None:
+        """Add fields specific to entity subtype (WebEntity, FileEntity, etc.)."""
         if isinstance(entity, WebEntity):
             fields["crawl_url"] = entity.crawl_url
-
-        # Add file-specific fields if this is a FileEntity
-        if isinstance(entity, FileEntity):
+        elif isinstance(entity, CodeFileEntity):
+            fields["repo_name"] = entity.repo_name
+            fields["path_in_repo"] = entity.path_in_repo
+            fields["repo_owner"] = entity.repo_owner
+            fields["language"] = entity.language
+            fields["commit_id"] = entity.commit_id
+        elif isinstance(entity, FileEntity):
             fields["url"] = entity.url
             fields["size"] = entity.size
             fields["file_type"] = entity.file_type
@@ -263,29 +281,24 @@ class VespaDestination(VectorDBDestination):
             if entity.local_path:
                 fields["local_path"] = entity.local_path
 
-        # Add code-specific fields if this is a CodeFileEntity
-        if isinstance(entity, CodeFileEntity):
-            fields["repo_name"] = entity.repo_name
-            fields["path_in_repo"] = entity.path_in_repo
-            fields["repo_owner"] = entity.repo_owner
-            fields["language"] = entity.language
-            fields["commit_id"] = entity.commit_id
-
-        # Extract extra fields into payload JSON
-        # Use dynamic field derivation so entity class definitions are the single source of truth
+    def _add_payload_field(self, fields: dict[str, Any], entity: BaseEntity) -> None:
+        """Extract extra fields into payload JSON."""
         schema_fields = _get_schema_fields_for_entity(entity)
         entity_dict = entity.model_dump(mode="json")
         payload = {k: v for k, v in entity_dict.items() if k not in schema_fields}
         if payload:
             fields["payload"] = json.dumps(payload)
 
-        # Remove None values from top-level fields
-        fields = {k: v for k, v in fields.items() if v is not None}
-
-        return schema, {
-            "id": doc_id,
-            "fields": fields,
-        }
+    def _transform_entities_by_schema(self, entities: list[BaseEntity]) -> dict[str, list[dict]]:
+        """Transform entities and group by Vespa schema."""
+        docs_by_schema: dict[str, list[dict]] = defaultdict(list)
+        for entity in entities:
+            try:
+                schema, vespa_doc = self._transform_entity(entity)
+                docs_by_schema[schema].append(vespa_doc)
+            except Exception as e:
+                self.logger.error(f"Failed to transform entity {entity.entity_id}: {e}")
+        return docs_by_schema
 
     async def setup_collection(self, vector_size: int | None = None) -> None:
         """Set up collection in Vespa.
@@ -318,14 +331,7 @@ class VespaDestination(VectorDBDestination):
         self.logger.info(f"Feeding {len(entities)} entities to Vespa (batch)")
 
         # Transform all entities to Vespa format, grouped by schema
-        docs_by_schema: dict[str, list[dict]] = defaultdict(list)
-        for entity in entities:
-            try:
-                schema, vespa_doc = self._transform_entity(entity)
-                docs_by_schema[schema].append(vespa_doc)
-            except Exception as e:
-                self.logger.error(f"Failed to transform entity {entity.entity_id}: {e}")
-
+        docs_by_schema = self._transform_entities_by_schema(entities)
         total_docs = sum(len(docs) for docs in docs_by_schema.values())
         if total_docs == 0:
             self.logger.warning("No documents to feed after transformation")
@@ -362,22 +368,28 @@ class VespaDestination(VectorDBDestination):
         self.logger.info(f"Vespa feed complete: {success_count} success, {len(failed_docs)} failed")
 
         if failed_docs:
-            self.logger.error(f"{len(failed_docs)}/{total_docs} documents failed to feed")
-            # Log first few failures for debugging
-            for doc_id, status, body in failed_docs[:5]:
-                self.logger.error(f"  Failed {doc_id}: status={status}, body={body}")
+            self._handle_feed_failures(failed_docs, total_docs)
 
-            # Raise exception to fail the sync - consistent with QdrantDestination behavior
-            first_doc_id, first_status, first_body = failed_docs[0]
-            error_msg = (
-                first_body.get("Exception", str(first_body))
-                if isinstance(first_body, dict)
-                else str(first_body)
-            )
-            raise RuntimeError(
-                f"Vespa feed failed: {len(failed_docs)}/{total_docs} documents. "
-                f"First error ({first_doc_id}): {error_msg}"
-            )
+    def _handle_feed_failures(
+        self, failed_docs: list[tuple[str, int, dict]], total_docs: int
+    ) -> None:
+        """Log and raise error for feed failures."""
+        self.logger.error(f"{len(failed_docs)}/{total_docs} documents failed to feed")
+        # Log first few failures for debugging
+        for doc_id, status, body in failed_docs[:5]:
+            self.logger.error(f"  Failed {doc_id}: status={status}, body={body}")
+
+        # Raise exception to fail the sync - consistent with QdrantDestination behavior
+        first_doc_id, first_status, first_body = failed_docs[0]
+        error_msg = (
+            first_body.get("Exception", str(first_body))
+            if isinstance(first_body, dict)
+            else str(first_body)
+        )
+        raise RuntimeError(
+            f"Vespa feed failed: {len(failed_docs)}/{total_docs} documents. "
+            f"First error ({first_doc_id}): {error_msg}"
+        )
 
     # Vespa schema names derived from entity class hierarchy
     # These match the _get_vespa_schema() method mapping
@@ -475,9 +487,6 @@ class VespaDestination(VectorDBDestination):
         IMPORTANT: pyvespa query() and delete_data() are synchronous,
         so we run them in a thread pool to avoid blocking the event loop.
 
-        Uses pagination to handle large result sets that may exceed Vespa's
-        configured max hits limit.
-
         Args:
             yql: YQL query to find documents to delete
             schema: The Vespa schema to delete from
@@ -489,9 +498,7 @@ class VespaDestination(VectorDBDestination):
         total_deleted = 0
 
         try:
-            # Paginate through all matching documents
             while True:
-                # Run synchronous query in thread pool
                 response = await asyncio.to_thread(self.app.query, yql=yql, hits=batch_size)
 
                 if not response.is_successful():
@@ -499,58 +506,72 @@ class VespaDestination(VectorDBDestination):
                     return
 
                 hits = response.hits or []
-                if not hits:
-                    if total_deleted > 0:
-                        self.logger.info(
-                            f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
-                        )
-                    else:
-                        self.logger.debug(f"No documents found to delete from {schema}")
-                    return
-
-                self.logger.debug(
-                    f"Deleting batch of {len(hits)} documents from Vespa schema '{schema}'"
+                done, batch_deleted = await self._process_delete_batch(
+                    hits, schema, batch_size, total_deleted
                 )
-
-                # Collect document IDs to delete
-                doc_ids_to_delete = []
-                for hit in hits:
-                    doc_id = hit.get("id", "")
-                    if doc_id:
-                        # Extract the user-specified ID from the full document ID
-                        # Format: id:namespace:doctype::user_id
-                        parts = doc_id.split("::")
-                        if len(parts) >= 2:
-                            doc_ids_to_delete.append(parts[-1])
-
-                # Define synchronous delete operation for batch
-                # Use default arg to bind loop variable (avoids late binding issues)
-                def _delete_batch_sync(ids: list = doc_ids_to_delete) -> int:
-                    deleted = 0
-                    for user_id in ids:
-                        delete_response = self.app.delete_data(
-                            schema=schema,
-                            data_id=user_id,
-                            namespace="airweave",
-                        )
-                        if delete_response.is_successful():
-                            deleted += 1
-                    return deleted
-
-                # Run synchronous deletes in thread pool
-                deleted = await asyncio.to_thread(_delete_batch_sync)
-                total_deleted += deleted
-
-                # If we got fewer hits than batch_size, we're done
-                if len(hits) < batch_size:
-                    if total_deleted > 0:
-                        self.logger.info(
-                            f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
-                        )
+                total_deleted += batch_deleted
+                if done:
                     break
 
         except Exception as e:
             self.logger.error(f"Error during delete operation: {e}")
+
+    async def _process_delete_batch(
+        self, hits: list, schema: str, batch_size: int, total_deleted: int
+    ) -> tuple[bool, int]:
+        """Process a batch of hits for deletion.
+
+        Returns:
+            Tuple of (is_done, deleted_count)
+        """
+        if not hits:
+            if total_deleted > 0:
+                self.logger.info(
+                    f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
+                )
+            else:
+                self.logger.debug(f"No documents found to delete from {schema}")
+            return True, 0
+
+        self.logger.debug(f"Deleting batch of {len(hits)} documents from Vespa schema '{schema}'")
+
+        doc_ids = self._extract_doc_ids_from_hits(hits)
+        deleted = await asyncio.to_thread(self._delete_docs_sync, doc_ids, schema)
+
+        if len(hits) < batch_size:
+            if total_deleted + deleted > 0:
+                self.logger.info(
+                    f"Deleted {total_deleted + deleted} total documents from "
+                    f"Vespa schema '{schema}'"
+                )
+            return True, deleted
+
+        return False, deleted
+
+    def _extract_doc_ids_from_hits(self, hits: list) -> list[str]:
+        """Extract user-specified IDs from Vespa document IDs."""
+        doc_ids = []
+        for hit in hits:
+            doc_id = hit.get("id", "")
+            if doc_id:
+                # Format: id:namespace:doctype::user_id
+                parts = doc_id.split("::")
+                if len(parts) >= 2:
+                    doc_ids.append(parts[-1])
+        return doc_ids
+
+    def _delete_docs_sync(self, doc_ids: list[str], schema: str) -> int:
+        """Synchronously delete documents by ID. Must be run in thread pool."""
+        deleted = 0
+        for user_id in doc_ids:
+            delete_response = self.app.delete_data(
+                schema=schema,
+                data_id=user_id,
+                namespace="airweave",
+            )
+            if delete_response.is_successful():
+                deleted += 1
+        return deleted
 
     # Production search settings (100k+ entities, LLM input)
     # targetHits: 400 per method → ~800 candidates before deduplication
@@ -887,52 +908,53 @@ class VespaDestination(VectorDBDestination):
 
         # Handle FieldCondition with 'key' and 'match'
         if "key" in condition and "match" in condition:
-            key = self._map_field_name(condition["key"])
-            match = condition["match"]
-
-            if isinstance(match, dict):
-                value = match.get("value", "")
-            else:
-                value = match
-
-            # Escape quotes in value
-            if isinstance(value, str):
-                escaped_value = value.replace('"', '\\"')
-                return f'{key} contains "{escaped_value}"'
-            elif isinstance(value, bool):
-                return f"{key} = {str(value).lower()}"
-            elif isinstance(value, (int, float)):
-                return f"{key} = {value}"
-            else:
-                return f'{key} contains "{value}"'
+            return self._translate_match_condition(condition)
 
         # Handle FieldCondition with 'key' and 'range'
         if "key" in condition and "range" in condition:
-            key = self._map_field_name(condition["key"])
-            range_cond = condition["range"]
-            parts = []
-
-            if "gt" in range_cond:
-                parts.append(f"{key} > {range_cond['gt']}")
-            if "gte" in range_cond:
-                parts.append(f"{key} >= {range_cond['gte']}")
-            if "lt" in range_cond:
-                parts.append(f"{key} < {range_cond['lt']}")
-            if "lte" in range_cond:
-                parts.append(f"{key} <= {range_cond['lte']}")
-
-            return " AND ".join(parts) if parts else ""
+            return self._translate_range_condition(condition)
 
         # Handle HasId filter (list of IDs)
         if "has_id" in condition:
-            ids = condition["has_id"]
-            if ids:
-                id_clauses = [f'entity_id contains "{id}"' for id in ids]
-                return f"({' OR '.join(id_clauses)})"
-            return ""
+            return self._translate_has_id_condition(condition)
 
         # Fallback - return empty (will be filtered out)
         self.logger.debug(f"[VespaSearch] Unknown condition type: {condition}")
+        return ""
+
+    def _translate_match_condition(self, condition: Dict[str, Any]) -> str:
+        """Translate a match condition to YQL."""
+        key = self._map_field_name(condition["key"])
+        match = condition["match"]
+        value = match.get("value", "") if isinstance(match, dict) else match
+
+        if isinstance(value, str):
+            escaped_value = value.replace('"', '\\"')
+            return f'{key} contains "{escaped_value}"'
+        elif isinstance(value, bool):
+            return f"{key} = {str(value).lower()}"
+        elif isinstance(value, (int, float)):
+            return f"{key} = {value}"
+        return f'{key} contains "{value}"'
+
+    def _translate_range_condition(self, condition: Dict[str, Any]) -> str:
+        """Translate a range condition to YQL."""
+        key = self._map_field_name(condition["key"])
+        range_cond = condition["range"]
+        parts = []
+
+        for op, symbol in [("gt", ">"), ("gte", ">="), ("lt", "<"), ("lte", "<=")]:
+            if op in range_cond:
+                parts.append(f"{key} {symbol} {range_cond[op]}")
+
+        return " AND ".join(parts) if parts else ""
+
+    def _translate_has_id_condition(self, condition: Dict[str, Any]) -> str:
+        """Translate a has_id condition to YQL."""
+        ids = condition["has_id"]
+        if ids:
+            id_clauses = [f'entity_id contains "{id}"' for id in ids]
+            return f"({' OR '.join(id_clauses)})"
         return ""
 
     def _convert_vespa_results(self, response: Any) -> List[SearchResult]:

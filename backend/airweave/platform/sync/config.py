@@ -35,7 +35,6 @@ class SyncExecutionConfig(BaseModel):
     @model_validator(mode="after")
     def validate_config_logic(self):
         """Validate that config combinations make sense."""
-
         # 1. Detect conflicts between target and exclude destinations
         if self.target_destinations and self.exclude_destinations:
             overlap = set(self.target_destinations) & set(self.exclude_destinations)
@@ -48,8 +47,9 @@ class SyncExecutionConfig(BaseModel):
         # 2. Warn about replay configs that re-write to ARF
         if self.target_destinations and self.enable_raw_data_handler:
             warnings.warn(
-                "Writing to specific destinations with raw_data_handler enabled may duplicate ARF data. "
-                "Consider disable_raw_data_handler if replaying from ARF.",
+                "Writing to specific destinations with raw_data_handler enabled "
+                "may duplicate ARF data. Consider disable_raw_data_handler if "
+                "replaying from ARF.",
                 stacklevel=2,
             )
 
