@@ -1265,10 +1265,10 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                                 ? "Stop search"
                                                 : canRetrySearch
                                                     ? (transientIssue?.message || "Connection interrupted. Click to retry.")
-                                                    : (!hasQuery
-                                                        ? "Type a question to enable"
-                                                        : (disabled
-                                                            ? "Connect a source to enable search"
+                                                    : (disabled
+                                                        ? "Connect a source to enable search."
+                                                        : (!hasQuery
+                                                            ? "Type a question to enable"
                                                             : (!queriesAllowed
                                                                 ? "Query limit reached — upgrade to run searches"
                                                                 : (isCheckingUsage ? "Checking usage..." : "Send query"))))}
