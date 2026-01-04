@@ -270,7 +270,7 @@ class TemporalWorker:
                 sync["workers_allocated"] = worker_counts_map.get(sync["sync_id"], 0)
                 # Add duration if available from activities
                 for activity in metrics["active_activities"]:
-                    if activity.get("sync_id") == sync["sync_id"]:
+                    if activity.get("sync_job_id") == sync["sync_job_id"]:
                         sync["duration_seconds"] = activity.get("duration_seconds", 0)
                         break
                 else:
