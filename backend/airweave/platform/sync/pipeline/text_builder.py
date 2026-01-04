@@ -11,7 +11,7 @@ from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailure
 from airweave.platform.sync.file_types import SUPPORTED_FILE_EXTENSIONS
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class TextualRepresentationBuilder:

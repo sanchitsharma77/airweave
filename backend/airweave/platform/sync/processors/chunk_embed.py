@@ -13,7 +13,7 @@ from airweave.platform.sync.processors.protocol import ContentProcessor
 from airweave.platform.sync.processors.utils import filter_empty_representations
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class ChunkEmbedProcessor(ContentProcessor):

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List
 from airweave.platform.entities._base import BaseEntity
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 async def filter_empty_representations(

@@ -1,4 +1,4 @@
-"""Destination builder for sync operations.
+"""Destinations context builder for sync operations.
 
 Handles destination creation with:
 - Native destinations (Qdrant, Vespa) using settings
@@ -14,7 +14,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud, schemas
-from airweave.api.context import ApiContext
 from airweave.core import credentials
 from airweave.core.constants.reserved_ids import (
     NATIVE_QDRANT_UUID,
@@ -23,15 +22,16 @@ from airweave.core.constants.reserved_ids import (
 )
 from airweave.core.logging import ContextualLogger
 from airweave.db.init_db_native import init_db_with_entity_definitions
+from airweave.platform.contexts.destinations import DestinationsContext
+from airweave.platform.contexts.infra import InfraContext
 from airweave.platform.destinations._base import BaseDestination
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.locator import resource_locator
-from airweave.platform.sync.bundles import DestinationBundle
 from airweave.platform.sync.config import SyncExecutionConfig
 
 
-class DestinationBuilder:
-    """Builds destination pipeline with all required configuration."""
+class DestinationsContextBuilder:
+    """Builds destinations context with all required configuration."""
 
     @classmethod
     async def build(
@@ -39,23 +39,24 @@ class DestinationBuilder:
         db: AsyncSession,
         sync: schemas.Sync,
         collection: schemas.Collection,
-        ctx: ApiContext,
-        logger: ContextualLogger,
+        infra: InfraContext,
         execution_config: Optional[SyncExecutionConfig] = None,
-    ) -> DestinationBundle:
-        """Build complete destination bundle.
+    ) -> DestinationsContext:
+        """Build complete destinations context.
 
         Args:
             db: Database session
             sync: Sync configuration
             collection: Target collection
-            ctx: API context
-            logger: Contextual logger
+            infra: Infrastructure context (provides ctx and logger)
             execution_config: Optional execution config for filtering
 
         Returns:
-            DestinationBundle with configured destinations and entity map
+            DestinationsContext with configured destinations and entity map.
         """
+        ctx = infra.ctx
+        logger = infra.logger
+
         # Build in parallel: destinations and entity map
         destinations, entity_map = await asyncio.gather(
             cls._create_destinations(
@@ -72,10 +73,39 @@ class DestinationBuilder:
         # Precompute keyword index capability
         has_keyword_index = await cls._check_keyword_index(destinations, logger)
 
-        return DestinationBundle(
+        return DestinationsContext(
             destinations=destinations,
             entity_map=entity_map,
             has_keyword_index=has_keyword_index,
+        )
+
+    @classmethod
+    async def build_for_collection(
+        cls,
+        db: AsyncSession,
+        sync: schemas.Sync,
+        collection: schemas.Collection,
+        infra: InfraContext,
+    ) -> DestinationsContext:
+        """Build destinations context for collection-level operations.
+
+        Simplified version without execution_config filtering.
+
+        Args:
+            db: Database session
+            sync: Sync configuration
+            collection: Target collection
+            infra: Infrastructure context
+
+        Returns:
+            DestinationsContext with all configured destinations.
+        """
+        return await cls.build(
+            db=db,
+            sync=sync,
+            collection=collection,
+            infra=infra,
+            execution_config=None,
         )
 
     # -------------------------------------------------------------------------
@@ -83,12 +113,12 @@ class DestinationBuilder:
     # -------------------------------------------------------------------------
 
     @classmethod
-    async def _create_destinations(  # noqa: C901
+    async def _create_destinations(
         cls,
         db: AsyncSession,
         sync: schemas.Sync,
         collection: schemas.Collection,
-        ctx: ApiContext,
+        ctx,
         logger: ContextualLogger,
         execution_config: Optional[SyncExecutionConfig] = None,
     ) -> List[BaseDestination]:
@@ -138,7 +168,7 @@ class DestinationBuilder:
         destination_connection_id: UUID,
         sync: schemas.Sync,
         collection: schemas.Collection,
-        ctx: ApiContext,
+        ctx,
         logger: ContextualLogger,
     ) -> Optional[BaseDestination]:
         """Create a single destination instance."""
@@ -229,13 +259,15 @@ class DestinationBuilder:
         destination_connection_id: UUID,
         sync: schemas.Sync,
         collection: schemas.Collection,
-        ctx: ApiContext,
+        ctx,
         logger: ContextualLogger,
     ) -> Optional[BaseDestination]:
         """Create custom destination from database connection."""
         destination_connection = await crud.connection.get(db, destination_connection_id, ctx)
         if not destination_connection:
-            logger.warning(f"Destination connection {destination_connection_id} not found, skipping")
+            logger.warning(
+                f"Destination connection {destination_connection_id} not found, skipping"
+            )
             return None
 
         destination_model = await crud.destination.get_by_short_name(
@@ -356,4 +388,3 @@ class DestinationBuilder:
             return filtered_ids
 
         return destination_ids
-

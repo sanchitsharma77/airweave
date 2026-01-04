@@ -8,8 +8,8 @@ import tiktoken
 from openai import AsyncOpenAI
 
 from airweave.core.config import settings
+from airweave.platform.contexts import SyncContext
 from airweave.platform.rate_limiters.openai import OpenAIRateLimiter
-from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.exceptions import SyncFailureError
 
 from ._base import BaseEmbedder

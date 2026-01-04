@@ -7,7 +7,7 @@ from airweave.platform.entities._base import FileEntity
 from airweave.platform.sync.exceptions import SyncFailureError
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class CleanupService:

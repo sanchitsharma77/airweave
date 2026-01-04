@@ -13,7 +13,7 @@ from airweave.platform.sync.handlers.postgres import PostgresMetadataHandler
 from airweave.platform.sync.handlers.protocol import ActionHandler
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class ActionDispatcher:

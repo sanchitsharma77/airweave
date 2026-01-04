@@ -6,7 +6,7 @@ from airweave.platform.entities._base import BaseEntity
 from airweave.platform.sync.processors.protocol import ContentProcessor
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class RawProcessor(ContentProcessor):

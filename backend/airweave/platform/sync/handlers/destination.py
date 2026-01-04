@@ -27,8 +27,8 @@ from airweave.platform.sync.processors import (
 )
 
 if TYPE_CHECKING:
+    from airweave.platform.contexts import SyncContext
     from airweave.platform.entities import BaseEntity
-    from airweave.platform.sync.context import SyncContext
 
 
 # Singleton processors - stateless, reusable

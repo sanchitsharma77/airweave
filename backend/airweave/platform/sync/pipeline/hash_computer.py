@@ -12,7 +12,7 @@ from airweave.platform.entities._base import BaseEntity, CodeFileEntity, FileEnt
 from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailureError
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class HashComputer:

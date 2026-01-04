@@ -23,7 +23,7 @@ from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.handlers.protocol import ActionHandler
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class PostgresMetadataHandler(ActionHandler):
@@ -158,7 +158,8 @@ class PostgresMetadataHandler(ActionHandler):
             await db.commit()
 
         sync_context.logger.debug(
-            f"[Postgres] Persisted {len(batch.inserts)}I/{len(batch.updates)}U/{len(batch.deletes)}D"
+            f"[Postgres] Persisted {len(batch.inserts)}I/"
+            f"{len(batch.updates)}U/{len(batch.deletes)}D"
         )
 
     async def _do_inserts(
@@ -189,9 +190,8 @@ class PostgresMetadataHandler(ActionHandler):
         # Sort to avoid deadlocks
         create_objs.sort(key=lambda o: (o.entity_definition_id.int, o.entity_id))
 
-        sync_context.logger.debug(
-            f"[Postgres] Upserting {len(create_objs)} (sample: {[o.entity_id for o in create_objs[:5]]})"
-        )
+        sample_ids = [o.entity_id for o in create_objs[:5]]
+        sync_context.logger.debug(f"[Postgres] Upserting {len(create_objs)} (sample: {sample_ids})")
         await crud.entity.bulk_create(db, objs=create_objs, ctx=sync_context.ctx)
 
     async def _do_updates(

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, List, Protocol, runtime_checkable
 from airweave.platform.entities._base import BaseEntity
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 @runtime_checkable

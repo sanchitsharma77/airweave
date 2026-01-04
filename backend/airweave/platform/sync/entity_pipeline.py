@@ -15,13 +15,13 @@ from typing import Any, Dict, List
 from uuid import UUID
 
 from airweave.core.shared_models import AirweaveFieldFlag
+from airweave.platform.contexts import SyncContext
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.sync.actions import (
     ActionBatch,
     ActionDispatcher,
     ActionResolver,
 )
-from airweave.platform.sync.context import SyncContext
 from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.pipeline.cleanup_service import cleanup_service
 from airweave.platform.sync.pipeline.entity_tracker import EntityTracker

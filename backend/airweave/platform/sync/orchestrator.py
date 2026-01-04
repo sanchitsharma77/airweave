@@ -13,7 +13,7 @@ from airweave.core.shared_models import SyncJobStatus
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.core.sync_job_service import sync_job_service
 from airweave.db.session import get_db_context
-from airweave.platform.sync.context import SyncContext
+from airweave.platform.contexts import SyncContext
 from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailureError
 from airweave.platform.sync.stream import AsyncSourceStream
@@ -45,18 +45,10 @@ class SyncOrchestrator:
         self.stream = stream  # Stream is now passed in, not created here!
         self.sync_context = sync_context
 
-        # Knobs read from context - use explicit defaults instead of getattr
-        self.should_batch: bool = (
-            sync_context.should_batch if hasattr(sync_context, "should_batch") else True
-        )
-        self.batch_size: int = (
-            sync_context.batch_size if hasattr(sync_context, "batch_size") else 64
-        )
-        self.max_batch_latency_ms: int = (
-            sync_context.max_batch_latency_ms
-            if hasattr(sync_context, "max_batch_latency_ms")
-            else 200
-        )
+        # Batch config from context
+        self.should_batch = sync_context.should_batch
+        self.batch_size = sync_context.batch_size
+        self.max_batch_latency_ms = sync_context.max_batch_latency_ms
 
     async def run(self) -> schemas.Sync:
         """Execute the synchronization process."""

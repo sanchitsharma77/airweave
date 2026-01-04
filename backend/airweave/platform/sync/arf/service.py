@@ -41,8 +41,8 @@ from airweave.platform.storage.exceptions import StorageNotFoundError
 from airweave.platform.sync.arf.schema import SyncManifest
 
 if TYPE_CHECKING:
+    from airweave.platform.contexts import SyncContext
     from airweave.platform.entities._base import BaseEntity
-    from airweave.platform.sync.context import SyncContext
 
 
 class ArfService:

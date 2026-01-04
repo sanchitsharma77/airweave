@@ -1,4 +1,4 @@
-"""Source builder for sync operations.
+"""Source context builder for sync operations.
 
 Handles all source creation complexity:
 - Source connection data loading
@@ -19,9 +19,10 @@ from airweave.core.exceptions import NotFoundException
 from airweave.core.logging import ContextualLogger
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.platform.auth_providers._base import BaseAuthProvider
+from airweave.platform.contexts.infra import InfraContext
+from airweave.platform.contexts.source import SourceContext
 from airweave.platform.locator import resource_locator
 from airweave.platform.sources._base import BaseSource
-from airweave.platform.sync.bundles import SourceBundle
 from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.cursor import SyncCursor
 from airweave.platform.sync.token_manager import TokenManager
@@ -31,8 +32,8 @@ from airweave.platform.utils.source_factory_utils import (
 )
 
 
-class SourceBuilder:
-    """Builds source pipeline with all required configuration."""
+class SourceContextBuilder:
+    """Builds source context with all required configuration."""
 
     @classmethod
     async def build(
@@ -40,27 +41,28 @@ class SourceBuilder:
         db: AsyncSession,
         sync: schemas.Sync,
         sync_job: schemas.SyncJob,
-        ctx: ApiContext,
-        logger: ContextualLogger,
+        infra: InfraContext,
         access_token: Optional[str] = None,
         force_full_sync: bool = False,
         execution_config: Optional[SyncExecutionConfig] = None,
-    ) -> SourceBundle:
-        """Build complete source bundle.
+    ) -> SourceContext:
+        """Build complete source context.
 
         Args:
             db: Database session
             sync: Sync configuration
             sync_job: The sync job (needed for file downloader)
-            ctx: API context
-            logger: Contextual logger
+            infra: Infrastructure context (provides ctx and logger)
             access_token: Optional direct token (skips credential loading)
             force_full_sync: If True, skip cursor loading
             execution_config: Optional execution config
 
         Returns:
-            SourceBundle with configured source and cursor
+            SourceContext with configured source and cursor.
         """
+        ctx = infra.ctx
+        logger = infra.logger
+
         # 1. Load source connection data
         source_connection_data = await cls._get_source_connection_data(db, sync, ctx)
 
@@ -88,7 +90,7 @@ class SourceBuilder:
         # 4. Set cursor on source
         source.set_cursor(cursor)
 
-        return SourceBundle(source=source, cursor=cursor)
+        return SourceContext(source=source, cursor=cursor)
 
     @classmethod
     async def get_source_connection_id(
@@ -105,7 +107,7 @@ class SourceBuilder:
             ctx: API context
 
         Returns:
-            Source connection UUID
+            Source connection UUID.
         """
         source_connection_data = await cls._get_source_connection_data(db, sync, ctx)
         return source_connection_data["connection_id"]
@@ -422,7 +424,8 @@ class SourceBuilder:
             cursor_data = None
         elif execution_config and execution_config.skip_cursor_load:
             logger.info(
-                "🔄 SKIP CURSOR LOAD: Fetching all entities (execution_config.skip_cursor_load=True)"
+                "🔄 SKIP CURSOR LOAD: Fetching all entities "
+                "(execution_config.skip_cursor_load=True)"
             )
             cursor_data = None
         else:
@@ -436,4 +439,3 @@ class SourceBuilder:
             cursor_schema=cursor_schema,
             cursor_data=cursor_data,
         )
-

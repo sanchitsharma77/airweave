@@ -1,4 +1,4 @@
-"""Tracking builder for sync operations.
+"""Tracking context builder for sync operations.
 
 Builds progress tracking components:
 - EntityTracker: Centralized entity state tracking
@@ -9,16 +9,15 @@ Builds progress tracking components:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airweave import crud, schemas
-from airweave.api.context import ApiContext
 from airweave.core.guard_rail_service import GuardRailService
-from airweave.core.logging import ContextualLogger
-from airweave.platform.sync.bundles import TrackingBundle
+from airweave.platform.contexts.infra import InfraContext
+from airweave.platform.contexts.tracking import TrackingContext
 from airweave.platform.sync.pipeline.entity_tracker import EntityTracker
 from airweave.platform.sync.state_publisher import SyncStatePublisher
 
 
-class TrackingBuilder:
-    """Builds progress tracking components for sync operations."""
+class TrackingContextBuilder:
+    """Builds progress tracking context for sync operations."""
 
     @classmethod
     async def build(
@@ -26,21 +25,22 @@ class TrackingBuilder:
         db: AsyncSession,
         sync: schemas.Sync,
         sync_job: schemas.SyncJob,
-        ctx: ApiContext,
-        logger: ContextualLogger,
-    ) -> TrackingBundle:
-        """Build complete tracking bundle.
+        infra: InfraContext,
+    ) -> TrackingContext:
+        """Build complete tracking context.
 
         Args:
             db: Database session
             sync: Sync configuration
             sync_job: The sync job being tracked
-            ctx: API context
-            logger: Contextual logger
+            infra: Infrastructure context (provides ctx and logger)
 
         Returns:
-            TrackingBundle with all tracking components
+            TrackingContext with all tracking components.
         """
+        ctx = infra.ctx
+        logger = infra.logger
+
         # Load initial entity counts from database
         initial_counts = await crud.entity_count.get_counts_per_sync_and_type(db, sync.id)
 
@@ -74,9 +74,8 @@ class TrackingBuilder:
 
         logger.info(f"✅ Created EntityTracker and SyncStatePublisher for job {sync_job.id}")
 
-        return TrackingBundle(
+        return TrackingContext(
             entity_tracker=entity_tracker,
             state_publisher=state_publisher,
             guard_rail=guard_rail,
         )
-

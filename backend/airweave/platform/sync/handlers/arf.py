@@ -16,8 +16,8 @@ from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.handlers.protocol import ActionHandler
 
 if TYPE_CHECKING:
+    from airweave.platform.contexts import SyncContext
     from airweave.platform.entities import BaseEntity
-    from airweave.platform.sync.context import SyncContext
 
 
 class ArfHandler(ActionHandler):

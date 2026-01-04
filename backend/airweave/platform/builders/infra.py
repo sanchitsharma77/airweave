@@ -1,18 +1,15 @@
-"""Infrastructure builder for sync operations.
-
-Creates the core infrastructure bundle (logger, ctx) needed by all other builders.
-"""
+"""Infrastructure context builder."""
 
 from uuid import UUID
 
 from airweave import schemas
 from airweave.api.context import ApiContext
-from airweave.core.logging import ContextualLogger, LoggerConfigurator
-from airweave.platform.sync.bundles import InfraBundle
+from airweave.core.logging import LoggerConfigurator
+from airweave.platform.contexts.infra import InfraContext
 
 
-class InfraBuilder:
-    """Builds core infrastructure for sync operations."""
+class InfraContextBuilder:
+    """Builds infrastructure context."""
 
     @classmethod
     def build(
@@ -22,8 +19,8 @@ class InfraBuilder:
         collection: schemas.Collection,
         source_connection_id: UUID,
         ctx: ApiContext,
-    ) -> tuple[InfraBundle, ContextualLogger]:
-        """Build infrastructure bundle with contextual logger.
+    ) -> InfraContext:
+        """Build infrastructure context for sync operations.
 
         Args:
             sync: Sync configuration
@@ -33,11 +30,9 @@ class InfraBuilder:
             ctx: API context
 
         Returns:
-            Tuple of (InfraBundle, ContextualLogger)
-            Logger is returned separately for use by other builders.
+            InfraContext containing ctx and logger.
         """
-        # Create a contextualized logger with all job metadata
-        logger = LoggerConfigurator.configure_logger(
+        contextual_logger = LoggerConfigurator.configure_logger(
             "airweave.platform.sync",
             dimensions={
                 "sync_id": str(sync.id),
@@ -50,9 +45,7 @@ class InfraBuilder:
             },
         )
 
-        infra = InfraBundle(ctx=ctx, logger=logger)
-
-        return infra, logger
+        return InfraContext(ctx=ctx, logger=contextual_logger)
 
     @classmethod
     def build_minimal(
@@ -61,7 +54,7 @@ class InfraBuilder:
         operation: str,
         sync_id: UUID,
         collection_id: UUID,
-    ) -> InfraBundle:
+    ) -> InfraContext:
         """Build minimal infrastructure for non-sync operations.
 
         Use this for cleanup, webhooks, and other operations that don't
@@ -74,16 +67,16 @@ class InfraBuilder:
             collection_id: Collection ID for logging
 
         Returns:
-            InfraBundle with minimal logger
+            InfraContext with minimal logger.
         """
-        from airweave.core.logging import get_logger
-
-        logger = get_logger().with_context(
-            operation=operation,
-            sync_id=str(sync_id),
-            collection_id=str(collection_id),
-            organization_id=str(ctx.organization.id),
+        contextual_logger = LoggerConfigurator.configure_logger(
+            "airweave.platform.cleanup",
+            dimensions={
+                "operation": operation,
+                "sync_id": str(sync_id),
+                "collection_id": str(collection_id),
+                "organization_id": str(ctx.organization.id),
+            },
         )
 
-        return InfraBundle(ctx=ctx, logger=logger)
-
+        return InfraContext(ctx=ctx, logger=contextual_logger)

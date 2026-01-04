@@ -22,7 +22,7 @@ from airweave.platform.sync.actions.types import (
 from airweave.platform.sync.exceptions import SyncFailureError
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 class ActionResolver:

@@ -24,7 +24,7 @@ from airweave.platform.sync.actions.types import (
 )
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
 @runtime_checkable

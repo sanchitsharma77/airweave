@@ -44,7 +44,6 @@ from airweave.platform.auth.schemas import OAuth1Settings
 from airweave.platform.configs._base import ConfigValues
 from airweave.platform.configs.auth import AuthConfig
 from airweave.platform.locator import resource_locator
-from airweave.platform.temporal.schedule_service import temporal_schedule_service
 from airweave.schemas.source_connection import (
     AuthenticationMethod,
     SourceConnectionJob,
@@ -1047,55 +1046,25 @@ class SourceConnectionHelpers:
     async def cleanup_destination_data(
         self, db: AsyncSession, source_conn: Any, ctx: ApiContext
     ) -> None:
-        """Clean up data in destinations (Qdrant and Vespa)."""
+        """Clean up data in destinations (Qdrant, Vespa, ARF)."""
+        from airweave.core.cleanup_service import cleanup_service
+
         collection = await crud.collection.get_by_readable_id(
             db, readable_id=source_conn.readable_collection_id, ctx=ctx
         )
         if not collection:
             return
 
-        # Clean up Qdrant
-        try:
-            from airweave.platform.destinations.qdrant import QdrantDestination
-
-            qdrant = await QdrantDestination.create(
-                credentials=None,  # Native Qdrant uses settings
-                config=None,
-                collection_id=collection.id,
-                organization_id=collection.organization_id,
-            )
-            await qdrant.delete_by_sync_id(source_conn.sync_id)
-            ctx.logger.info(f"Deleted Qdrant data for sync {source_conn.sync_id}")
-        except Exception as e:
-            ctx.logger.error(f"Error cleaning up Qdrant destination data: {e}")
-
-        # Clean up Vespa
-        try:
-            from airweave.platform.destinations.vespa import VespaDestination
-
-            vespa = await VespaDestination.create(
-                credentials=None,
-                config=None,
-                collection_id=collection.id,
-                organization_id=collection.organization_id,
-                logger=ctx.logger,
-                sync_id=source_conn.sync_id,
-            )
-            await vespa.delete_by_sync_id(source_conn.sync_id)
-            ctx.logger.info(f"Deleted Vespa data for sync {source_conn.sync_id}")
-        except Exception as e:
-            ctx.logger.error(f"Error cleaning up Vespa destination data: {e}")
+        collection_schema = schemas.Collection.model_validate(collection, from_attributes=True)
+        await cleanup_service.cleanup_sync(db, source_conn.sync_id, collection_schema, ctx)
 
     async def cleanup_temporal_schedules(
         self, sync_id: UUID, db: AsyncSession, ctx: ApiContext
     ) -> None:
         """Clean up Temporal schedules."""
-        try:
-            await temporal_schedule_service.delete_all_schedules_for_sync(
-                sync_id=sync_id, db=db, ctx=ctx
-            )
-        except Exception as e:
-            ctx.logger.error(f"Failed to delete schedules: {e}")
+        from airweave.core.cleanup_service import cleanup_service
+
+        await cleanup_service.cleanup_temporal_schedules(sync_id, db, ctx)
 
     def sync_job_to_source_connection_job(
         self, job: Any, source_connection_id: UUID
