@@ -40,10 +40,6 @@ from airweave.platform.sync.stream import AsyncSourceStream
 from airweave.platform.sync.worker_pool import AsyncWorkerPool
 
 
-# Backward compatibility alias
-RawDataHandler = ArfHandler
-
-
 class SyncFactory:
     """Factory for sync orchestrator.
 
@@ -120,33 +116,6 @@ class SyncFactory:
 
         # 2. Handlers - conditionally created based on execution_config
         handlers = cls._create_handlers(sync_context, execution_config)
-
-        handlers = []
-
-        # Add VectorDBHandler if enabled
-        if enable_vector:
-            vector_handlers = cls._create_destination_handlers(sync_context)
-            handlers.extend(vector_handlers)
-        elif sync_context.destinations:
-            logger.info(
-                f"Skipping VectorDBHandler (disabled by execution_config) for "
-                f"{len(sync_context.destinations)} destination(s)"
-            )
-
-        # Add RawDataHandler if enabled
-        if enable_raw:
-            handlers.append(RawDataHandler())
-        else:
-            logger.info("Skipping RawDataHandler (disabled by execution_config)")
-
-        # Add PostgresMetadataHandler if enabled (always runs last)
-        if enable_postgres:
-            handlers.append(PostgresMetadataHandler())
-        else:
-            logger.info("Skipping PostgresMetadataHandler (disabled by execution_config)")
-
-        if not handlers:
-            logger.warning("No handlers created - sync will fetch entities but not persist them")
 
         # 3. Action Dispatcher
         action_dispatcher = ActionDispatcher(handlers=handlers)
@@ -313,10 +282,14 @@ class SyncFactory:
         Returns:
             List of action handlers
         """
-        config = execution_config
-        enable_vector = config is None or config.enable_vector_handlers
-        enable_raw = config is None or config.enable_raw_data_handler
-        enable_postgres = config is None or config.enable_postgres_handler
+        if execution_config:
+            enable_vector = execution_config.enable_vector_handlers
+            enable_raw = execution_config.enable_raw_data_handler
+            enable_postgres = execution_config.enable_postgres_handler
+        else:
+            enable_vector = True
+            enable_raw = True
+            enable_postgres = True
 
         handlers = []
         destinations = sync_context.destination_list
@@ -328,8 +301,7 @@ class SyncFactory:
 
             # Log what processing requirements are in use
             processor_info = [
-                f"{d.__class__.__name__}→{d.processing_requirement.value}"
-                for d in destinations
+                f"{d.__class__.__name__}→{d.processing_requirement.value}" for d in destinations
             ]
             sync_context.logger.info(
                 f"Created DestinationHandler with requirements: {processor_info}"
@@ -340,17 +312,19 @@ class SyncFactory:
                 f"{len(destinations)} destination(s)"
             )
 
-        # Add RawDataHandler (ArfHandler) if enabled
+        # Add ArfHandler if enabled
         if enable_raw:
             handlers.append(ArfHandler())
         else:
-            sync_context.logger.info("Skipping RawDataHandler (disabled by execution_config)")
+            sync_context.logger.info("Skipping ArfHandler (disabled by execution_config)")
 
         # Add PostgresMetadataHandler if enabled (always runs last)
         if enable_postgres:
             handlers.append(PostgresMetadataHandler())
         else:
-            sync_context.logger.info("Skipping PostgresMetadataHandler (disabled by execution_config)")
+            sync_context.logger.info(
+                "Skipping PostgresMetadataHandler (disabled by execution_config)"
+            )
 
         if not handlers:
             sync_context.logger.warning(

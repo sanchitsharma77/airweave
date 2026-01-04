@@ -53,4 +53,3 @@ echo ""
 echo "4. Test document API:"
 echo "   curl http://localhost:8081/document/v1/airweave/chunk/docid/test1"
 echo ""
-

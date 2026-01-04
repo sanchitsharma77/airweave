@@ -58,30 +58,38 @@ schema base_entity {
             attribute: fast-search
         }
 
-        # System metadata (struct) mirrors AirweaveSystemMetadata
-        # Critical filters (collection_id, entity_type, sync_id, original_entity_id)
-        # use struct-field fast-search indexes for B-tree lookups.
-        field airweave_system_metadata type airweave_system_metadata {
-            indexing: summary
-            struct-field collection_id {
-                indexing: attribute
-                attribute: fast-search
-            }
-            struct-field entity_type {
-                indexing: attribute
-                attribute: fast-search
-            }
-            struct-field sync_id {
-                indexing: attribute
-                attribute: fast-search
-            }
-            struct-field sync_job_id { indexing: attribute }
-            struct-field hash { indexing: attribute }
-            struct-field original_entity_id {
-                indexing: attribute
-                attribute: fast-search
-            }
-            struct-field source_name { indexing: attribute }
+        # System metadata fields (flattened - Vespa doesn't support struct-field
+        # attributes on plain structs, only on array<struct> or map types)
+        field airweave_system_metadata_collection_id type string {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
+        field airweave_system_metadata_entity_type type string {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
+        field airweave_system_metadata_sync_id type string {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
+        field airweave_system_metadata_sync_job_id type string {
+            indexing: attribute | summary
+        }
+
+        field airweave_system_metadata_hash type string {
+            indexing: attribute | summary
+        }
+
+        field airweave_system_metadata_original_entity_id type string {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
+        field airweave_system_metadata_source_name type string {
+            indexing: attribute | summary
         }
 
         # Textual representation - this is what Vespa chunks and embeds
@@ -102,16 +110,6 @@ schema base_entity {
         field entity_id   type string {}
         field name        type string {}
         field entity_type type string {}
-    }
-
-    struct airweave_system_metadata {
-        field collection_id      type string {}
-        field entity_type        type string {}
-        field sync_id            type string {}
-        field sync_job_id        type string {}
-        field hash               type string {}
-        field original_entity_id type string {}
-        field source_name        type string {}
     }
 
     # Chunked text, keyword indexed for BM25
@@ -157,7 +155,13 @@ schema base_entity {
         summary breadcrumbs {}
         summary created_at {}
         summary updated_at {}
-        summary airweave_system_metadata {}
+        summary airweave_system_metadata_collection_id {}
+        summary airweave_system_metadata_entity_type {}
+        summary airweave_system_metadata_sync_id {}
+        summary airweave_system_metadata_sync_job_id {}
+        summary airweave_system_metadata_hash {}
+        summary airweave_system_metadata_original_entity_id {}
+        summary airweave_system_metadata_source_name {}
         summary textual_representation {}
         summary payload {}
     }
@@ -171,6 +175,17 @@ schema base_entity {
         inputs {
             query(embedding) tensor<int8>(x[96])         # Binary packed for ANN matching (hamming)
             query(float_embedding) tensor<float>(x[768]) # Full precision for ranking
+            # Query expansion embeddings (q0=primary, q1-q9=expanded queries)
+            query(q0) tensor<int8>(x[96])
+            query(q1) tensor<int8>(x[96])
+            query(q2) tensor<int8>(x[96])
+            query(q3) tensor<int8>(x[96])
+            query(q4) tensor<int8>(x[96])
+            query(q5) tensor<int8>(x[96])
+            query(q6) tensor<int8>(x[96])
+            query(q7) tensor<int8>(x[96])
+            query(q8) tensor<int8>(x[96])
+            query(q9) tensor<int8>(x[96])
         }
 
         # Fixed length chunking should not cause any positional gap between elements
@@ -310,4 +325,3 @@ schema base_entity {
         }
     }
 }
-

@@ -35,4 +35,3 @@ schema file_entity inherits base_entity {
         }
     }
 }
-

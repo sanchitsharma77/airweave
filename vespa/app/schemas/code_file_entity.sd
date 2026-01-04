@@ -35,4 +35,3 @@ schema code_file_entity inherits file_entity {
         }
     }
 }
-

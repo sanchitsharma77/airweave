@@ -6,13 +6,13 @@ ColBERT embedder: https://blog.vespa.ai/announcing-colbert-embedder-in-vespa/ (e
 pre-trained language models for text ranking: https://blog.vespa.ai/pretrained-transformer-language-models-for-search-part-1/
 
 
-Cross-encoder: 
-take query and document together as one sequence and do single forward pass of the transformer model. Therefor query tokens can attend directly to document tokens. The repr of the doc DEPENDS on the query. So you can't pre-compute the embeddings. 
+Cross-encoder:
+take query and document together as one sequence and do single forward pass of the transformer model. Therefor query tokens can attend directly to document tokens. The repr of the doc DEPENDS on the query. So you can't pre-compute the embeddings.
 
-ColBERT: 
+ColBERT:
 encode doc and query separately. Compute interactoin between all token vectors.
 
-SPLADE: 
+SPLADE:
 neural sparse embedder that forces most entries to zero (bm25 like but learned)
 
 Matryoshka: 1 large vector where prefixes of the vector are themselves good embeddings
@@ -26,7 +26,7 @@ Phased Ranking:
     - second phase: re-rank the top scoring hits
     - global phase: after contennt nodes have returned the top-scoring hits to the stateless container
 
-Layered ranking: 
+Layered ranking:
 - chunk-level docs (what we have): each chunk is a doc
     - lack context
     - duplicate metadata

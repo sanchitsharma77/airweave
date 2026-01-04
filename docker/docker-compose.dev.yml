@@ -130,7 +130,7 @@ services:
       - "19071:19071" # Config server (for deployment)
     volumes:
       - vespa_data:/opt/vespa/var
-      - ../backend/airweave/vespa/app:/app
+      - ../vespa/app:/app
     healthcheck:
       # Check config server is up (basic health for startup)
       test: ["CMD", "curl", "-f", "http://localhost:19071/state/v1/health"]
@@ -145,8 +145,8 @@ services:
     container_name: airweave-vespa-init
     image: alpine:3.19
     volumes:
-      - ../backend/airweave/vespa/app:/app:ro
-      - ../backend/airweave/vespa/init-vespa.sh:/init-vespa.sh:ro
+      - ../vespa/app:/app:ro
+      - ../vespa/init-vespa.sh:/init-vespa.sh:ro
     entrypoint: ["/bin/sh", "/init-vespa.sh"]
     environment:
       - VESPA_CONFIG_SERVER=http://vespa:19071

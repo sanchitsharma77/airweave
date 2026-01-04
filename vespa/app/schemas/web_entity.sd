@@ -12,4 +12,3 @@ schema web_entity inherits base_entity {
         }
     }
 }
-

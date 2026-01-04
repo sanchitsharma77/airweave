@@ -215,10 +215,11 @@ class VespaDestination(VectorDBDestination):
         if entity.textual_representation:
             fields["textual_representation"] = entity.textual_representation
 
-        # System metadata (struct) mirrors AirweaveSystemMetadata
+        # System metadata (flattened - Vespa doesn't support struct-field
+        # attributes on plain structs, only on array<struct> or map types)
+        # Build meta_fields dict first, then prefix with airweave_system_metadata_
         meta_fields: dict[str, Any] = {}
 
-        # Derived from sync context (not part of AirweaveSystemMetadata)
         if self.collection_id:
             meta_fields["collection_id"] = str(self.collection_id)
 
@@ -232,18 +233,10 @@ class VespaDestination(VectorDBDestination):
                 meta_fields["sync_job_id"] = str(meta.sync_job_id)
             if meta.hash:
                 meta_fields["hash"] = meta.hash
-            if meta.chunk_index is not None:
-                meta_fields["chunk_index"] = meta.chunk_index
             if meta.original_entity_id:
                 meta_fields["original_entity_id"] = meta.original_entity_id
             if meta.source_name:
                 meta_fields["source_name"] = meta.source_name
-            if meta.db_entity_id:
-                meta_fields["db_entity_id"] = str(meta.db_entity_id)
-            if meta.db_created_at:
-                meta_fields["db_created_at"] = int(meta.db_created_at.timestamp())
-            if meta.db_updated_at:
-                meta_fields["db_updated_at"] = int(meta.db_updated_at.timestamp())
 
         # Ensure critical metadata is always present
         if "entity_type" not in meta_fields:
@@ -251,10 +244,10 @@ class VespaDestination(VectorDBDestination):
         if "original_entity_id" not in meta_fields and entity.entity_id:
             meta_fields["original_entity_id"] = entity.entity_id
 
-        # Drop None values and attach to fields
-        meta_fields = {k: v for k, v in meta_fields.items() if v is not None}
-        if meta_fields:
-            fields["airweave_system_metadata"] = meta_fields
+        # Flatten to Vespa fields with airweave_system_metadata_ prefix
+        for key, value in meta_fields.items():
+            if value is not None:
+                fields[f"airweave_system_metadata_{key}"] = value
 
         # Add web-specific fields if this is a WebEntity
         if isinstance(entity, WebEntity):
@@ -432,8 +425,8 @@ class VespaDestination(VectorDBDestination):
         for schema in self._get_all_vespa_schemas():
             yql = (
                 f"select documentid from {schema} where "
-                f"airweave_system_metadata.sync_id contains '{sync_id}' and "
-                f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
+                f"airweave_system_metadata_sync_id contains '{sync_id}' and "
+                f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
             )
             await self._delete_by_query(yql, schema)
 
@@ -452,7 +445,7 @@ class VespaDestination(VectorDBDestination):
         for schema in self._get_all_vespa_schemas():
             yql = (
                 f"select documentid from {schema} where "
-                f"airweave_system_metadata.collection_id contains '{collection_id}'"
+                f"airweave_system_metadata_collection_id contains '{collection_id}'"
             )
             await self._delete_by_query(yql, schema)
 
@@ -471,8 +464,8 @@ class VespaDestination(VectorDBDestination):
             for schema in self._get_all_vespa_schemas():
                 yql = (
                     f"select documentid from {schema} where "
-                    f"airweave_system_metadata.original_entity_id contains '{parent_id}' and "
-                    f"airweave_system_metadata.collection_id contains '{self.collection_id}'"
+                    f"airweave_system_metadata_original_entity_id contains '{parent_id}' and "
+                    f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
                 )
                 await self._delete_by_query(yql, schema)
 
@@ -696,12 +689,14 @@ class VespaDestination(VectorDBDestination):
         """
         # Build nearestNeighbor operators for all queries
         # Use labels (q0, q1, q2, ...) so closeness can be computed per query
+        # Each annotated operator must be wrapped in parentheses for YQL parsing
         nn_parts = []
         for i in range(len(queries)):
             # Use label annotation to distinguish closeness from different queries
+            # Wrap in parens - required for YQL parsing after OR
             nn_parts.append(
-                f'{{label:"q{i}", targetHits:{self.TARGET_HITS}}}'
-                f"nearestNeighbor(chunk_small_embeddings, q{i})"
+                f'({{label:"q{i}", targetHits:{self.TARGET_HITS}}}'
+                f"nearestNeighbor(chunk_small_embeddings, q{i}))"
             )
 
         # Combine all nearestNeighbor operators with OR
@@ -710,9 +705,10 @@ class VespaDestination(VectorDBDestination):
         # Base WHERE clause with collection filter and hybrid retrieval
         # - userInput uses the primary query (index 0)
         # - nearestNeighbor uses all queries (combined with OR)
+        # Note: Each annotated operator wrapped in parens for YQL parsing
         where_parts = [
-            f"airweave_system_metadata.collection_id contains '{airweave_collection_id}'",
-            f"({{targetHits:{self.TARGET_HITS}}}userInput(@query) OR {nn_clause})",
+            f"airweave_system_metadata_collection_id contains '{airweave_collection_id}'",
+            f"(({{targetHits:{self.TARGET_HITS}}}userInput(@query)) OR {nn_clause})",
         ]
 
         # Inject user filter if present
@@ -863,19 +859,16 @@ class VespaDestination(VectorDBDestination):
         return None
 
     def _map_field_name(self, key: str) -> str:
-        """Map logical field names to Vespa field paths (handles nested structs)."""
+        """Map logical field names to Vespa field paths (flattened metadata fields)."""
         meta_field_map = {
-            "collection_id": "airweave_system_metadata.collection_id",
-            "entity_type": "airweave_system_metadata.entity_type",
-            "sync_id": "airweave_system_metadata.sync_id",
-            "sync_job_id": "airweave_system_metadata.sync_job_id",
-            "content_hash": "airweave_system_metadata.hash",
-            "hash": "airweave_system_metadata.hash",
-            "original_entity_id": "airweave_system_metadata.original_entity_id",
-            "source_name": "airweave_system_metadata.source_name",
-            "db_entity_id": "airweave_system_metadata.db_entity_id",
-            "db_created_at": "airweave_system_metadata.db_created_at",
-            "db_updated_at": "airweave_system_metadata.db_updated_at",
+            "collection_id": "airweave_system_metadata_collection_id",
+            "entity_type": "airweave_system_metadata_entity_type",
+            "sync_id": "airweave_system_metadata_sync_id",
+            "sync_job_id": "airweave_system_metadata_sync_job_id",
+            "content_hash": "airweave_system_metadata_hash",
+            "hash": "airweave_system_metadata_hash",
+            "original_entity_id": "airweave_system_metadata_original_entity_id",
+            "source_name": "airweave_system_metadata_source_name",
         }
         return meta_field_map.get(key, key)
 

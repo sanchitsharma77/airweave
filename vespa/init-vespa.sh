@@ -69,19 +69,19 @@ echo "Waiting for application to converge..."
 retries=0
 while [ $retries -lt $MAX_RETRIES ]; do
     converge_status=$(curl -sf "${CONFIG_SERVER}/application/v2/tenant/default/application/default/environment/prod/region/default/instance/default/serviceconverge" 2>/dev/null || echo '{"converged":false}')
-    
+
     if echo "${converge_status}" | grep -q '"converged":true'; then
         echo "Application converged successfully!"
         break
     fi
-    
+
     retries=$((retries + 1))
     if [ $retries -ge $MAX_RETRIES ]; then
         echo "WARNING: Application did not converge within timeout, but deployment was accepted"
         echo "Last status: ${converge_status}"
         break
     fi
-    
+
     echo "  Waiting for convergence... (attempt ${retries}/${MAX_RETRIES})"
     sleep $RETRY_INTERVAL
 done

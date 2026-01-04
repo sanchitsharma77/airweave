@@ -10,4 +10,3 @@ schema email_entity inherits file_entity {
         # The email content is extracted into textual_representation during sync
     }
 }
-
