@@ -49,6 +49,7 @@ interface SearchBoxProps {
     onSearchStart?: (responseType: 'raw' | 'completion') => void;
     onSearchEnd?: () => void;
     className?: string;
+    disabled?: boolean;  // Disable search when no sources are connected
     // Streaming callbacks (Milestone 3)
     onStreamEvent?: (event: SearchEvent) => void;
     onStreamUpdate?: (partial: PartialStreamUpdate) => void;
@@ -82,7 +83,8 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
     onStreamEvent: onStreamEventProp,
     onStreamUpdate: onStreamUpdateProp,
     onCancel,
-    className
+    className,
+    disabled = false
 }) => {
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === "dark";
@@ -233,7 +235,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
 
     // Main search handler
     const handleSendQuery = useCallback(async () => {
-        if (!hasQuery || !collectionId || isSearching || !queriesAllowed || isCheckingUsage) return;
+        if (!hasQuery || !collectionId || isSearching || !queriesAllowed || isCheckingUsage || disabled) return;
 
         // Abort previous stream if any
         if (abortRef.current) {
@@ -614,7 +616,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                             </Tooltip>
                         </TooltipProvider>
 
-                        {(!queriesAllowed || isCheckingUsage) ? (
+                        {(!queriesAllowed || isCheckingUsage || disabled) ? (
                             <TooltipProvider delayDuration={0}>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
@@ -624,20 +626,20 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                                 onChange={(e) => setQuery(e.target.value)}
                                                 onKeyDown={(e) => {
                                                     if (e.key === "Enter" && !e.shiftKey) {
-                                                        if (!hasQuery || isSearching || !queriesAllowed || isCheckingUsage) return;
+                                                        if (!hasQuery || isSearching || !queriesAllowed || isCheckingUsage || disabled) return;
                                                         e.preventDefault();
                                                         handleSendQuery();
                                                     }
                                                 }}
                                                 placeholder="Ask a question about your data"
-                                                disabled={!queriesAllowed || isCheckingUsage}
+                                                disabled={!queriesAllowed || isCheckingUsage || disabled}
                                                 className={cn(
                                                     // pr-16 ensures text wraps before overlay button
                                                     // increase right padding to prevent text from flowing under the top-right Code button at all widths
                                                     "w-full h-20 px-2 pr-28 sm:pr-24 md:pr-28 py-1.5 leading-relaxed resize-none overflow-y-auto outline-none rounded-xl bg-transparent",
                                                     DESIGN_SYSTEM.typography.sizes.header,
                                                     isDark ? "placeholder:text-gray-500" : "placeholder:text-gray-500",
-                                                    (!queriesAllowed || isCheckingUsage) && "opacity-60 cursor-not-allowed"
+                                                    (!queriesAllowed || isCheckingUsage || disabled) && "opacity-60 cursor-not-allowed"
                                                 )}
                                             />
                                         </div>
@@ -646,6 +648,8 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                         <p className={DESIGN_SYSTEM.typography.sizes.body}>
                                             {isCheckingUsage ? (
                                                 "Checking usage…"
+                                            ) : disabled ? (
+                                                "Connect a source to enable search."
                                             ) : queriesCheckDetails?.reason === 'usage_limit_exceeded' ? (
                                                 <>
                                                     Query limit reached.{' '}
@@ -683,7 +687,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" && !e.shiftKey) {
-                                        if (!hasQuery || isSearching || !queriesAllowed || isCheckingUsage) return;
+                                        if (!hasQuery || isSearching || !queriesAllowed || isCheckingUsage || disabled) return;
                                         e.preventDefault();
                                         handleSendQuery();
                                     }
@@ -1238,7 +1242,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                                 }
                                                 void handleSendQuery();
                                             }}
-                                            disabled={isSearching ? false : (!hasQuery || !queriesAllowed || isCheckingUsage)}
+                                            disabled={isSearching ? false : (!hasQuery || !queriesAllowed || isCheckingUsage || disabled)}
                                             className={cn(
                                                 "h-8 w-8 rounded-md border shadow-sm flex items-center justify-center transition-all",
                                                 isSearching
@@ -1249,7 +1253,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                                         ? (isDark
                                                             ? "bg-gray-800 border-border hover:bg-muted text-foreground border-gray-700"
                                                             : "bg-white border-border hover:bg-muted text-foreground")
-                                                        : (hasQuery && queriesAllowed && !isCheckingUsage)
+                                                        : (hasQuery && queriesAllowed && !isCheckingUsage && !disabled)
                                                             ? (isDark
                                                                 ? "bg-gray-800 border-border hover:bg-muted text-foreground border-gray-700"
                                                                 : "bg-white border-border hover:bg-muted text-foreground")
@@ -1263,9 +1267,11 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                                                     ? (transientIssue?.message || "Connection interrupted. Click to retry.")
                                                     : (!hasQuery
                                                         ? "Type a question to enable"
-                                                        : (!queriesAllowed
-                                                            ? "Query limit reached — upgrade to run searches"
-                                                            : (isCheckingUsage ? "Checking usage..." : "Send query")))}
+                                                        : (disabled
+                                                            ? "Connect a source to enable search"
+                                                            : (!queriesAllowed
+                                                                ? "Query limit reached — upgrade to run searches"
+                                                                : (isCheckingUsage ? "Checking usage..." : "Send query"))))}
                                         >
                                             {isSearching ? (
                                                 <Square className={cn(DESIGN_SYSTEM.icons.button, "text-red-500")} />

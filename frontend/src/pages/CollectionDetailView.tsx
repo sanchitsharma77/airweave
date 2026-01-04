@@ -949,6 +949,7 @@ const Collections = () => {
                         <div className="w-full max-w-[1000px] mt-10">
                             <Search
                                 collectionReadableId={collection.readable_id}
+                                disabled={sourceConnections.length === 0}
                             />
                         </div>
                     )}
