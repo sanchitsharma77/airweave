@@ -472,7 +472,7 @@ export const SearchBox: React.FC<SearchBoxProps> = ({
                 }
             }
         }
-    }, [hasQuery, collectionId, query, searchMethod, toggles, filterJson, isFilterValid, recencyBiasValue, isSearching, onSearch, onSearchStart, onSearchEnd, onStreamEventProp, onStreamUpdateProp, queriesAllowed, isCheckingUsage, checkQueriesAllowed]);
+    }, [hasQuery, collectionId, query, searchMethod, toggles, filterJson, isFilterValid, recencyBiasValue, isSearching, onSearch, onSearchStart, onSearchEnd, onStreamEventProp, onStreamUpdateProp, queriesAllowed, isCheckingUsage, disabled, checkQueriesAllowed]);
 
     // Handle search method change
     const handleMethodChange = useCallback((newMethod: SearchMethod) => {
