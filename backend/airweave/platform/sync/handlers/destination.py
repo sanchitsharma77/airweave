@@ -11,14 +11,14 @@ import httpcore
 import httpx
 
 from airweave.platform.destinations._base import BaseDestination, ProcessingRequirement
-from airweave.platform.sync.actions.types import (
-    ActionBatch,
-    DeleteAction,
-    InsertAction,
-    UpdateAction,
+from airweave.platform.sync.actions.entity_types import (
+    EntityActionBatch,
+    EntityDeleteAction,
+    EntityInsertAction,
+    EntityUpdateAction,
 )
 from airweave.platform.sync.exceptions import SyncFailureError
-from airweave.platform.sync.handlers.protocol import ActionHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 from airweave.platform.sync.processors import (
     ChunkEmbedProcessor,
     ContentProcessor,
@@ -49,7 +49,7 @@ _RETRYABLE_EXCEPTIONS: tuple = (
 )
 
 
-class DestinationHandler(ActionHandler):
+class DestinationHandler(EntityActionHandler):
     """Generic handler that maps ProcessingRequirement to processors.
 
     Destinations declare what they need via processing_requirement class var.
@@ -74,7 +74,7 @@ class DestinationHandler(ActionHandler):
 
     async def handle_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Handle batch by processing and dispatching to each destination."""
@@ -105,7 +105,7 @@ class DestinationHandler(ActionHandler):
 
     async def handle_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List[EntityInsertAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle inserts - process and insert to destinations."""
@@ -117,7 +117,7 @@ class DestinationHandler(ActionHandler):
 
     async def handle_updates(
         self,
-        actions: List[UpdateAction],
+        actions: List[EntityUpdateAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle updates - delete old, then insert new."""
@@ -133,7 +133,7 @@ class DestinationHandler(ActionHandler):
 
     async def handle_deletes(
         self,
-        actions: List[DeleteAction],
+        actions: List[EntityDeleteAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle deletes - remove from all destinations."""

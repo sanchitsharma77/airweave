@@ -13,20 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from airweave import crud, schemas
 from airweave.core.shared_models import ActionType
 from airweave.db.session import get_db_context
-from airweave.platform.sync.actions.types import (
-    ActionBatch,
-    DeleteAction,
-    InsertAction,
-    UpdateAction,
+from airweave.platform.sync.actions.entity_types import (
+    EntityActionBatch,
+    EntityDeleteAction,
+    EntityInsertAction,
+    EntityUpdateAction,
 )
 from airweave.platform.sync.exceptions import SyncFailureError
-from airweave.platform.sync.handlers.protocol import ActionHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 if TYPE_CHECKING:
     from airweave.platform.contexts import SyncContext
 
 
-class PostgresMetadataHandler(ActionHandler):
+class EntityPostgresHandler(EntityActionHandler):
     """Handler for PostgreSQL entity metadata.
 
     Stores entity records with:
@@ -41,7 +41,7 @@ class PostgresMetadataHandler(ActionHandler):
     @property
     def name(self) -> str:
         """Handler name."""
-        return "postgres_metadata"
+        return "entity_postgres_metadata"
 
     # -------------------------------------------------------------------------
     # Protocol: Public Interface
@@ -49,7 +49,7 @@ class PostgresMetadataHandler(ActionHandler):
 
     async def handle_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Handle full batch in a single transaction."""
@@ -62,11 +62,11 @@ class PostgresMetadataHandler(ActionHandler):
         total_synced = len(batch.inserts) + len(batch.updates)
         if total_synced > 0:
             await sync_context.guard_rail.increment(ActionType.ENTITIES, amount=total_synced)
-            sync_context.logger.debug(f"[Postgres] guard_rail += {total_synced}")
+            sync_context.logger.debug(f"[EntityPostgres] guard_rail += {total_synced}")
 
     async def handle_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List[EntityInsertAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle inserts - create entity records."""
@@ -75,11 +75,11 @@ class PostgresMetadataHandler(ActionHandler):
         async with get_db_context() as db:
             await self._do_inserts(actions, sync_context, db)
             await db.commit()
-        sync_context.logger.debug(f"[Postgres] Inserted {len(actions)} entities")
+        sync_context.logger.debug(f"[EntityPostgres] Inserted {len(actions)} entities")
 
     async def handle_updates(
         self,
-        actions: List[UpdateAction],
+        actions: List[EntityUpdateAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle updates - update entity hashes."""
@@ -89,11 +89,11 @@ class PostgresMetadataHandler(ActionHandler):
             existing_map = await self._fetch_existing_map(actions, sync_context, db)
             await self._do_updates(actions, existing_map, sync_context, db)
             await db.commit()
-        sync_context.logger.debug(f"[Postgres] Updated {len(actions)} entities")
+        sync_context.logger.debug(f"[EntityPostgres] Updated {len(actions)} entities")
 
     async def handle_deletes(
         self,
-        actions: List[DeleteAction],
+        actions: List[EntityDeleteAction],
         sync_context: "SyncContext",
     ) -> None:
         """Handle deletes - remove entity records."""
@@ -103,7 +103,7 @@ class PostgresMetadataHandler(ActionHandler):
             existing_map = await self._fetch_existing_map(actions, sync_context, db)
             await self._do_deletes(actions, existing_map, sync_context, db)
             await db.commit()
-        sync_context.logger.debug(f"[Postgres] Deleted {len(actions)} entities")
+        sync_context.logger.debug(f"[EntityPostgres] Deleted {len(actions)} entities")
 
     async def handle_orphan_cleanup(
         self,
@@ -121,7 +121,7 @@ class PostgresMetadataHandler(ActionHandler):
 
     async def _do_batch_with_retry(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
         max_retries: int = 3,
     ) -> None:
@@ -136,15 +136,15 @@ class PostgresMetadataHandler(ActionHandler):
                 if "deadlock detected" in str(e).lower() and attempt < max_retries:
                     wait = 0.1 * (2**attempt)
                     sync_context.logger.warning(
-                        f"[Postgres] Deadlock, retry in {wait}s ({attempt + 1}/{max_retries})"
+                        f"[EntityPostgres] Deadlock, retry in {wait}s ({attempt + 1}/{max_retries})"
                     )
                     await asyncio.sleep(wait)
                     continue
-                raise SyncFailureError(f"[Postgres] Database error: {e}") from e
+                raise SyncFailureError(f"[EntityPostgres] Database error: {e}") from e
 
     async def _do_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Execute INSERT, UPDATE, DELETE in single transaction."""
@@ -158,13 +158,13 @@ class PostgresMetadataHandler(ActionHandler):
             await db.commit()
 
         sync_context.logger.debug(
-            f"[Postgres] Persisted {len(batch.inserts)}I/"
+            f"[EntityPostgres] Persisted {len(batch.inserts)}I/"
             f"{len(batch.updates)}U/{len(batch.deletes)}D"
         )
 
     async def _do_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List[EntityInsertAction],
         sync_context: "SyncContext",
         db: AsyncSession,
     ) -> None:
@@ -191,12 +191,14 @@ class PostgresMetadataHandler(ActionHandler):
         create_objs.sort(key=lambda o: (o.entity_definition_id.int, o.entity_id))
 
         sample_ids = [o.entity_id for o in create_objs[:5]]
-        sync_context.logger.debug(f"[Postgres] Upserting {len(create_objs)} (sample: {sample_ids})")
+        sync_context.logger.debug(
+            f"[EntityPostgres] Upserting {len(create_objs)} (sample: {sample_ids})"
+        )
         await crud.entity.bulk_create(db, objs=create_objs, ctx=sync_context.ctx)
 
     async def _do_updates(
         self,
-        actions: List[UpdateAction],
+        actions: List[EntityUpdateAction],
         existing_map: Dict[Tuple[str, UUID], Any],
         sync_context: "SyncContext",
         db: AsyncSession,
@@ -217,12 +219,12 @@ class PostgresMetadataHandler(ActionHandler):
             return
 
         update_pairs.sort(key=lambda p: p[0])
-        sync_context.logger.debug(f"[Postgres] Updating {len(update_pairs)} hashes")
+        sync_context.logger.debug(f"[EntityPostgres] Updating {len(update_pairs)} hashes")
         await crud.entity.bulk_update_hash(db, rows=update_pairs)
 
     async def _do_deletes(
         self,
-        actions: List[DeleteAction],
+        actions: List[EntityDeleteAction],
         existing_map: Dict[Tuple[str, UUID], Any],
         sync_context: "SyncContext",
         db: AsyncSession,
@@ -239,7 +241,7 @@ class PostgresMetadataHandler(ActionHandler):
         if not db_ids:
             return
 
-        sync_context.logger.debug(f"[Postgres] Deleting {len(db_ids)} records")
+        sync_context.logger.debug(f"[EntityPostgres] Deleting {len(db_ids)} records")
         await crud.entity.bulk_remove(db, ids=db_ids, ctx=sync_context.ctx)
 
     # -------------------------------------------------------------------------
@@ -252,7 +254,7 @@ class PostgresMetadataHandler(ActionHandler):
         sync_context: "SyncContext",
     ) -> None:
         """Delete orphaned entity records."""
-        sync_context.logger.info(f"[Postgres] Cleaning {len(orphan_entity_ids)} orphans")
+        sync_context.logger.info(f"[EntityPostgres] Cleaning {len(orphan_entity_ids)} orphans")
 
         async with get_db_context() as db:
             entity_map = await crud.entity.bulk_get_by_entity_and_sync(
@@ -262,14 +264,14 @@ class PostgresMetadataHandler(ActionHandler):
             )
 
             if not entity_map:
-                sync_context.logger.debug("[Postgres] No orphans found in DB")
+                sync_context.logger.debug("[EntityPostgres] No orphans found in DB")
                 return
 
             db_ids = [e.id for e in entity_map.values()]
             await crud.entity.bulk_remove(db=db, ids=db_ids, ctx=sync_context.ctx)
             await db.commit()
 
-            sync_context.logger.info(f"[Postgres] Deleted {len(db_ids)} orphan records")
+            sync_context.logger.info(f"[EntityPostgres] Deleted {len(db_ids)} orphan records")
 
     # -------------------------------------------------------------------------
     # Private: Helpers
@@ -277,7 +279,7 @@ class PostgresMetadataHandler(ActionHandler):
 
     async def _fetch_existing_map(
         self,
-        actions: List[UpdateAction] | List[DeleteAction],
+        actions: List[EntityUpdateAction] | List[EntityDeleteAction],
         sync_context: "SyncContext",
         db: AsyncSession,
     ) -> Dict[Tuple[str, UUID], Any]:
@@ -289,22 +291,24 @@ class PostgresMetadataHandler(ActionHandler):
 
     def _deduplicate_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List[EntityInsertAction],
         sync_context: "SyncContext",
-    ) -> List[InsertAction]:
+    ) -> List[EntityInsertAction]:
         """Deduplicate inserts within batch (keep latest)."""
         seen: Dict[str, int] = {}
-        deduped: List[InsertAction] = []
+        deduped: List[EntityInsertAction] = []
 
         for action in actions:
             if action.entity_id in seen:
-                sync_context.logger.debug(f"[Postgres] Dup: {action.entity_id} - using latest")
+                sync_context.logger.debug(
+                    f"[EntityPostgres] Dup: {action.entity_id} - using latest"
+                )
                 deduped[seen[action.entity_id]] = action
             else:
                 seen[action.entity_id] = len(deduped)
                 deduped.append(action)
 
         if len(deduped) < len(actions):
-            sync_context.logger.debug(f"[Postgres] Deduped {len(actions)} → {len(deduped)}")
+            sync_context.logger.debug(f"[EntityPostgres] Deduped {len(actions)} → {len(deduped)}")
 
         return deduped

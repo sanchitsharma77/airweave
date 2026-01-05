@@ -1,108 +1,128 @@
-"""Action dataclasses for entity pipeline.
+"""Generic action types for sync pipelines.
 
-Actions are first-class citizens representing the operation to perform on an entity.
-Each action type contains the entity and metadata needed for handlers to execute.
+Base action types using generics. Domain-specific actions (entity, AC)
+extend these with additional fields as needed.
+
+Type Hierarchy:
+    BaseAction[T]
+    ├── InsertAction[T]
+    ├── UpdateAction[T]
+    ├── DeleteAction[T]
+    ├── KeepAction[T]
+    └── UpsertAction[T]
+
+    ActionBatch[T] - container for batches of actions
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
-from uuid import UUID
+from typing import Generic, List, TypeVar
 
-if TYPE_CHECKING:
-    from airweave import models
-    from airweave.platform.entities._base import BaseEntity
+# Generic payload type
+T = TypeVar("T")
 
 
-@dataclass
-class BaseAction:
-    """Base class for all entity actions."""
-
-    entity: "BaseEntity"
-    entity_definition_id: UUID
-
-    @property
-    def entity_id(self) -> str:
-        """Get the entity ID."""
-        return self.entity.entity_id
-
-    @property
-    def entity_type(self) -> str:
-        """Get the entity type name."""
-        return self.entity.__class__.__name__
+# =============================================================================
+# Base Action Types (Generic)
+# =============================================================================
 
 
 @dataclass
-class InsertAction(BaseAction):
-    """Entity should be inserted (new entity, not in database)."""
+class BaseAction(Generic[T]):
+    """Base class for all actions."""
 
-    chunk_entities: List["BaseEntity"] = field(default_factory=list)
-
-
-@dataclass
-class UpdateAction(BaseAction):
-    """Entity should be updated (hash changed from stored value)."""
-
-    db_id: UUID = field(default=None)  # Existing database record ID
-    chunk_entities: List["BaseEntity"] = field(default_factory=list)
+    payload: T
 
 
 @dataclass
-class DeleteAction(BaseAction):
-    """Entity should be deleted (DeletionEntity from source)."""
-
-    db_id: Optional[UUID] = None  # May not exist in DB if never synced
-
-
-@dataclass
-class KeepAction(BaseAction):
-    """Entity is unchanged (hash matches stored value)."""
+class InsertAction(BaseAction[T]):
+    """Item should be inserted (new, not in database)."""
 
     pass
 
 
 @dataclass
-class ActionBatch:
+class UpdateAction(BaseAction[T]):
+    """Item should be updated (changed from stored value)."""
+
+    pass
+
+
+@dataclass
+class DeleteAction(BaseAction[T]):
+    """Item should be deleted."""
+
+    pass
+
+
+@dataclass
+class KeepAction(BaseAction[T]):
+    """Item is unchanged (no action needed)."""
+
+    pass
+
+
+@dataclass
+class UpsertAction(BaseAction[T]):
+    """Item should be upserted (insert or update on conflict)."""
+
+    pass
+
+
+# =============================================================================
+# Action Batch (Generic)
+# =============================================================================
+
+
+@dataclass
+class ActionBatch(Generic[T]):
     """Container for a batch of resolved actions.
 
-    Provides convenient access to actions grouped by type and utility methods
-    for checking batch state.
+    Generic over the payload type T. Supports all action types for flexibility.
     """
 
-    inserts: List[InsertAction] = field(default_factory=list)
-    updates: List[UpdateAction] = field(default_factory=list)
-    deletes: List[DeleteAction] = field(default_factory=list)
-    keeps: List[KeepAction] = field(default_factory=list)
-
-    # Map of (entity_id, entity_definition_id) -> DB entity for updates/deletes
-    existing_map: Dict[Tuple[str, UUID], "models.Entity"] = field(default_factory=dict)
+    inserts: List[InsertAction[T]] = field(default_factory=list)
+    updates: List[UpdateAction[T]] = field(default_factory=list)
+    deletes: List[DeleteAction[T]] = field(default_factory=list)
+    keeps: List[KeepAction[T]] = field(default_factory=list)
+    upserts: List[UpsertAction[T]] = field(default_factory=list)
 
     @property
     def has_mutations(self) -> bool:
-        """Check if batch has any INSERT/UPDATE/DELETE actions."""
-        return bool(self.inserts or self.updates or self.deletes)
+        """Check if batch has any mutation actions."""
+        return bool(self.inserts or self.updates or self.deletes or self.upserts)
 
     @property
     def mutation_count(self) -> int:
         """Get total count of mutation actions."""
-        return len(self.inserts) + len(self.updates) + len(self.deletes)
+        return len(self.inserts) + len(self.updates) + len(self.deletes) + len(self.upserts)
 
     @property
     def total_count(self) -> int:
         """Get total count of all actions including KEEP."""
         return self.mutation_count + len(self.keeps)
 
-    def get_entities_to_process(self) -> List["BaseEntity"]:
-        """Get entities that need content processing (INSERT + UPDATE)."""
-        entities = []
-        for action in self.inserts:
-            entities.append(action.entity)
-        for action in self.updates:
-            entities.append(action.entity)
-        return entities
-
     def summary(self) -> str:
         """Get a summary string of the batch."""
-        return (
-            f"{len(self.inserts)} inserts, {len(self.updates)} updates, "
-            f"{len(self.deletes)} deletes, {len(self.keeps)} keeps"
-        )
+        parts = []
+        if self.inserts:
+            parts.append(f"{len(self.inserts)} inserts")
+        if self.updates:
+            parts.append(f"{len(self.updates)} updates")
+        if self.deletes:
+            parts.append(f"{len(self.deletes)} deletes")
+        if self.upserts:
+            parts.append(f"{len(self.upserts)} upserts")
+        if self.keeps:
+            parts.append(f"{len(self.keeps)} keeps")
+        return ", ".join(parts) if parts else "empty"
+
+    def get_payloads(self) -> List[T]:
+        """Get all payloads that need processing (from inserts + updates + upserts)."""
+        payloads = []
+        for action in self.inserts:
+            payloads.append(action.payload)
+        for action in self.updates:
+            payloads.append(action.payload)
+        for action in self.upserts:
+            payloads.append(action.payload)
+        return payloads

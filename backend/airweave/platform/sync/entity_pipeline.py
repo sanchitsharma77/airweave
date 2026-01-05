@@ -18,9 +18,9 @@ from airweave.core.shared_models import AirweaveFieldFlag
 from airweave.platform.contexts import SyncContext
 from airweave.platform.entities._base import BaseEntity
 from airweave.platform.sync.actions import (
-    ActionBatch,
-    ActionDispatcher,
-    ActionResolver,
+    EntityActionBatch,
+    EntityActionDispatcher,
+    EntityActionResolver,
 )
 from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.pipeline.cleanup_service import cleanup_service
@@ -37,8 +37,8 @@ class EntityPipeline:
     def __init__(
         self,
         entity_tracker: EntityTracker,
-        action_resolver: ActionResolver,
-        action_dispatcher: ActionDispatcher,
+        action_resolver: EntityActionResolver,
+        action_dispatcher: EntityActionDispatcher,
     ):
         """Initialize pipeline with injected dependencies.
 
@@ -102,7 +102,7 @@ class EntityPipeline:
         Dispatches to ALL handlers via dispatcher:
         - DestinationHandler (Qdrant/Vespa) - deletes from vector stores
         - ArfHandler - deletes from ARF storage
-        - PostgresMetadataHandler - deletes from metadata DB
+        - EntityPostgresHandler - deletes from metadata DB
 
         Args:
             sync_context: Sync context
@@ -220,13 +220,13 @@ class EntityPipeline:
 
     async def _handle_keep_only_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: SyncContext,
     ) -> None:
         """Handle batch where all entities are KEEP (unchanged).
 
         Args:
-            batch: ActionBatch with only KEEP actions
+            batch: EntityActionBatch with only KEEP actions
             sync_context: Sync context
         """
         if batch.keeps:
@@ -244,7 +244,7 @@ class EntityPipeline:
 
     async def _update_tracker(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: SyncContext,
     ) -> None:
         """Update entity tracker with successful operations.
@@ -252,7 +252,7 @@ class EntityPipeline:
         Triggers pubsub updates via SyncStatePublisher.
 
         Args:
-            batch: ActionBatch that was successfully processed
+            batch: EntityActionBatch that was successfully processed
             sync_context: Sync context
         """
         # Collect counts by entity definition
@@ -330,13 +330,13 @@ class EntityPipeline:
 
     async def _cleanup_temp_files_for_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: SyncContext,
     ) -> None:
         """Clean up temp files for processed batch.
 
         Args:
-            batch: ActionBatch that was processed
+            batch: EntityActionBatch that was processed
             sync_context: Sync context
         """
         # Build a pseudo-partitions dict for compatibility with CleanupService

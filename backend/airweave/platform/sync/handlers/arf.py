@@ -6,21 +6,21 @@ for debugging, replay, and audit purposes.
 
 from typing import TYPE_CHECKING, List
 
-from airweave.platform.sync.actions.types import (
-    ActionBatch,
-    DeleteAction,
-    InsertAction,
-    UpdateAction,
+from airweave.platform.sync.actions.entity_types import (
+    EntityActionBatch,
+    EntityDeleteAction,
+    EntityInsertAction,
+    EntityUpdateAction,
 )
 from airweave.platform.sync.exceptions import SyncFailureError
-from airweave.platform.sync.handlers.protocol import ActionHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 if TYPE_CHECKING:
     from airweave.platform.contexts import SyncContext
     from airweave.platform.entities import BaseEntity
 
 
-class ArfHandler(ActionHandler):
+class ArfHandler(EntityActionHandler):
     """Handler for ARF (Airweave Raw Format) storage.
 
     Stores entity JSON to the ARF store (entity-level files).
@@ -44,7 +44,7 @@ class ArfHandler(ActionHandler):
 
     async def handle_batch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Handle a full action batch."""
@@ -58,7 +58,7 @@ class ArfHandler(ActionHandler):
 
     async def handle_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List[EntityInsertAction],
         sync_context: "SyncContext",
     ) -> None:
         """Store inserted entities to ARF."""
@@ -69,7 +69,7 @@ class ArfHandler(ActionHandler):
 
     async def handle_updates(
         self,
-        actions: List[UpdateAction],
+        actions: List[EntityUpdateAction],
         sync_context: "SyncContext",
     ) -> None:
         """Update entities in ARF."""
@@ -80,7 +80,7 @@ class ArfHandler(ActionHandler):
 
     async def handle_deletes(
         self,
-        actions: List[DeleteAction],
+        actions: List[EntityDeleteAction],
         sync_context: "SyncContext",
     ) -> None:
         """Delete entities from ARF."""

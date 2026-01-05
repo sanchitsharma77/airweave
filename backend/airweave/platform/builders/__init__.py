@@ -11,7 +11,7 @@ Builder Types:
 - TrackingContextBuilder: Creates TrackingContext
 - SyncContextBuilder: Orchestrates all builders to create SyncContext
 - CleanupContextBuilder: Creates CleanupContext for deletion operations
-- DispatcherBuilder: Creates ActionDispatcher with handlers
+- DispatcherBuilder: Creates EntityActionDispatcher with handlers
 """
 
 from airweave.platform.builders.cleanup import CleanupContextBuilder

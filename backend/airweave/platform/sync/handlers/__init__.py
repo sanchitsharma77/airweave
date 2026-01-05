@@ -2,29 +2,46 @@
 
 Contains handlers that execute resolved actions.
 
-Handler Types:
+Generic Protocol:
+    ActionHandler[T, B] - parameterized by payload type T and batch type B
+
+Type Aliases:
+    EntityActionHandler = ActionHandler[BaseEntity, EntityActionBatch]
+    ACActionHandler = ActionHandler[MembershipTuple, ACActionBatch]
+
+Entity Handlers:
 - DestinationHandler: Generic handler using processor strategy pattern
 - ArfHandler: Raw entity storage for audit/replay (ARF = Airweave Raw Format)
-- PostgresMetadataHandler: Metadata persistence (runs last)
+- EntityPostgresHandler: Entity metadata persistence (runs last)
+
+Access Control Handlers:
+- ACPostgresHandler: Access control membership persistence
 
 Architecture:
-    All handlers implement ActionHandler protocol via duck typing. They receive
-    resolved actions and persist them to their destination. The ActionDispatcher
-    runs destination handlers concurrently, then PostgresMetadataHandler sequentially.
-
-Processor Pattern:
-    DestinationHandler maps ProcessingRequirement enum to processor singletons.
-    Destinations declare what they need, handler owns processor lifecycle.
+    All handlers implement ActionHandler[T, B] with their specific types.
+    Entity handlers use T=BaseEntity, B=EntityActionBatch.
+    AC handlers use T=MembershipTuple, B=ACActionBatch.
+    The dispatchers call handlers concurrently for their respective sync types.
 """
 
+# Handlers
+from .access_control_postgres import ACPostgresHandler
 from .arf import ArfHandler
 from .destination import DestinationHandler
-from .postgres import PostgresMetadataHandler
-from .protocol import ActionHandler
+from .entity_postgres import EntityPostgresHandler
+
+# Protocol and type aliases
+from .protocol import ACActionHandler, ActionHandler, EntityActionHandler
 
 __all__ = [
+    # Protocol and type aliases
     "ActionHandler",
+    "EntityActionHandler",
+    "ACActionHandler",
+    # Entity handlers
     "ArfHandler",
     "DestinationHandler",
-    "PostgresMetadataHandler",
+    "EntityPostgresHandler",
+    # Access control handlers
+    "ACPostgresHandler",
 ]

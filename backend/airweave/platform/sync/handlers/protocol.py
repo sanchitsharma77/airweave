@@ -1,53 +1,45 @@
-"""Handler protocol for action execution.
+"""Generic protocol for action handlers.
 
-Handlers receive resolved actions and persist them to their destination.
-All handlers are called concurrently by the ActionDispatcher.
+Single protocol using generics that both entity and AC handlers implement.
+The protocol is parameterized by:
+- T: The payload type (BaseEntity or MembershipTuple)
+- B: The batch type (EntityActionBatch or ACActionBatch)
 
-Protocol Methods (public interface):
-- handle_batch: Main entry point for batch processing
-- handle_inserts/updates/deletes: Individual action handlers
-- handle_orphan_cleanup: End-of-sync cleanup
-
-Implementation Pattern:
-- Public methods should be thin wrappers calling private _do_* methods
-- Private methods contain the actual logic
-- This allows handlers to override behavior at either level
+Type Aliases:
+    EntityActionHandler = ActionHandler[BaseEntity, EntityActionBatch]
+    ACActionHandler = ActionHandler[MembershipTuple, ACActionBatch]
 """
 
-from typing import TYPE_CHECKING, List, Protocol, runtime_checkable
-
-from airweave.platform.sync.actions.types import (
-    ActionBatch,
-    DeleteAction,
-    InsertAction,
-    UpdateAction,
-)
+from typing import TYPE_CHECKING, Any, Generic, List, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from airweave.platform.contexts import SyncContext
+    from airweave.platform.sync.actions.types import (
+        DeleteAction,
+        InsertAction,
+        UpdateAction,
+        UpsertAction,
+    )
+
+# Generic type variables
+T = TypeVar("T")  # Payload type (BaseEntity or MembershipTuple)
+B = TypeVar("B")  # Batch type (EntityActionBatch or ACActionBatch)
 
 
 @runtime_checkable
-class ActionHandler(Protocol):
-    """Protocol defining the ActionHandler interface.
+class ActionHandler(Protocol, Generic[T, B]):
+    """Generic protocol for action handlers.
 
     Handlers receive resolved actions and persist them to their destination.
-    All handlers are called concurrently for each batch by the ActionDispatcher.
+    Parameterized by payload type T and batch type B.
 
     Contract:
     - Handlers MUST be idempotent (safe to retry on failure)
     - Handlers MUST raise SyncFailureError for non-recoverable errors
-    - Handlers receive actions AFTER chunking/embedding (for destination handlers)
 
-    Execution Order:
-    1. All destination handlers receive ActionBatch concurrently
-    2. If ANY handler fails, SyncFailureError bubbles up (all-or-nothing)
-    3. PostgresMetadataHandler runs AFTER other handlers succeed (consistency)
-
-    Implementation Pattern:
-    - Public methods are the protocol interface
-    - Each public method should delegate to a private _do_* method
-    - Private methods contain actual logic and can be overridden/reused
+    Type Parameters:
+        T: Payload type (e.g., BaseEntity, MembershipTuple)
+        B: Batch type (e.g., EntityActionBatch, ACActionBatch)
     """
 
     @property
@@ -57,17 +49,17 @@ class ActionHandler(Protocol):
 
     async def handle_batch(
         self,
-        batch: ActionBatch,
+        batch: B,
         sync_context: "SyncContext",
-    ) -> None:
+    ) -> Any:
         """Handle a full action batch (main entry point).
 
-        Default implementation calls handle_inserts/updates/deletes.
-        Override for custom batch handling (e.g., single transaction).
-
         Args:
-            batch: ActionBatch with resolved actions
+            batch: Action batch of type B
             sync_context: Sync context
+
+        Returns:
+            Handler-specific return (None for entity, int for AC)
 
         Raises:
             SyncFailureError: If any operation fails
@@ -76,14 +68,17 @@ class ActionHandler(Protocol):
 
     async def handle_inserts(
         self,
-        actions: List[InsertAction],
+        actions: List["InsertAction[T]"],
         sync_context: "SyncContext",
-    ) -> None:
+    ) -> Any:
         """Handle insert actions.
 
         Args:
-            actions: List of InsertAction objects
+            actions: List of InsertAction[T] objects
             sync_context: Sync context
+
+        Returns:
+            Handler-specific return
 
         Raises:
             SyncFailureError: If inserts fail
@@ -92,14 +87,17 @@ class ActionHandler(Protocol):
 
     async def handle_updates(
         self,
-        actions: List[UpdateAction],
+        actions: List["UpdateAction[T]"],
         sync_context: "SyncContext",
-    ) -> None:
+    ) -> Any:
         """Handle update actions.
 
         Args:
-            actions: List of UpdateAction objects
+            actions: List of UpdateAction[T] objects
             sync_context: Sync context
+
+        Returns:
+            Handler-specific return
 
         Raises:
             SyncFailureError: If updates fail
@@ -108,35 +106,71 @@ class ActionHandler(Protocol):
 
     async def handle_deletes(
         self,
-        actions: List[DeleteAction],
+        actions: List["DeleteAction[T]"],
         sync_context: "SyncContext",
-    ) -> None:
+    ) -> Any:
         """Handle delete actions.
 
         Args:
-            actions: List of DeleteAction objects
+            actions: List of DeleteAction[T] objects
             sync_context: Sync context
+
+        Returns:
+            Handler-specific return
 
         Raises:
             SyncFailureError: If deletes fail
         """
         ...
 
-    async def handle_orphan_cleanup(
+    async def handle_upserts(
         self,
-        orphan_entity_ids: List[str],
+        actions: List["UpsertAction[T]"],
         sync_context: "SyncContext",
-    ) -> None:
-        """Handle orphaned entity cleanup at sync end.
-
-        Called for entities in DB but not encountered during sync
-        (indicating deletion at source).
+    ) -> Any:
+        """Handle upsert actions.
 
         Args:
-            orphan_entity_ids: List of entity IDs that are orphaned
+            actions: List of UpsertAction[T] objects
             sync_context: Sync context
+
+        Returns:
+            Handler-specific return
+
+        Raises:
+            SyncFailureError: If upserts fail
+        """
+        ...
+
+    async def handle_orphan_cleanup(
+        self,
+        orphan_ids: List[str],
+        sync_context: "SyncContext",
+    ) -> Any:
+        """Handle orphaned item cleanup at sync end.
+
+        Args:
+            orphan_ids: List of IDs that are orphaned
+            sync_context: Sync context
+
+        Returns:
+            Handler-specific return
 
         Raises:
             SyncFailureError: If cleanup fails
         """
         ...
+
+
+# =============================================================================
+# Type Aliases for Convenience
+# =============================================================================
+
+# These are runtime type hints - they help with documentation and IDE support
+# but Python's type system doesn't fully enforce generic protocol bounds
+
+EntityActionHandler = ActionHandler["BaseEntity", "EntityActionBatch"]
+"""Handler for entity sync - ActionHandler[BaseEntity, EntityActionBatch]"""
+
+ACActionHandler = ActionHandler["MembershipTuple", "ACActionBatch"]
+"""Handler for access control sync - ActionHandler[MembershipTuple, ACActionBatch]"""

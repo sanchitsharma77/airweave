@@ -4,12 +4,12 @@ from typing import List, Optional
 
 from airweave.core.logging import ContextualLogger
 from airweave.platform.contexts.destinations import DestinationsContext
-from airweave.platform.sync.actions.dispatcher import ActionDispatcher
+from airweave.platform.sync.actions.entity_dispatcher import EntityActionDispatcher
 from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.handlers.arf import ArfHandler
 from airweave.platform.sync.handlers.destination import DestinationHandler
-from airweave.platform.sync.handlers.postgres import PostgresMetadataHandler
-from airweave.platform.sync.handlers.protocol import ActionHandler
+from airweave.platform.sync.handlers.entity_postgres import EntityPostgresHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 
 class DispatcherBuilder:
@@ -21,7 +21,7 @@ class DispatcherBuilder:
         destinations: DestinationsContext,
         execution_config: Optional[SyncExecutionConfig] = None,
         logger: Optional[ContextualLogger] = None,
-    ) -> ActionDispatcher:
+    ) -> EntityActionDispatcher:
         """Build dispatcher with handlers based on config.
 
         Args:
@@ -30,17 +30,17 @@ class DispatcherBuilder:
             logger: Optional logger for logging handler creation
 
         Returns:
-            ActionDispatcher with configured handlers.
+            EntityActionDispatcher with configured handlers.
         """
         handlers = cls._build_handlers(destinations, execution_config, logger)
-        return ActionDispatcher(handlers=handlers)
+        return EntityActionDispatcher(handlers=handlers)
 
     @classmethod
     def build_for_cleanup(
         cls,
         destinations: DestinationsContext,
         logger: Optional[ContextualLogger] = None,
-    ) -> ActionDispatcher:
+    ) -> EntityActionDispatcher:
         """Build dispatcher for cleanup operations (all handlers enabled).
 
         Args:
@@ -48,7 +48,7 @@ class DispatcherBuilder:
             logger: Optional logger
 
         Returns:
-            ActionDispatcher for cleanup.
+            EntityActionDispatcher for cleanup.
         """
         return cls.build(destinations=destinations, execution_config=None, logger=logger)
 
@@ -58,13 +58,13 @@ class DispatcherBuilder:
         destinations: DestinationsContext,
         execution_config: Optional[SyncExecutionConfig],
         logger: Optional[ContextualLogger],
-    ) -> List[ActionHandler]:
+    ) -> List[EntityActionHandler]:
         """Build handler list based on config."""
         enable_vector = execution_config.enable_vector_handlers if execution_config else True
         enable_arf = execution_config.enable_raw_data_handler if execution_config else True
         enable_postgres = execution_config.enable_postgres_handler if execution_config else True
 
-        handlers: List[ActionHandler] = []
+        handlers: List[EntityActionHandler] = []
 
         cls._add_destination_handler(handlers, destinations, enable_vector, logger)
         cls._add_arf_handler(handlers, enable_arf, logger)
@@ -78,7 +78,7 @@ class DispatcherBuilder:
     @classmethod
     def _add_destination_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         destinations: DestinationsContext,
         enabled: bool,
         logger: Optional[ContextualLogger],
@@ -104,7 +104,7 @@ class DispatcherBuilder:
     @classmethod
     def _add_arf_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         enabled: bool,
         logger: Optional[ContextualLogger],
     ) -> None:
@@ -119,14 +119,14 @@ class DispatcherBuilder:
     @classmethod
     def _add_postgres_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         enabled: bool,
         logger: Optional[ContextualLogger],
     ) -> None:
         """Add Postgres metadata handler if enabled (always last)."""
         if enabled:
-            handlers.append(PostgresMetadataHandler())
+            handlers.append(EntityPostgresHandler())
             if logger:
-                logger.debug("Added PostgresMetadataHandler")
+                logger.debug("Added EntityPostgresHandler")
         elif logger:
-            logger.info("Skipping PostgresMetadataHandler (disabled by execution_config)")
+            logger.info("Skipping EntityPostgresHandler (disabled by execution_config)")

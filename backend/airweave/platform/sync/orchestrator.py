@@ -86,6 +86,10 @@ class SyncOrchestrator:
             await self._process_entities()
             self.sync_context.logger.info(f"✅ PHASE 2 complete ({time.time() - phase_start:.2f}s)")
 
+            # Phase 2.5: Process access control memberships (if source supports it)
+            phase_start = time.time()
+            await self._process_access_control_memberships()
+
             # Phase 3: Cleanup orphaned entities
             phase_start = time.time()
             self.sync_context.logger.info("🚀 PHASE 3: Cleanup orphaned entities (if needed)...")
@@ -402,6 +406,71 @@ class SyncOrchestrator:
 
         # 3. Wait for all tasks to complete
         await self._wait_for_remaining_tasks(pending_tasks)
+
+    async def _process_access_control_memberships(self) -> None:
+        """Process access control memberships if source supports it.
+
+        Uses the handler/dispatcher architecture for consistency and
+        future extensibility (Redis handler, delete actions, etc.).
+
+        This phase runs AFTER entity processing (Phase 2) and BEFORE
+        orphan cleanup (Phase 3).
+        """
+        source = self.sync_context.source_instance
+
+        # Check decorator flag - only sources with supports_access_control=True
+        if not getattr(source, "_supports_access_control", False):
+            self.sync_context.logger.debug(
+                f"Source {source._short_name} does not support access control, skipping"
+            )
+            return
+
+        # Verify source implements the method
+        if not hasattr(source, "generate_access_control_memberships"):
+            self.sync_context.logger.warning(
+                f"Source {source._short_name} has supports_access_control=True "
+                "but doesn't implement generate_access_control_memberships()"
+            )
+            return
+
+        self.sync_context.logger.info("🔐 PHASE 2.5: Processing access control memberships...")
+        phase_start = time.time()
+
+        from airweave.platform.sync.access_control_pipeline import AccessControlPipeline
+
+        pipeline = AccessControlPipeline()
+
+        batch_buffer = []
+        membership_count = 0
+
+        try:
+            async for membership in source.generate_access_control_memberships():
+                batch_buffer.append(membership)
+
+                if len(batch_buffer) >= self.batch_size:
+                    count = await pipeline.process(batch_buffer, self.sync_context)
+                    membership_count += count
+                    batch_buffer = []
+
+            # Flush remaining
+            if batch_buffer:
+                count = await pipeline.process(batch_buffer, self.sync_context)
+                membership_count += count
+
+            self.sync_context.logger.info(
+                f"✅ PHASE 2.5 complete - processed {membership_count} memberships "
+                f"({time.time() - phase_start:.2f}s)"
+            )
+        except Exception as e:
+            self.sync_context.logger.error(
+                f"Error during access control membership processing: {e}",
+                exc_info=True,
+            )
+            # Don't fail the sync - access control is supplementary
+            # Entities were already synced successfully
+            self.sync_context.logger.warning(
+                "Continuing despite access control error - entities were synced"
+            )
 
     async def _cleanup_orphaned_entities_if_needed(self) -> None:
         """Cleanup orphaned entities based on sync type."""
