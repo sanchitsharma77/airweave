@@ -29,10 +29,27 @@ class RawDataHandler(ActionHandler):
             └── {entity_id}_{name}.{ext}
     """
 
+    def __init__(self):
+        """Initialize handler with manifest tracking."""
+        self._manifest_initialized = False
+
     @property
     def name(self) -> str:
         """Handler name."""
         return "raw_data"
+
+    async def _ensure_manifest(self, sync_context: "SyncContext") -> None:
+        """Ensure manifest exists for this sync (called once per sync)."""
+        if self._manifest_initialized:
+            return
+
+        from airweave.platform.sync import raw_data_service
+
+        try:
+            await raw_data_service.upsert_manifest(sync_context)
+            self._manifest_initialized = True
+        except Exception as e:
+            sync_context.logger.warning(f"[RawData] Failed to upsert manifest: {e}")
 
     async def handle_inserts(
         self,
@@ -47,6 +64,9 @@ class RawDataHandler(ActionHandler):
         """
         if not actions:
             return
+
+        # Ensure manifest exists (lazily created on first write)
+        await self._ensure_manifest(sync_context)
 
         from airweave.platform.sync import raw_data_service
 
@@ -78,6 +98,9 @@ class RawDataHandler(ActionHandler):
         """
         if not actions:
             return
+
+        # Ensure manifest exists (lazily created on first write)
+        await self._ensure_manifest(sync_context)
 
         from airweave.platform.sync import raw_data_service
 
