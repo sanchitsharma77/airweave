@@ -23,6 +23,7 @@ from airweave.search.context import SearchContext
 from airweave.search.emitter import EventEmitter
 from airweave.search.helpers import search_helpers
 from airweave.search.operations import (
+    AccessControlFilter,
     EmbedQuery,
     FederatedSearch,
     GenerateAnswer,
@@ -152,6 +153,8 @@ class SearchFactory:
             vector_size,
             destination=destination,
             requires_client_embedding=requires_embedding,
+            db=db,
+            ctx=ctx,
         )
 
         search_context = SearchContext(
@@ -294,6 +297,8 @@ class SearchFactory:
         vector_size: Optional[int] = None,
         destination: Optional[BaseDestination] = None,
         requires_client_embedding: bool = True,
+        db: Optional[AsyncSession] = None,
+        ctx: Optional[ApiContext] = None,
     ) -> Dict[str, Any]:
         """Build operation instances for the search context.
 
@@ -312,6 +317,8 @@ class SearchFactory:
             vector_size: Vector dimensions for this collection (used by EmbedQuery)
             destination: The destination instance for search (Qdrant, Vespa, etc.)
             requires_client_embedding: Whether destination needs client-side embeddings
+            db: Database session for access control queries
+            ctx: API context with user and organization info
         """
         # Operations that need client-side embeddings (Qdrant-specific for now)
         # TODO: Make these destination-agnostic when filter DSL is abstracted
@@ -323,7 +330,18 @@ class SearchFactory:
             getattr(destination, "_supports_temporal_relevance", True) if destination else False
         )
 
+        # Build access control filter operation if we have user context
+        # This resolves the user's access principals and builds the filter
+        access_control_op = None
+        if db is not None and ctx is not None and ctx.user is not None and has_vector_sources:
+            access_control_op = AccessControlFilter(
+                db=db,
+                user_email=ctx.user.email,
+                organization_id=ctx.organization.id,
+            )
+
         return {
+            "access_control_filter": access_control_op,
             "query_expansion": (
                 QueryExpansion(providers=providers["expansion"]) if params["expand_query"] else None
             ),
