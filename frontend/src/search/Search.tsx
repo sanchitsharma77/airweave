@@ -7,6 +7,7 @@ import { DESIGN_SYSTEM } from "@/lib/design-system";
 
 interface SearchProps {
     collectionReadableId: string;
+    disabled?: boolean;  // Disable search when no sources are connected
 }
 
 /**
@@ -17,7 +18,7 @@ interface SearchProps {
  * - SearchResponseDisplay for showing results
  * - Clean separation of concerns for maintainability
  */
-export const Search = ({ collectionReadableId }: SearchProps) => {
+export const Search = ({ collectionReadableId, disabled = false }: SearchProps) => {
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === "dark";
 
@@ -83,6 +84,7 @@ export const Search = ({ collectionReadableId }: SearchProps) => {
             <div>
                 <SearchBox
                     collectionId={collectionReadableId}
+                    disabled={disabled}
                     onSearch={handleSearchResult}
                     onSearchStart={handleSearchStart}
                     onSearchEnd={handleSearchEnd}
