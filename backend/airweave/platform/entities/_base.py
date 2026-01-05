@@ -19,6 +19,29 @@ class Breadcrumb(BaseModel):
     entity_type: str = Field(..., description="Entity class name (e.g., 'AsanaProjectEntity').")
 
 
+class AccessControl(BaseModel):
+    """Access control metadata for an entity (source-agnostic).
+
+    Stores who can view this entity as principal identifiers.
+    Principals are NOT expanded - groups stored as-is.
+
+    Format:
+        - Users: "user:john@acme.com"
+        - Groups: "group:<group_id>" (e.g., "group:engineering" or "group:uuid-123")
+
+    Note: Only sources with supports_access_control=True should set this field.
+    Sources without access control support should leave this as None.
+    """
+
+    viewers: List[str] = Field(
+        default_factory=list, description="Principal IDs who can view this entity"
+    )
+    is_public: bool = Field(
+        default=False,
+        description="Whether this entity is publicly accessible.",
+    )
+
+
 class AirweaveSystemMetadata(BaseModel):
     """System metadata for this entity.
 
@@ -87,10 +110,15 @@ class BaseEntity(BaseModel):
         None, description="System metadata for this entity."
     )
 
+    # Access control - only set by sources with supports_access_control=True
+    access: Optional[AccessControl] = Field(
+        None, description="Access control - who can view this entity (not expanded)"
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
-    def validate_flagged_fields(self) -> "BaseEntity":
+    def validate_flagged_fields(self) -> "BaseEntity":  # noqa: C901
         """Validate that exactly one field has each unique flag.
 
         This enforces composition over inheritance by ensuring entity definitions
@@ -130,8 +158,8 @@ class BaseEntity(BaseModel):
             if len(flagged_fields) == 0:
                 raise ValueError(
                     f"{self.__class__.__name__} must have exactly ONE field marked with "
-                    f"{flag_label}. Found 0. Please add AirweaveField(..., {flag_label}=True) to the "
-                    f"appropriate field (e.g., 'gid', 'id', 'name')."
+                    f"{flag_label}. Found 0. Please add AirweaveField(..., {flag_label}=True) "
+                    f"to the appropriate field (e.g., 'gid', 'id', 'name')."
                 )
             elif len(flagged_fields) > 1:
                 raise ValueError(

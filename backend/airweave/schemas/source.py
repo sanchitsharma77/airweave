@@ -114,6 +114,14 @@ class SourceBase(BaseModel):
             "'connection' (per-connection/per-user), or None (no rate limiting)."
         ),
     )
+    supports_access_control: bool = Field(
+        False,
+        description=(
+            "Whether this source provides entity-level access control metadata. "
+            "When True, the source sets entity.access on all yielded entities and "
+            "implements generate_access_control_memberships() for permission syncing."
+        ),
+    )
 
     @field_serializer("output_entity_definition_ids")
     def serialize_output_entity_definition_ids(
