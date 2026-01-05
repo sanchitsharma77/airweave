@@ -190,6 +190,7 @@ class VespaDestination(VectorDBDestination):
         fields = self._build_base_fields(entity)
         self._add_system_metadata_fields(fields, entity, entity_type)
         self._add_type_specific_fields(fields, entity)
+        self._add_access_control_fields(fields, entity)
         self._add_payload_field(fields, entity)
 
         # Remove None values from top-level fields
@@ -280,6 +281,26 @@ class VespaDestination(VectorDBDestination):
                 fields["mime_type"] = entity.mime_type
             if entity.local_path:
                 fields["local_path"] = entity.local_path
+
+    def _add_access_control_fields(self, fields: dict[str, Any], entity: BaseEntity) -> None:
+        """Add access control fields if entity has access metadata.
+
+        IMPORTANT: Only include access fields if the entity has them explicitly set.
+        Sources without supports_access_control=True won't set this field, and we
+        don't want to add default restrictive values that would hide entities.
+
+        When access control fields are absent, entities are visible to everyone
+        (no access filter is applied during search).
+
+        Args:
+            fields: Fields dict to update
+            entity: The entity to extract access control from
+        """
+        if entity.access is not None:
+            fields["access_is_public"] = entity.access.is_public
+            # Always include viewers array (even if empty) when access is set
+            fields["access_viewers"] = entity.access.viewers if entity.access.viewers else []
+        # else: Don't add access fields - entity is from non-AC source
 
     def _add_payload_field(self, fields: dict[str, Any], entity: BaseEntity) -> None:
         """Extract extra fields into payload JSON."""
@@ -882,6 +903,7 @@ class VespaDestination(VectorDBDestination):
     def _map_field_name(self, key: str) -> str:
         """Map logical field names to Vespa field paths (flattened metadata fields)."""
         meta_field_map = {
+            # System metadata fields
             "collection_id": "airweave_system_metadata_collection_id",
             "entity_type": "airweave_system_metadata_entity_type",
             "sync_id": "airweave_system_metadata_sync_id",
@@ -890,6 +912,9 @@ class VespaDestination(VectorDBDestination):
             "hash": "airweave_system_metadata_hash",
             "original_entity_id": "airweave_system_metadata_original_entity_id",
             "source_name": "airweave_system_metadata_source_name",
+            # Access control fields (dot notation -> flat field)
+            "access.is_public": "access_is_public",
+            "access.viewers": "access_viewers",
         }
         return meta_field_map.get(key, key)
 
@@ -918,24 +943,77 @@ class VespaDestination(VectorDBDestination):
         if "has_id" in condition:
             return self._translate_has_id_condition(condition)
 
+        # Handle is_null check (for mixed collection access control)
+        if "key" in condition and "is_null" in condition:
+            return self._translate_is_null_condition(condition)
+
         # Fallback - return empty (will be filtered out)
         self.logger.debug(f"[VespaSearch] Unknown condition type: {condition}")
         return ""
 
     def _translate_match_condition(self, condition: Dict[str, Any]) -> str:
-        """Translate a match condition to YQL."""
+        """Translate a match condition to YQL.
+
+        Handles various match types:
+        - {"value": "x"} -> simple equality/contains
+        - {"any": ["a", "b"]} -> OR across array values (for access control filtering)
+        - Direct value -> simple equality/contains
+        """
         key = self._map_field_name(condition["key"])
         match = condition["match"]
+
+        # Handle "any" operator for array fields (access control filtering)
+        # Example: {"key": "access.viewers", "match": {"any": ["user:a@x.com", "group:sp:1"]}}
+        # Generates: (access_viewers contains "user:a@x.com" OR ...)
+        if isinstance(match, dict) and "any" in match:
+            values = match["any"]
+            if not values:
+                return "false"  # No principals = no access
+            clauses = [f'{key} contains "{self._escape_yql_value(v)}"' for v in values]
+            return f"({' OR '.join(clauses)})"
+
+        # Handle simple value match
         value = match.get("value", "") if isinstance(match, dict) else match
 
         if isinstance(value, str):
-            escaped_value = value.replace('"', '\\"')
+            escaped_value = self._escape_yql_value(value)
             return f'{key} contains "{escaped_value}"'
         elif isinstance(value, bool):
             return f"{key} = {str(value).lower()}"
         elif isinstance(value, (int, float)):
             return f"{key} = {value}"
         return f'{key} contains "{value}"'
+
+    def _escape_yql_value(self, value: str) -> str:
+        """Escape special characters for YQL string literals.
+
+        Args:
+            value: Raw string value
+
+        Returns:
+            Escaped string safe for YQL
+        """
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _translate_is_null_condition(self, condition: Dict[str, Any]) -> str:
+        """Translate is_null condition to YQL.
+
+        Used for mixed collection access control: entities from non-AC sources
+        don't have access fields, so we need to check if the field is null/absent.
+
+        Args:
+            condition: Condition with "key" and "is_null" fields
+
+        Returns:
+            YQL condition string: "isNull(field)" or "!isNull(field)"
+        """
+        key = self._map_field_name(condition["key"])
+        is_null = condition["is_null"]
+
+        if is_null:
+            return f"isNull({key})"
+        else:
+            return f"!isNull({key})"
 
     def _translate_range_condition(self, condition: Dict[str, Any]) -> str:
         """Translate a range condition to YQL."""
