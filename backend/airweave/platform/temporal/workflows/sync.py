@@ -116,7 +116,7 @@ class RunSourceConnectionWorkflow:
         try:
             # Use longer heartbeat timeout in local development for debugging
             local_development = ctx_dict.get("local_development", False)
-            heartbeat_timeout = timedelta(hours=1) if local_development else timedelta(minutes=5)
+            heartbeat_timeout = timedelta(hours=1) if local_development else timedelta(minutes=15)
 
             await workflow.execute_activity(
                 run_sync_activity,
