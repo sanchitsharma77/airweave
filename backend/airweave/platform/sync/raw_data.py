@@ -44,6 +44,7 @@ from airweave.platform.storage.exceptions import StorageNotFoundError
 if TYPE_CHECKING:
     from airweave.platform.entities._base import BaseEntity
     from airweave.platform.sync.context import SyncContext
+    from airweave.platform.sync.pipeline.entity_tracker import SyncStats
 
 
 class SyncManifest(BaseModel):
@@ -56,8 +57,6 @@ class SyncManifest(BaseModel):
     organization_id: str
     created_at: str
     updated_at: str
-    entity_count: int = 0
-    file_count: int = 0
     # Track sync jobs that have written to this store
     sync_jobs: List[str] = Field(default_factory=list)
     # Optional config reference
@@ -220,14 +219,6 @@ class RawDataService:
 
         await self.storage.write_json(entity_path, entity_dict)
 
-        # Update manifest (only count new entities and files)
-        delta_entities = 0 if is_update else 1
-        delta_files = len(stored_files) if not is_update else 0  # Only count new files
-        if delta_entities or delta_files:
-            await self._update_manifest(
-                sync_context, delta_entities=delta_entities, delta_files=delta_files
-            )
-
     async def upsert_entities(
         self,
         entities: List["BaseEntity"],
@@ -280,8 +271,6 @@ class RawDataService:
         deleted = await self.storage.delete(entity_path)
 
         if deleted:
-            # Update manifest
-            await self._update_manifest(sync_context, delta_entities=-1, delta_files=-1)
             sync_context.logger.debug(f"Deleted raw entity: {entity_id}")
 
         return deleted
@@ -424,46 +413,6 @@ class RawDataService:
     # Manifest management
     # =========================================================================
 
-    async def _update_manifest(
-        self,
-        sync_context: "SyncContext",
-        delta_entities: int = 0,
-        delta_files: int = 0,
-    ) -> None:
-        """Update or create manifest for a sync."""
-        sync_id = str(sync_context.sync.id)
-        manifest_path = self._manifest_path(sync_id)
-        now = datetime.now(timezone.utc).isoformat()
-
-        if await self.storage.exists(manifest_path):
-            manifest_data = await self.storage.read_json(manifest_path)
-            manifest = SyncManifest.model_validate(manifest_data)
-            manifest.updated_at = now
-            manifest.entity_count = max(0, manifest.entity_count + delta_entities)
-            manifest.file_count = max(0, manifest.file_count + delta_files)
-
-            # Track sync job
-            job_id = str(sync_context.sync_job.id)
-            if job_id not in manifest.sync_jobs:
-                manifest.sync_jobs.append(job_id)
-        else:
-            manifest = SyncManifest(
-                sync_id=sync_id,
-                source_short_name=self._get_source_short_name(sync_context),
-                collection_id=str(sync_context.collection.id),
-                collection_readable_id=sync_context.collection.readable_id,
-                organization_id=str(sync_context.collection.organization_id),
-                created_at=now,
-                updated_at=now,
-                entity_count=max(0, delta_entities),
-                file_count=max(0, delta_files),
-                sync_jobs=[str(sync_context.sync_job.id)],
-                vector_size=sync_context.collection.vector_size,
-                embedding_model_name=sync_context.collection.embedding_model_name,
-            )
-
-        await self.storage.write_json(manifest_path, manifest.model_dump())
-
     async def get_manifest(self, sync_id: str) -> Optional[SyncManifest]:
         """Get manifest for a sync."""
         manifest_path = self._manifest_path(sync_id)
@@ -472,6 +421,42 @@ class RawDataService:
             return SyncManifest.model_validate(data)
         except StorageNotFoundError:
             return None
+
+    async def upsert_manifest(self, sync_context: "SyncContext") -> None:
+        """Create or update manifest for a sync job.
+
+        Args:
+            sync_context: Sync context with job info
+        """
+        sync_id = str(sync_context.sync.id)
+        manifest_path = self._manifest_path(sync_id)
+        now = datetime.now(timezone.utc).isoformat()
+        job_id = str(sync_context.sync_job.id)
+
+        # Read existing manifest if it exists
+        existing_manifest = await self.get_manifest(sync_id)
+
+        if existing_manifest:
+            # Update existing: add job ID, update timestamp
+            if job_id not in existing_manifest.sync_jobs:
+                existing_manifest.sync_jobs.append(job_id)
+            existing_manifest.updated_at = now
+            await self.storage.write_json(manifest_path, existing_manifest.model_dump())
+        else:
+            # Create new manifest
+            manifest = SyncManifest(
+                sync_id=sync_id,
+                source_short_name=self._get_source_short_name(sync_context),
+                collection_id=str(sync_context.collection.id),
+                collection_readable_id=sync_context.collection.readable_id,
+                organization_id=str(sync_context.collection.organization_id),
+                created_at=now,
+                updated_at=now,
+                sync_jobs=[job_id],
+                vector_size=sync_context.collection.vector_size,
+                embedding_model_name=sync_context.collection.embedding_model_name,
+            )
+            await self.storage.write_json(manifest_path, manifest.model_dump())
 
     # =========================================================================
     # Entity reconstruction
@@ -548,9 +533,9 @@ class RawDataService:
         return await self.storage.delete(self._sync_path(sync_id))
 
     async def get_entity_count(self, sync_id: str) -> int:
-        """Get count of entities in store (from manifest)."""
-        manifest = await self.get_manifest(sync_id)
-        return manifest.entity_count if manifest else 0
+        """Get count of entities in store (computed on-demand)."""
+        entity_ids = await self.list_entity_ids(sync_id)
+        return len(entity_ids)
 
     # =========================================================================
     # Replay / Resync support
@@ -597,12 +582,14 @@ class RawDataService:
         if not manifest:
             return {"exists": False}
 
+        # Compute entity count on-demand
+        entity_count = await self.get_entity_count(sync_id)
+
         return {
             "exists": True,
             "sync_id": manifest.sync_id,
             "source": manifest.source_short_name,
-            "entity_count": manifest.entity_count,
-            "file_count": manifest.file_count,
+            "entity_count": entity_count,
             "created_at": manifest.created_at,
             "updated_at": manifest.updated_at,
             "sync_jobs": manifest.sync_jobs,
