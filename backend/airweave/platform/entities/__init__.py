@@ -12,6 +12,12 @@ from .github import (
     GithubRepoEntity,
     GitHubRepositoryEntity,
 )
+from .sharepoint2019v2 import (
+    SharePoint2019V2FileEntity,
+    SharePoint2019V2ItemEntity,
+    SharePoint2019V2ListEntity,
+    SharePoint2019V2SiteEntity,
+)
 
 __all__ = [
     "BaseEntity",
@@ -24,4 +30,8 @@ __all__ = [
     "GitHubRepositoryEntity",
     "GithubRepoEntity",
     "GithubContentEntity",
+    "SharePoint2019V2FileEntity",
+    "SharePoint2019V2ItemEntity",
+    "SharePoint2019V2ListEntity",
+    "SharePoint2019V2SiteEntity",
 ]
