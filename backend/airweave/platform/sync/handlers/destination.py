@@ -20,10 +20,11 @@ from airweave.platform.sync.actions.entity_types import (
 from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.handlers.protocol import EntityActionHandler
 from airweave.platform.sync.processors import (
-    ChunkEmbedProcessor,
     ContentProcessor,
+    QdrantChunkEmbedProcessor,
     RawProcessor,
     TextOnlyProcessor,
+    VespaChunkEmbedProcessor,
 )
 
 if TYPE_CHECKING:
@@ -33,7 +34,8 @@ if TYPE_CHECKING:
 
 # Singleton processors - stateless, reusable
 _PROCESSORS: Dict[ProcessingRequirement, ContentProcessor] = {
-    ProcessingRequirement.CHUNKS_AND_EMBEDDINGS: ChunkEmbedProcessor(),
+    ProcessingRequirement.CHUNKS_AND_EMBEDDINGS: QdrantChunkEmbedProcessor(),
+    ProcessingRequirement.VESPA_CHUNKS_AND_EMBEDDINGS: VespaChunkEmbedProcessor(),
     ProcessingRequirement.TEXT_ONLY: TextOnlyProcessor(),
     ProcessingRequirement.RAW: RawProcessor(),
 }

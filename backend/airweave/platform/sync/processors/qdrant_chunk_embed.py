@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from airweave.platform.contexts import SyncContext
 
 
-class ChunkEmbedProcessor(ContentProcessor):
-    """Processor that chunks text and computes embeddings.
+class QdrantChunkEmbedProcessor(ContentProcessor):
+    """Processor that chunks text and computes embeddings for Qdrant.
 
     Pipeline:
     1. Build textual representation (text extraction from files/web)
@@ -48,7 +48,7 @@ class ChunkEmbedProcessor(ContentProcessor):
         # Step 2: Filter empty representations
         processed = await filter_empty_representations(processed, sync_context, "ChunkEmbed")
         if not processed:
-            sync_context.logger.debug("[ChunkEmbedProcessor] No entities after text building")
+            sync_context.logger.debug("[QdrantChunkEmbedProcessor] No entities after text building")
             return []
 
         # Step 3: Chunk entities
@@ -62,7 +62,7 @@ class ChunkEmbedProcessor(ContentProcessor):
         await self._embed_entities(chunk_entities, sync_context)
 
         sync_context.logger.debug(
-            f"[ChunkEmbedProcessor] {len(entities)} entities → {len(chunk_entities)} chunks"
+            f"[QdrantChunkEmbedProcessor] {len(entities)} entities → {len(chunk_entities)} chunks"
         )
 
         return chunk_entities
@@ -115,7 +115,7 @@ class ChunkEmbedProcessor(ContentProcessor):
         try:
             chunk_lists = await chunker.chunk_batch(texts)
         except Exception as e:
-            raise SyncFailureError(f"[ChunkEmbedProcessor] CodeChunker failed: {e}")
+            raise SyncFailureError(f"[QdrantChunkEmbedProcessor] CodeChunker failed: {e}")
 
         return self._multiply_entities(supported, chunk_lists, sync_context)
 
@@ -133,7 +133,7 @@ class ChunkEmbedProcessor(ContentProcessor):
         try:
             chunk_lists = await chunker.chunk_batch(texts)
         except Exception as e:
-            raise SyncFailureError(f"[ChunkEmbedProcessor] SemanticChunker failed: {e}")
+            raise SyncFailureError(f"[QdrantChunkEmbedProcessor] SemanticChunker failed: {e}")
 
         return self._multiply_entities(entities, chunk_lists, sync_context)
 
