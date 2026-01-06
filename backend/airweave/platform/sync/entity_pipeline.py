@@ -74,7 +74,7 @@ class EntityPipeline:
         # Phase 2: Prepare entities (populate fields, enrich metadata, compute hash)
         await self._prepare_entities(unique_entities, sync_context)
 
-        # Phase 3: Resolve actions
+        # Phase 3: Resolve actions (includes bulk DB lookup)
         batch = await self._resolver.resolve(unique_entities, sync_context)
 
         # Phase 4: Early exit for KEEP-only batches
