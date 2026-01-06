@@ -19,9 +19,10 @@ class ProcessingRequirement(Enum):
     to the appropriate processor.
     """
 
-    CHUNKS_AND_EMBEDDINGS = "chunks_and_embeddings"
-    TEXT_ONLY = "text_only"
-    RAW = "raw"
+    CHUNKS_AND_EMBEDDINGS = "chunks_and_embeddings"  # Qdrant: chunk → embed → store each chunk
+    VESPA_CHUNKS_AND_EMBEDDINGS = "vespa_chunks_and_embeddings"  # Vespa: chunk → embed → arrays
+    TEXT_ONLY = "text_only"  # Legacy: extract text, destination embeds
+    RAW = "raw"  # S3: no processing, raw entities
 
 
 class BaseDestination(ABC):
