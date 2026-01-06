@@ -1,28 +1,14 @@
 """Base destination classes."""
 
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
 from airweave.platform.entities._base import BaseEntity
+from airweave.platform.sync.pipeline import ProcessingRequirement
 from airweave.schemas.search import AirweaveTemporalConfig, SearchResult
-
-
-class ProcessingRequirement(Enum):
-    """What processing a destination expects from Airweave.
-
-    This enum determines how the sync pipeline processes entities before
-    sending them to the destination. The DestinationHandler maps these
-    to the appropriate processor.
-    """
-
-    CHUNKS_AND_EMBEDDINGS = "chunks_and_embeddings"  # Qdrant: chunk → embed → store each chunk
-    VESPA_CHUNKS_AND_EMBEDDINGS = "vespa_chunks_and_embeddings"  # Vespa: chunk → embed → arrays
-    TEXT_ONLY = "text_only"  # Legacy: extract text, destination embeds
-    RAW = "raw"  # S3: no processing, raw entities
 
 
 class BaseDestination(ABC):
@@ -157,11 +143,6 @@ class BaseDestination(ABC):
             Destination-native temporal config (or None if not supported)
         """
         return config
-
-    @abstractmethod
-    async def has_keyword_index(self) -> bool:
-        """Check if the destination has a keyword index."""
-        pass
 
 
 class VectorDBDestination(BaseDestination):

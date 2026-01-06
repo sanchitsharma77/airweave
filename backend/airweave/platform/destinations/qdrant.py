@@ -1377,11 +1377,6 @@ class QdrantDestination(VectorDBDestination):
     # ----------------------------------------------------------------------------------
     # Introspection
     # ----------------------------------------------------------------------------------
-    async def has_keyword_index(self) -> bool:
-        """Return True if the BM25 (sparse) index exists for the collection."""
-        names = await self.get_vector_config_names()
-        return KEYWORD_VECTOR_NAME in names
-
     async def get_vector_config_names(self) -> list[str]:
         """Return all configured vector names (dense and sparse) for the collection."""
         await self.ensure_client_readiness()

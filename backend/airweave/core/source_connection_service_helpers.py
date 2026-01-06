@@ -1047,7 +1047,7 @@ class SourceConnectionHelpers:
         self, db: AsyncSession, source_conn: Any, ctx: ApiContext
     ) -> None:
         """Clean up data in destinations (Qdrant, Vespa, ARF)."""
-        from airweave.core.cleanup_service import cleanup_service
+        from airweave.platform.cleanup import cleanup_service
 
         collection = await crud.collection.get_by_readable_id(
             db, readable_id=source_conn.readable_collection_id, ctx=ctx
@@ -1057,14 +1057,6 @@ class SourceConnectionHelpers:
 
         collection_schema = schemas.Collection.model_validate(collection, from_attributes=True)
         await cleanup_service.cleanup_sync(db, source_conn.sync_id, collection_schema, ctx)
-
-    async def cleanup_temporal_schedules(
-        self, sync_id: UUID, db: AsyncSession, ctx: ApiContext
-    ) -> None:
-        """Clean up Temporal schedules."""
-        from airweave.core.cleanup_service import cleanup_service
-
-        await cleanup_service.cleanup_temporal_schedules(sync_id, db, ctx)
 
     def sync_job_to_source_connection_job(
         self, job: Any, source_connection_id: UUID

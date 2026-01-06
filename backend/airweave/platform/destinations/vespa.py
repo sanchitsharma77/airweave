@@ -109,7 +109,7 @@ class VespaDestination(VectorDBDestination):
     """
 
     # Use VespaChunkEmbedProcessor for external chunking/embedding
-    from airweave.platform.destinations._base import ProcessingRequirement
+    from airweave.platform.sync.pipeline import ProcessingRequirement
 
     processing_requirement = ProcessingRequirement.VESPA_CHUNKS_AND_EMBEDDINGS
 
@@ -1175,14 +1175,6 @@ class VespaDestination(VectorDBDestination):
             )
             results.append(result)
         return results
-
-    async def has_keyword_index(self) -> bool:
-        """Check if Vespa has keyword index.
-
-        Returns:
-            True - Vespa always has BM25 via schema configuration
-        """
-        return True
 
     async def get_vector_config_names(self) -> list[str]:
         """Get vector config names.

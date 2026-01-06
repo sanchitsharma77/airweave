@@ -70,13 +70,9 @@ class DestinationsContextBuilder:
             cls._get_entity_definition_map(db=db),
         )
 
-        # Precompute keyword index capability
-        has_keyword_index = await cls._check_keyword_index(destinations, logger)
-
         return DestinationsContext(
             destinations=destinations,
             entity_map=entity_map,
-            has_keyword_index=has_keyword_index,
         )
 
     @classmethod
@@ -107,6 +103,44 @@ class DestinationsContextBuilder:
             infra=infra,
             execution_config=None,
         )
+
+    @classmethod
+    async def build_for_cleanup(
+        cls,
+        db: AsyncSession,
+        collection: schemas.Collection,
+        logger: ContextualLogger,
+    ) -> List[BaseDestination]:
+        """Build destinations for cleanup operations (no sync required).
+
+        Creates native destinations for deletion operations.
+        Uses the same UUID constants as sync to ensure consistency.
+
+        Args:
+            db: Database session
+            collection: Target collection
+            logger: Logger for operations
+
+        Returns:
+            List of destination instances ready for deletion operations.
+        """
+        # Map native UUIDs to their creator methods
+        # TODO: Add other flexible destination building here for future Vespa deployments
+        native_creators = {
+            NATIVE_QDRANT_UUID: cls._create_native_qdrant,
+            NATIVE_VESPA_UUID: cls._create_native_vespa,
+        }
+
+        destinations = []
+        for dest_uuid, creator in native_creators.items():
+            try:
+                dest = await creator(db, collection, logger)
+                if dest:
+                    destinations.append(dest)
+            except Exception as e:
+                logger.warning(f"Failed to create destination {dest_uuid}: {e}")
+
+        return destinations
 
     # -------------------------------------------------------------------------
     # Private: Destination Creation
@@ -336,23 +370,6 @@ class DestinationsContextBuilder:
     # -------------------------------------------------------------------------
     # Private: Helpers
     # -------------------------------------------------------------------------
-
-    @classmethod
-    async def _check_keyword_index(
-        cls,
-        destinations: List[BaseDestination],
-        logger: ContextualLogger,
-    ) -> bool:
-        """Check if any destination supports keyword indexing."""
-        if not destinations:
-            return False
-
-        try:
-            results = await asyncio.gather(*[dest.has_keyword_index() for dest in destinations])
-            return any(results)
-        except Exception as e:
-            logger.warning(f"Failed to check keyword index capability: {e}")
-            return False
 
     @staticmethod
     def _filter_destination_ids(

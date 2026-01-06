@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List
 import httpcore
 import httpx
 
-from airweave.platform.destinations._base import BaseDestination, ProcessingRequirement
-from airweave.platform.sync.actions.entity_types import (
+from airweave.platform.destinations._base import BaseDestination
+from airweave.platform.sync.actions.types import (
     EntityActionBatch,
     EntityDeleteAction,
     EntityInsertAction,
@@ -19,6 +19,7 @@ from airweave.platform.sync.actions.entity_types import (
 )
 from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.handlers.protocol import EntityActionHandler
+from airweave.platform.sync.pipeline import ProcessingRequirement
 from airweave.platform.sync.processors import (
     ContentProcessor,
     QdrantChunkEmbedProcessor,

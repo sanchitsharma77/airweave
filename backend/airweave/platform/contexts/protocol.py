@@ -7,14 +7,15 @@ if TYPE_CHECKING:
     from airweave.api.context import ApiContext
     from airweave.core.logging import ContextualLogger
 
+# TODO: Get much more specific defining contexts
+# This is a bit random, but a first pass at it.
+
 
 @runtime_checkable
 class HandlerContext(Protocol):
     """Minimal interface that handlers can work with.
 
-    SyncContext and CleanupContext both implement this protocol.
-    Handlers accept this protocol, enabling reuse across different
-    operation types (sync, cleanup, webhooks).
+    SyncContext implements this protocol for sync operations.
 
     Properties:
         sync_id: Sync ID for scoping operations

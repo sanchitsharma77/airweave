@@ -14,7 +14,6 @@ from airweave.api.examples import (
     create_job_list_response,
 )
 from airweave.api.router import TrailingSlashRouter
-from airweave.core.cleanup_service import cleanup_service
 from airweave.core.collection_service import collection_service
 from airweave.core.guard_rail_service import GuardRailService
 from airweave.core.logging import ContextualLogger
@@ -24,6 +23,7 @@ from airweave.core.source_connection_service_helpers import source_connection_he
 from airweave.core.sync_service import sync_service
 from airweave.core.temporal_service import temporal_service
 from airweave.models.source_connection import SourceConnection
+from airweave.platform.cleanup import cleanup_service
 
 router = TrailingSlashRouter()
 
@@ -165,12 +165,8 @@ async def delete(
     )
     sync_ids = [row[0] for row in sync_id_rows if row[0]]
 
-    # Clean up Temporal schedules for all syncs
-    if sync_ids:
-        await cleanup_service.cleanup_temporal_schedules_for_syncs(sync_ids, ctx)
-
-    # Clean up destination data (Qdrant, Vespa)
-    await cleanup_service.cleanup_collection(db, collection_schema, ctx)
+    # Clean up all external data (schedules, destinations, ARF)
+    await cleanup_service.cleanup_collection(db, collection_schema, sync_ids, ctx)
 
     # Delete the collection - CASCADE will handle all child objects
     return await crud.collection.remove(db, id=db_obj.id, ctx=ctx)
