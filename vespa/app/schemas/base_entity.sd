@@ -132,15 +132,17 @@ schema base_entity {
     }
 
     # Chunked text, keyword indexed for BM25
+    # Pre-computed externally by VespaChunkEmbedProcessor
     field chunks type array<string> {
-        indexing: input textual_representation | chunk fixed-length 1024 | summary | index
+        indexing: summary | index
         index: enable-bm25
     }
 
     # Binary packed embeddings for fast ANN retrieval (small and fast)
     # Uses hamming distance on packed int8 - 32x faster than float cosine
+    # Pre-computed externally by VespaChunkEmbedProcessor (768-dim → binary → 96 int8)
     field chunk_small_embeddings type tensor<int8>(chunk{}, x[96]) {
-        indexing: input textual_representation | chunk fixed-length 1024 | embed | pack_bits | attribute | index
+        indexing: attribute | index
         attribute {
             distance-metric: hamming
         }
@@ -154,8 +156,9 @@ schema base_entity {
 
     # High-precision embeddings for ranking (not indexed for ANN - too expensive)
     # Uses angular distance which maps to cosine similarity
+    # Pre-computed externally by VespaChunkEmbedProcessor (768-dim float)
     field chunk_large_embeddings type tensor<bfloat16>(chunk{}, x[768]) {
-        indexing: input textual_representation | chunk fixed-length 1024 | embed | attribute
+        indexing: attribute
         attribute {
             distance-metric: angular
         }
