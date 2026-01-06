@@ -276,7 +276,7 @@ This is the key part that answers "which destination is used?" and "how are enti
 │   │   │  Check destination.processing_requirement│     │                         │
 │   │   │                                          │     │                         │
 │   │   │  CHUNKS_AND_EMBEDDINGS? (Qdrant)         │     │                         │
-│   │   │    → ChunkEmbedProcessor                 │     │                         │
+│   │   │    → QdrantChunkEmbedProcessor           │     │                         │
 │   │   │    → text → chunks → embeddings          │     │                         │
 │   │   │                                          │     │                         │
 │   │   │  TEXT_ONLY? (Vespa)                      │     │                         │
@@ -376,7 +376,7 @@ platform/
 | `ActionResolver` | Compares hashes to DB, returns `ActionBatch` |
 | `ActionDispatcher` | Routes `ActionBatch` to all handlers |
 | `DestinationHandler` | For each destination: select processor → process → bulk_insert |
-| `ChunkEmbedProcessor` | Converts entities to chunks with embeddings (for Qdrant) |
+| `QdrantChunkEmbedProcessor` | Converts entities to chunks with embeddings (for Qdrant) |
 | `TextOnlyProcessor` | Builds `textual_representation` only (for Vespa) |
 | `PostgresMetadataHandler` | Persists entity metadata (runs last, after destinations succeed) |
 
