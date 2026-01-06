@@ -488,8 +488,9 @@ class VectorDBHandler(ActionHandler):
                     failed_count += 1
                     break
 
-                chunk_entity = entity.model_copy(deep=True)
-                chunk_entity.textual_representation = chunk_text
+                chunk_entity = entity.model_copy(
+                    update={'textual_representation': chunk_text}, deep=True
+                )
                 chunk_entity.entity_id = f"{original_entity_id}__chunk_{chunk_idx}"
 
                 if chunk_entity.airweave_system_metadata is None:
