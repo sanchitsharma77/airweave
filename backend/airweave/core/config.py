@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     VESPA_URL: str = "http://localhost"
     VESPA_PORT: int = 8081
     VESPA_TIMEOUT: float = 120.0
+    VESPA_CLUSTER: str = "airweave"  # Vespa content cluster name for bulk operations
 
     # Storage configuration (filesystem-based, cloud-agnostic)
     STORAGE_PATH: str = "./local_storage"  # In K8s: /data/airweave-storage (PVC mount)

@@ -13,7 +13,10 @@ import asyncio
 import json
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from urllib.parse import quote
 from uuid import UUID
+
+import httpx
 
 from airweave.core.config import settings
 from airweave.core.logging import ContextualLogger
@@ -354,6 +357,7 @@ class VespaDestination(VectorDBDestination):
         # Transform all entities to Vespa format, grouped by schema
         docs_by_schema = self._transform_entities_by_schema(entities)
         total_docs = sum(len(docs) for docs in docs_by_schema.values())
+
         if total_docs == 0:
             self.logger.warning("No documents to feed after transformation")
             return
@@ -446,7 +450,10 @@ class VespaDestination(VectorDBDestination):
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
-        """Delete all documents from a sync run.
+        """Delete all documents from a sync run using selection-based bulk delete.
+
+        Uses Vespa's /document/v1 DELETE with selection parameter for efficient
+        server-side deletion instead of fetching IDs and deleting one-by-one.
 
         Args:
             sync_id: The sync ID to delete documents for
@@ -454,19 +461,21 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Search across all schemas
+        # Selection expression for this sync within this collection
+        selection = (
+            f"airweave_system_metadata_sync_id=='{sync_id}' and "
+            f"airweave_system_metadata_collection_id=='{self.collection_id}'"
+        )
+
+        # Delete from all schemas
         for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata_sync_id contains '{sync_id}' and "
-                f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
+            await self._delete_by_selection(schema, selection)
 
     async def delete_by_collection_id(self, collection_id: UUID) -> None:
-        """Delete all documents for a collection.
+        """Delete all documents for a collection using selection-based bulk delete.
 
-        Used when deleting an entire collection.
+        Uses Vespa's /document/v1 DELETE with selection parameter for efficient
+        server-side deletion instead of fetching IDs and deleting one-by-one.
 
         Args:
             collection_id: The collection ID to delete documents for
@@ -474,16 +483,82 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Search across all schemas
+        # Selection expression for this collection
+        selection = f"airweave_system_metadata_collection_id=='{collection_id}'"
+
+        # Delete from all schemas
         for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata_collection_id contains '{collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
+            await self._delete_by_selection(schema, selection)
+
+    async def _delete_by_selection(self, schema: str, selection: str) -> int:
+        """Delete documents using Vespa's selection-based bulk delete API.
+
+        This is MUCH faster than query-then-delete because it performs server-side
+        deletion in a single streaming operation rather than individual HTTP calls.
+
+        Uses: DELETE /document/v1/{namespace}/{doctype}/docid?selection={expr}&cluster={cluster}
+
+        Args:
+            schema: The Vespa schema/document type to delete from
+            selection: Document selection expression (e.g., "field=='value'")
+
+        Returns:
+            Number of documents deleted (estimated from response)
+        """
+        # Build the bulk delete URL
+        base_url = f"{settings.VESPA_URL}:{settings.VESPA_PORT}"
+        encoded_selection = quote(selection, safe="")
+        url = (
+            f"{base_url}/document/v1/airweave/{schema}/docid"
+            f"?selection={encoded_selection}"
+            f"&cluster={settings.VESPA_CLUSTER}"
+        )
+
+        self.logger.debug(f"[Vespa] Bulk delete from {schema} with selection: {selection}")
+
+        deleted_count = 0
+        try:
+            async with httpx.AsyncClient(timeout=settings.VESPA_TIMEOUT) as client:
+                # Use streaming to handle potentially large deletions
+                async with client.stream("DELETE", url) as response:
+                    if response.status_code == 200:
+                        # Vespa returns JSON Lines with deletion results
+                        async for line in response.aiter_lines():
+                            if line.strip():
+                                try:
+                                    result = json.loads(line)
+                                    # Count successful deletions from the response
+                                    if result.get("id"):
+                                        deleted_count += 1
+                                except json.JSONDecodeError:
+                                    pass  # Skip malformed lines
+                    elif response.status_code == 400:
+                        # Bad selection expression
+                        body = await response.aread()
+                        self.logger.error(f"[Vespa] Invalid selection expression: {body.decode()}")
+                    else:
+                        body = await response.aread()
+                        self.logger.error(
+                            f"[Vespa] Bulk delete failed ({response.status_code}): {body.decode()}"
+                        )
+
+            if deleted_count > 0:
+                self.logger.info(f"[Vespa] Deleted {deleted_count} documents from {schema}")
+            else:
+                self.logger.debug(f"[Vespa] No documents to delete from {schema}")
+
+        except httpx.TimeoutException:
+            self.logger.error(f"[Vespa] Bulk delete timed out after {settings.VESPA_TIMEOUT}s")
+        except Exception as e:
+            self.logger.error(f"[Vespa] Bulk delete error: {e}")
+
+        return deleted_count
 
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
-        """Delete all documents for multiple parent IDs.
+        """Delete all documents for multiple parent IDs using selection-based bulk delete.
+
+        Batches parent IDs into groups to create efficient OR selections rather than
+        making individual delete calls per parent ID.
 
         Args:
             parent_ids: List of parent entity IDs
@@ -492,107 +567,23 @@ class VespaDestination(VectorDBDestination):
         if not parent_ids or not self.app:
             return
 
-        # Delete each parent's documents from all schemas
-        for parent_id in parent_ids:
-            for schema in self._get_all_vespa_schemas():
-                yql = (
-                    f"select documentid from {schema} where "
-                    f"airweave_system_metadata_original_entity_id contains '{parent_id}' and "
-                    f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
-                )
-                await self._delete_by_query(yql, schema)
+        # Batch parent IDs to avoid overly long selection expressions
+        batch_size = 50  # Keep selection expressions manageable
+        for i in range(0, len(parent_ids), batch_size):
+            batch = parent_ids[i : i + batch_size]
 
-    async def _delete_by_query(self, yql: str, schema: str) -> None:
-        """Execute a delete operation based on a YQL query with pagination.
-
-        IMPORTANT: pyvespa query() and delete_data() are synchronous,
-        so we run them in a thread pool to avoid blocking the event loop.
-
-        Args:
-            yql: YQL query to find documents to delete
-            schema: The Vespa schema to delete from
-        """
-        if not self.app:
-            return
-
-        batch_size = 400  # Vespa's default maxHits limit
-        total_deleted = 0
-
-        try:
-            while True:
-                response = await asyncio.to_thread(self.app.query, yql=yql, hits=batch_size)
-
-                if not response.is_successful():
-                    self.logger.error(f"Error during delete operation: {response.json}")
-                    return
-
-                hits = response.hits or []
-                done, batch_deleted = await self._process_delete_batch(
-                    hits, schema, batch_size, total_deleted
-                )
-                total_deleted += batch_deleted
-                if done:
-                    break
-
-        except Exception as e:
-            self.logger.error(f"Error during delete operation: {e}")
-
-    async def _process_delete_batch(
-        self, hits: list, schema: str, batch_size: int, total_deleted: int
-    ) -> tuple[bool, int]:
-        """Process a batch of hits for deletion.
-
-        Returns:
-            Tuple of (is_done, deleted_count)
-        """
-        if not hits:
-            if total_deleted > 0:
-                self.logger.info(
-                    f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
-                )
-            else:
-                self.logger.debug(f"No documents found to delete from {schema}")
-            return True, 0
-
-        self.logger.debug(f"Deleting batch of {len(hits)} documents from Vespa schema '{schema}'")
-
-        doc_ids = self._extract_doc_ids_from_hits(hits)
-        deleted = await asyncio.to_thread(self._delete_docs_sync, doc_ids, schema)
-
-        if len(hits) < batch_size:
-            if total_deleted + deleted > 0:
-                self.logger.info(
-                    f"Deleted {total_deleted + deleted} total documents from "
-                    f"Vespa schema '{schema}'"
-                )
-            return True, deleted
-
-        return False, deleted
-
-    def _extract_doc_ids_from_hits(self, hits: list) -> list[str]:
-        """Extract user-specified IDs from Vespa document IDs."""
-        doc_ids = []
-        for hit in hits:
-            doc_id = hit.get("id", "")
-            if doc_id:
-                # Format: id:namespace:doctype::user_id
-                parts = doc_id.split("::")
-                if len(parts) >= 2:
-                    doc_ids.append(parts[-1])
-        return doc_ids
-
-    def _delete_docs_sync(self, doc_ids: list[str], schema: str) -> int:
-        """Synchronously delete documents by ID. Must be run in thread pool."""
-        deleted = 0
-        for user_id in doc_ids:
-            delete_response = self.app.delete_data(
-                schema=schema,
-                data_id=user_id,
-                namespace="airweave",
+            # Build OR selection for this batch of parent IDs
+            parent_conditions = " or ".join(
+                f"airweave_system_metadata_original_entity_id=='{pid}'" for pid in batch
             )
-            if delete_response.is_successful():
-                deleted += 1
-        return deleted
+            selection = (
+                f"({parent_conditions}) and "
+                f"airweave_system_metadata_collection_id=='{self.collection_id}'"
+            )
+
+            # Delete from all schemas
+            for schema in self._get_all_vespa_schemas():
+                await self._delete_by_selection(schema, selection)
 
     # Production search settings (100k+ entities, LLM input)
     # targetHits: 400 per method → ~800 candidates before deduplication

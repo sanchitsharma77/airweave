@@ -203,8 +203,7 @@ class EntityActionResolver:
             lookup_start = time.time()
             num_chunks = (len(entity_requests) + 999) // 1000
             sync_context.logger.debug(
-                f"🔍 Bulk entity lookup for {len(entity_requests)} entities "
-                f"({num_chunks} chunks)..."
+                f"Bulk entity lookup for {len(entity_requests)} entities ({num_chunks} chunks)..."
             )
 
             async with get_db_context() as db:
@@ -216,7 +215,7 @@ class EntityActionResolver:
 
             lookup_duration = time.time() - lookup_start
             sync_context.logger.debug(
-                f"✅ Bulk lookup complete in {lookup_duration:.2f}s - "
+                f"Bulk lookup complete in {lookup_duration:.2f}s - "
                 f"found {len(existing_map)}/{len(entity_requests)} existing"
             )
 
@@ -317,20 +316,20 @@ class EntityActionResolver:
         if db_row is None:
             # New entity - INSERT
             return EntityInsertAction(
-                entity=entity,
+                payload=entity,
                 entity_definition_id=entity_definition_id,
             )
         elif db_row.hash != entity_hash:
             # Hash changed - UPDATE
             return EntityUpdateAction(
-                entity=entity,
+                payload=entity,
                 entity_definition_id=entity_definition_id,
                 db_id=db_row.id,
             )
         else:
             # Hash unchanged - KEEP
             return EntityKeepAction(
-                entity=entity,
+                payload=entity,
                 entity_definition_id=entity_definition_id,
             )
 
@@ -362,7 +361,7 @@ class EntityActionResolver:
         db_row = existing_map.get(db_key)
 
         return EntityDeleteAction(
-            entity=entity,
+            payload=entity,
             entity_definition_id=entity_definition_id,
             db_id=db_row.id if db_row else None,
         )
@@ -396,7 +395,7 @@ class EntityActionResolver:
                         f"Entity type {entity.__class__.__name__} not in entity_map"
                     )
                 inserts.append(
-                    EntityInsertAction(entity=entity, entity_definition_id=entity_definition_id)
+                    EntityInsertAction(payload=entity, entity_definition_id=entity_definition_id)
                 )
 
         return EntityActionBatch(
