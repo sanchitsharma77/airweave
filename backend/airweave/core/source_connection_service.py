@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from uuid import UUID
 
+from airweave.platform.cleanup.service import cleanup_service
+
 if TYPE_CHECKING:
     from airweave.platform.auth.schemas import OAuth1Settings, OAuth2Settings
 
@@ -522,7 +524,12 @@ class SourceConnectionService:
         # Capture attributes upfront to avoid lazy-loading issues after session changes
         # (cancel_job and other operations may detach the object from the session)
         sync_id = source_conn.sync_id
-        readable_collection_id = source_conn.readable_collection_id
+        collection = await crud.collection.get_by_readable_id(
+            db, readable_id=source_conn.readable_collection_id, ctx=ctx
+        )
+        if not collection:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        collection_schema = schemas.Collection.model_validate(collection, from_attributes=True)
 
         # Build response before deletion
         response = await self._build_source_connection_response(db, source_conn, ctx)
@@ -548,14 +555,8 @@ class SourceConnectionService:
                     # Log but don't fail the deletion if cancellation fails
                     ctx.logger.warning(f"Failed to cancel job {latest_job.id} during deletion: {e}")
 
-        # Clean up data
-        if sync_id:
-            # Clean up destination data (includes Qdrant, Vespa, ARF)
-            if readable_collection_id:
-                await self._cleanup_destination_data(db, source_conn, ctx)
-
-            # Clean up Temporal schedules
-            await self._cleanup_temporal_schedules(sync_id, db, ctx)
+        # Clean up data (schedules, destinations, ARF)
+        await cleanup_service.cleanup_sync(db, sync_id, collection_schema, ctx)
 
         # Delete the source connection
         await crud.source_connection.remove(db, id=id, ctx=ctx)
@@ -1887,8 +1888,6 @@ class SourceConnectionService:
     _create_proxy_url = source_connection_helpers.create_proxy_url
     _update_sync_schedule = source_connection_helpers.update_sync_schedule
     _update_auth_fields = source_connection_helpers.update_auth_fields
-    _cleanup_destination_data = source_connection_helpers.cleanup_destination_data
-    _cleanup_temporal_schedules = source_connection_helpers.cleanup_temporal_schedules
     _sync_job_to_source_connection_job = source_connection_helpers.sync_job_to_source_connection_job
     _reconstruct_context_from_session = source_connection_helpers.reconstruct_context_from_session
     _exchange_oauth1_code = source_connection_helpers.exchange_oauth1_code

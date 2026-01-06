@@ -56,7 +56,7 @@ class S3Destination(BaseDestination):
     """
 
     # S3 stores raw entities, no processing needed
-    from airweave.platform.destinations._base import ProcessingRequirement
+    from airweave.platform.sync.pipeline import ProcessingRequirement
 
     processing_requirement = ProcessingRequirement.RAW
 
@@ -426,10 +426,6 @@ class S3Destination(BaseDestination):
     async def search(self, query_vector: list[float]) -> None:
         """S3 doesn't support search."""
         raise NotImplementedError("S3 destination doesn't support search")
-
-    async def has_keyword_index(self) -> bool:
-        """S3 doesn't have keyword index."""
-        return False
 
     @staticmethod
     def _json_serializer(obj):

@@ -16,9 +16,7 @@ class DestinationsContext:
     Attributes:
         destinations: List of configured destination instances
         entity_map: Mapping of entity class to entity_definition_id
-        has_keyword_index: Whether any destination supports keyword indexing
     """
 
     destinations: List["BaseDestination"] = field(default_factory=list)
     entity_map: Dict[type["BaseEntity"], UUID] = field(default_factory=dict)
-    has_keyword_index: bool = False

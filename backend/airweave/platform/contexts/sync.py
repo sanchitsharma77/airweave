@@ -60,6 +60,11 @@ class SyncContext:
         return self.scope.sync_id
 
     @property
+    def collection_id(self):
+        """Collection ID for scoping operations."""
+        return self.scope.collection_id
+
+    @property
     def organization_id(self):
         """Organization ID for access control."""
         return self.scope.organization_id
@@ -132,8 +137,3 @@ class SyncContext:
     def max_batch_latency_ms(self):
         """Shortcut to batch.max_batch_latency_ms."""
         return self.batch.max_batch_latency_ms
-
-    @property
-    def has_keyword_index(self):
-        """Shortcut to destinations.has_keyword_index."""
-        return self.destinations.has_keyword_index

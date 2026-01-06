@@ -203,37 +203,35 @@ class ChunkEmbedProcessor(ContentProcessor):
         chunk_entities: List[BaseEntity],
         sync_context: "SyncContext",
     ) -> None:
-        """Compute dense and sparse embeddings."""
+        """Compute dense and sparse embeddings.
+
+        This processor is only used for CHUNKS_AND_EMBEDDINGS destinations,
+        which always need both dense and sparse embeddings for hybrid search.
+        """
         if not chunk_entities:
             return
 
-        from airweave.platform.embedders import DenseEmbedder
+        from airweave.platform.embedders import DenseEmbedder, SparseEmbedder
 
         # Dense embeddings
         dense_texts = [e.textual_representation for e in chunk_entities]
         dense_embedder = DenseEmbedder(vector_size=sync_context.collection.vector_size)
         dense_embeddings = await dense_embedder.embed_many(dense_texts, sync_context)
 
-        # Sparse embeddings (if destination supports keyword search)
-        sparse_embeddings = None
-        if sync_context.has_keyword_index:
-            from airweave.platform.embedders import SparseEmbedder
-
-            sparse_texts = [
-                json.dumps(
-                    e.model_dump(mode="json", exclude={"airweave_system_metadata"}),
-                    sort_keys=True,
-                )
-                for e in chunk_entities
-            ]
-            sparse_embedder = SparseEmbedder()
-            sparse_embeddings = await sparse_embedder.embed_many(sparse_texts, sync_context)
+        # Sparse embeddings for hybrid search
+        sparse_texts = [
+            json.dumps(
+                e.model_dump(mode="json", exclude={"airweave_system_metadata"}),
+                sort_keys=True,
+            )
+            for e in chunk_entities
+        ]
+        sparse_embedder = SparseEmbedder()
+        sparse_embeddings = await sparse_embedder.embed_many(sparse_texts, sync_context)
 
         # Assign vectors to entities
         for i, entity in enumerate(chunk_entities):
-            dense = dense_embeddings[i]
-            sparse = sparse_embeddings[i] if sparse_embeddings else None
-            entity.airweave_system_metadata.vectors = [dense, sparse]
+            entity.airweave_system_metadata.vectors = [dense_embeddings[i], sparse_embeddings[i]]
 
         # Validate
         for entity in chunk_entities:
