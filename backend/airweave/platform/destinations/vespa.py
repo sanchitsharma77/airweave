@@ -1,7 +1,9 @@
 """Vespa destination implementation.
 
-Vespa handles chunking and embedding internally via schema definition,
-so this destination only transforms entities and feeds them to Vespa.
+Vespa stores entities with pre-computed chunks and embeddings as arrays.
+The VespaChunkEmbedProcessor handles chunking and embedding externally,
+storing results in entity.vespa_content which this destination transforms
+to Vespa's tensor format.
 
 IMPORTANT: pyvespa methods are synchronous and would block the event loop.
 All pyvespa calls are wrapped in asyncio.to_thread() to maintain concurrency.
@@ -12,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import UUID
 
@@ -95,16 +97,21 @@ def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
     "Vespa",
     "vespa",
     supports_vector=True,
-    requires_client_embedding=False,
+    requires_client_embedding=True,  # We now embed externally
     supports_temporal_relevance=False,
 )
 class VespaDestination(VectorDBDestination):
-    """Vespa destination - Vespa handles chunking/embedding internally."""
+    """Vespa destination with external chunking and embedding.
 
-    # Vespa embeds server-side, only needs text extraction
+    Uses VespaChunkEmbedProcessor to chunk text and compute embeddings externally,
+    storing them in entity.vespa_content as arrays. This destination transforms
+    those arrays to Vespa's tensor format for efficient storage and retrieval.
+    """
+
+    # Use VespaChunkEmbedProcessor for external chunking/embedding
     from airweave.platform.destinations._base import ProcessingRequirement
 
-    processing_requirement = ProcessingRequirement.TEXT_ONLY
+    processing_requirement = ProcessingRequirement.VESPA_CHUNKS_AND_EMBEDDINGS
 
     def __init__(self):
         """Initialize the Vespa destination."""
@@ -194,6 +201,7 @@ class VespaDestination(VectorDBDestination):
         self._add_system_metadata_fields(fields, entity, entity_type)
         self._add_type_specific_fields(fields, entity)
         self._add_access_control_fields(fields, entity)
+        self._add_vespa_content_fields(fields, entity)  # Add chunks and embeddings
         self._add_payload_field(fields, entity)
 
         # Remove None values from top-level fields
@@ -304,6 +312,65 @@ class VespaDestination(VectorDBDestination):
             # Always include viewers array (even if empty) when access is set
             fields["access_viewers"] = entity.access.viewers if entity.access.viewers else []
         # else: Don't add access fields - entity is from non-AC source
+
+    def _add_vespa_content_fields(self, fields: dict[str, Any], entity: BaseEntity) -> None:
+        """Add pre-computed chunks and embeddings from VespaContent.
+
+        VespaChunkEmbedProcessor populates entity.vespa_content with:
+        - chunks: List[str] - chunked text segments
+        - chunk_small_embeddings: List[List[int]] - binary-packed for ANN (96 int8)
+        - chunk_large_embeddings: List[List[float]] - full precision for ranking (768 dim)
+
+        This method transforms those to Vespa's tensor format.
+
+        Args:
+            fields: Fields dict to update
+            entity: The entity to extract vespa_content from
+        """
+        vc = entity.vespa_content
+        if vc is None:
+            return
+
+        # Chunks array - direct assignment
+        if vc.chunks:
+            fields["chunks"] = vc.chunks
+
+        # Small embeddings - transform to Vespa tensor format (int8)
+        if vc.chunk_small_embeddings:
+            fields["chunk_small_embeddings"] = self._to_vespa_tensor(
+                vc.chunk_small_embeddings, indexed_dim=96
+            )
+
+        # Large embeddings - transform to Vespa tensor format (bfloat16)
+        if vc.chunk_large_embeddings:
+            fields["chunk_large_embeddings"] = self._to_vespa_tensor(
+                vc.chunk_large_embeddings, indexed_dim=768
+            )
+
+    def _to_vespa_tensor(self, embeddings: List[List[Union[int, float]]], indexed_dim: int) -> dict:
+        """Convert Python list of embeddings to Vespa tensor format.
+
+        Vespa expects tensors with mixed dimensions (mapped + indexed) in cell format:
+        {"cells": [{"address": {"chunk": "0", "x": "0"}, "value": v}, ...]}
+
+        For tensor<int8>(chunk{}, x[96]) or tensor<bfloat16>(chunk{}, x[768]):
+        - chunk{} is a mapped dimension (sparse, labeled)
+        - x[N] is an indexed dimension (dense, positional)
+
+        Args:
+            embeddings: List of embedding vectors (one per chunk)
+            indexed_dim: Expected dimension of each embedding
+
+        Returns:
+            Vespa tensor dict with cells format
+        """
+        cells = []
+        for chunk_idx, embedding in enumerate(embeddings):
+            for x_idx, value in enumerate(embedding):
+                cells.append(
+                    {"address": {"chunk": str(chunk_idx), "x": str(x_idx)}, "value": value}
+                )
+        return {"cells": cells}
 
     def _add_payload_field(self, fields: dict[str, Any], entity: BaseEntity) -> None:
         """Extract extra fields into payload JSON."""
@@ -605,8 +672,8 @@ class VespaDestination(VectorDBDestination):
     ) -> List[SearchResult]:
         """Execute hybrid search against Vespa with multi-query support.
 
-        Vespa handles embedding generation server-side, so dense_embeddings is ignored.
-        YQL is built at runtime with proper filter injection into WHERE clause.
+        Embeddings are pre-computed externally via DenseEmbedder and passed as
+        tensor parameters. This eliminates server-side embedding computation.
 
         Multi-Query Support:
             When query expansion provides multiple queries (primary + expanded), each
@@ -623,7 +690,8 @@ class VespaDestination(VectorDBDestination):
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
             filter: Optional filter dict (translated to YQL WHERE clause)
-            dense_embeddings: Ignored - Vespa embeds server-side
+            dense_embeddings: Pre-computed 768-dim embeddings (one per query).
+                             If None, will be computed via DenseEmbedder.
             sparse_embeddings: Ignored - Vespa handles BM25 server-side
             retrieval_strategy: Search strategy (currently always hybrid)
             temporal_config: Ignored - temporal relevance not yet supported for Vespa
@@ -649,14 +717,24 @@ class VespaDestination(VectorDBDestination):
             f"num_queries={len(queries)}, limit={limit}, has_filter={filter is not None}"
         )
 
+        # Pre-compute embeddings if not provided
+        if dense_embeddings is None:
+            large_embeddings, small_embeddings = await self._embed_queries(queries)
+        else:
+            # Use provided embeddings (assume 768-dim) and compute binary-packed
+            large_embeddings = dense_embeddings
+            small_embeddings = [self._pack_bits_for_query(emb) for emb in dense_embeddings]
+
         # Translate filter to YQL clause (if present)
         yql_filter = self.translate_filter(filter) if filter else None
 
         # Build YQL with proper filter injection and multi-query support
         yql = self._build_search_yql(queries, airweave_collection_id, yql_filter)
 
-        # Build query parameters with embeddings for all queries
-        query_params = self._build_query_params(queries, primary_query, limit, offset)
+        # Build query parameters with pre-computed embeddings
+        query_params = self._build_query_params(
+            queries, primary_query, limit, offset, large_embeddings, small_embeddings
+        )
         query_params["yql"] = yql
 
         self.logger.debug(f"[VespaSearch] YQL: {yql}")
@@ -751,14 +829,56 @@ class VespaDestination(VectorDBDestination):
         yql = f"select * from base_entity where {' AND '.join(where_parts)}"
         return yql
 
+    async def _embed_queries(self, queries: List[str]) -> tuple[List[List[float]], List[List[int]]]:
+        """Pre-compute embeddings for search queries.
+
+        Computes 768-dim embeddings for ranking and binary-packs them for ANN search.
+
+        Args:
+            queries: List of query texts
+
+        Returns:
+            Tuple of (large_embeddings, small_embeddings) where:
+            - large_embeddings: 768-dim float vectors for ranking
+            - small_embeddings: 96 int8 binary-packed vectors for ANN
+        """
+        from airweave.platform.embedders import DenseEmbedder
+
+        embedder = DenseEmbedder(vector_size=768)
+        large_embeddings = await embedder.embed_many(queries, self.logger, dimensions=768)
+
+        # Binary pack for ANN search (same logic as VespaChunkEmbedProcessor)
+        small_embeddings = [self._pack_bits_for_query(emb) for emb in large_embeddings]
+
+        return large_embeddings, small_embeddings
+
+    def _pack_bits_for_query(self, embedding: List[float]) -> List[int]:
+        """Binary pack a query embedding for Vespa's hamming distance ANN.
+
+        Args:
+            embedding: 768-dim float embedding
+
+        Returns:
+            96 int8 values (768 bits packed into 96 bytes)
+        """
+        import numpy as np
+
+        arr = np.array(embedding, dtype=np.float32)
+        bits = (arr > 0).astype(np.uint8)
+        packed = np.packbits(bits)
+        packed_int8 = packed.astype(np.int8)
+        return packed_int8.tolist()
+
     def _build_query_params(
         self,
         queries: List[str],
         primary_query: str,
         limit: int,
         offset: int,
+        large_embeddings: List[List[float]],
+        small_embeddings: List[List[int]],
     ) -> Dict[str, Any]:
-        """Build Vespa query parameters with embeddings for all queries.
+        """Build Vespa query parameters with pre-computed embeddings.
 
         Creates embedding parameters for each query (q0, q1, q2, ...) to support
         multiple nearestNeighbor operators in the YQL.
@@ -768,26 +888,43 @@ class VespaDestination(VectorDBDestination):
             primary_query: The primary query (first in list)
             limit: Maximum number of results
             offset: Results to skip (pagination)
+            large_embeddings: Pre-computed 768-dim embeddings (one per query)
+            small_embeddings: Pre-computed binary-packed embeddings (one per query)
 
         Returns:
             Dict of Vespa query parameters
         """
-        escaped_primary = self._escape_query_for_yql(primary_query)
-
         query_params: Dict[str, Any] = {
             "query": primary_query,  # For userInput(@query) in YQL
             "ranking.profile": "hybrid-rrf",
             "hits": limit + offset,
             "presentation.summary": "full",
-            # Keep legacy embedding params for backward compatibility with rank profile
-            "ranking.features.query(embedding)": f'embed(nomicmb, "{escaped_primary}")',
-            "ranking.features.query(float_embedding)": f'embed(nomicmb, "{escaped_primary}")',
         }
 
-        # Add embedding for each query (q0, q1, q2, ...)
-        for i, q in enumerate(queries):
-            escaped_q = self._escape_query_for_yql(q)
-            query_params[f"ranking.features.query(q{i})"] = f'embed(nomicmb, "{escaped_q}")'
+        # Primary embeddings for ranking (float_embedding for cosine similarity)
+        if large_embeddings:
+            query_params["ranking.features.query(float_embedding)"] = {
+                "cells": [
+                    {"address": {"x": str(i)}, "value": v}
+                    for i, v in enumerate(large_embeddings[0])
+                ]
+            }
+            # Primary binary embedding for ANN
+            query_params["ranking.features.query(embedding)"] = {
+                "cells": [
+                    {"address": {"x": str(i)}, "value": v}
+                    for i, v in enumerate(small_embeddings[0])
+                ]
+            }
+
+        # Add embedding for each query (q0, q1, q2, ...) for multi-query nearestNeighbor
+        for i, (_large_emb, small_emb) in enumerate(
+            zip(large_embeddings, small_embeddings, strict=False)
+        ):
+            # Binary packed embedding for ANN search
+            query_params[f"ranking.features.query(q{i})"] = {
+                "cells": [{"address": {"x": str(j)}, "value": v} for j, v in enumerate(small_emb)]
+            }
 
         return query_params
 
