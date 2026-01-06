@@ -42,6 +42,29 @@ class AccessControl(BaseModel):
     )
 
 
+class VespaContent(BaseModel):
+    """Vespa-specific content for entity-as-document model.
+
+    Unlike Qdrant (chunk-as-document where each chunk is a separate entity),
+    Vespa stores all chunks and embeddings as arrays within a single entity.
+
+    Fields:
+        chunks: List of chunked text segments from the entity's textual representation.
+        chunk_small_embeddings: Binary-packed int8 embeddings for ANN search (96-dim).
+        chunk_large_embeddings: Full precision embeddings for ranking (768-dim).
+    """
+
+    chunks: List[str] = Field(default_factory=list, description="Chunked text segments")
+    chunk_small_embeddings: List[List[int]] = Field(
+        default_factory=list,
+        description="Binary-packed int8 embeddings for ANN search (96-dim)",
+    )
+    chunk_large_embeddings: List[List[float]] = Field(
+        default_factory=list,
+        description="Full precision embeddings for ranking (768-dim)",
+    )
+
+
 class AirweaveSystemMetadata(BaseModel):
     """System metadata for this entity.
 
@@ -113,6 +136,11 @@ class BaseEntity(BaseModel):
     # Access control - only set by sources with supports_access_control=True
     access: Optional[AccessControl] = Field(
         None, description="Access control - who can view this entity (not expanded)"
+    )
+
+    # Vespa-specific content (populated by VespaChunkEmbedProcessor)
+    vespa_content: Optional[VespaContent] = Field(
+        None, description="Vespa chunks and embeddings (entity-as-document model)"
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
