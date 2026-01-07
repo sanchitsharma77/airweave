@@ -45,9 +45,6 @@ class Source(Base):
     rate_limit_level: Mapped[Optional[str]] = mapped_column(
         String, nullable=True
     )  # "org", "connection", or None
-    supports_access_control: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False, server_default="false"
-    )
 
     __table_args__ = (UniqueConstraint("name", "organization_id", name="uq_source_name_org"),)
 

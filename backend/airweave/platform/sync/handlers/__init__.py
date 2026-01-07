@@ -7,40 +7,31 @@ Generic Protocol:
 
 Type Aliases:
     EntityActionHandler = ActionHandler[BaseEntity, EntityActionBatch]
-    ACActionHandler = ActionHandler[MembershipTuple, ACActionBatch]
 
 Entity Handlers:
 - DestinationHandler: Generic handler using processor strategy pattern
 - ArfHandler: Raw entity storage for audit/replay (ARF = Airweave Raw Format)
 - EntityPostgresHandler: Entity metadata persistence (runs last)
 
-Access Control Handlers:
-- ACPostgresHandler: Access control membership persistence
-
 Architecture:
     All handlers implement ActionHandler[T, B] with their specific types.
     Entity handlers use T=BaseEntity, B=EntityActionBatch.
-    AC handlers use T=MembershipTuple, B=ACActionBatch.
     The dispatchers call handlers concurrently for their respective sync types.
 """
 
 # Handlers
-from .access_control_postgres import ACPostgresHandler
 from .arf import ArfHandler
 from .destination import DestinationHandler
 from .entity_postgres import EntityPostgresHandler
 
 # Protocol and type aliases
-from .protocol import ACActionHandler, EntityActionHandler
+from .protocol import EntityActionHandler
 
 __all__ = [
     # Protocol and type aliases
     "EntityActionHandler",
-    "ACActionHandler",
     # Entity handlers
     "ArfHandler",
     "DestinationHandler",
     "EntityPostgresHandler",
-    # Access control handlers
-    "ACPostgresHandler",
 ]
