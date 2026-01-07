@@ -125,14 +125,26 @@ class SourceContextBuilder:
         """
         from airweave.platform.storage.replay_source import ArfReplaySource
 
+        ctx = infra.ctx
         logger = infra.logger
-        logger.info(f"🔄 ARF Replay mode: Creating ArfReplaySource for sync {sync.id}")
 
-        # Create the ARF replay source
+        # Get original source short_name from DB
+        source_connection = await crud.source_connection.get_by_sync_id(
+            db, sync_id=sync.id, ctx=ctx
+        )
+        original_short_name = source_connection.short_name if source_connection else None
+
+        logger.info(
+            f"🔄 ARF Replay mode: Creating ArfReplaySource for sync {sync.id} "
+            f"(masquerading as '{original_short_name}')"
+        )
+
+        # Create the ARF replay source with original source identity
         source = await ArfReplaySource.create(
             sync_id=sync.id,
             logger=logger,
             restore_files=True,
+            original_short_name=original_short_name,
         )
 
         # Set logger on source

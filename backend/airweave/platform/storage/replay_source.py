@@ -27,9 +27,12 @@ class ArfReplaySource(BaseSource):
 
     This source is NOT decorated - it's not a registered source.
     It's created internally when execution_config.replay_from_arf=True.
+
+    It masquerades as the original source (short_name passed from builder/DB),
+    so entities appear to come from the original source.
     """
 
-    # Manually set attributes normally provided by @source decorator
+    # Fallback attributes (overridden per-instance from manifest)
     _name = "ARF Replay"
     _short_name = "arf_replay"
 
@@ -39,6 +42,7 @@ class ArfReplaySource(BaseSource):
         storage: Optional[StorageBackend] = None,
         logger: Optional[ContextualLogger] = None,
         restore_files: bool = True,
+        original_short_name: Optional[str] = None,
     ):
         """Initialize ARF replay source.
 
@@ -47,6 +51,7 @@ class ArfReplaySource(BaseSource):
             storage: Storage backend (uses singleton if not provided)
             logger: Logger instance
             restore_files: Whether to restore file attachments
+            original_short_name: Original source short_name (from builder/DB)
         """
         super().__init__()
         self.sync_id = sync_id
@@ -54,6 +59,11 @@ class ArfReplaySource(BaseSource):
         self._logger = logger
         self.restore_files = restore_files
         self._reader: Optional[ArfReader] = None
+
+        # Masquerade as original source if known
+        if original_short_name:
+            self._short_name = original_short_name
+            self._name = f"ARF Replay ({original_short_name})"
 
     @property
     def reader(self) -> ArfReader:
@@ -74,6 +84,7 @@ class ArfReplaySource(BaseSource):
         storage: Optional[StorageBackend] = None,
         logger: Optional[ContextualLogger] = None,
         restore_files: bool = True,
+        original_short_name: Optional[str] = None,
     ) -> "ArfReplaySource":
         """Create ARF replay source.
 
@@ -82,17 +93,18 @@ class ArfReplaySource(BaseSource):
             storage: Storage backend
             logger: Logger instance
             restore_files: Whether to restore files
+            original_short_name: Original source short_name (from builder/DB)
 
         Returns:
-            Configured ArfReplaySource
+            Configured ArfReplaySource that masquerades as original source
         """
-        instance = cls(
+        return cls(
             sync_id=sync_id,
             storage=storage,
             logger=logger,
             restore_files=restore_files,
+            original_short_name=original_short_name,
         )
-        return instance
 
     async def generate_entities(self) -> AsyncGenerator[BaseEntity, None]:
         """Generate entities from ARF storage.
