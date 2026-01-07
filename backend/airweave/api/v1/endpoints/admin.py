@@ -1,6 +1,6 @@
 """Admin-only API endpoints for organization management."""
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Body, Depends, HTTPException, Query
@@ -65,6 +65,53 @@ def _require_admin(ctx: ApiContext) -> None:
     # Allow both explicit admins AND superusers (for system operations and tests)
     if not ctx.has_user_context or not (ctx.user.is_admin or ctx.user.is_superuser):
         raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _require_admin_permission(ctx: ApiContext, permission: FeatureFlagEnum) -> None:
+    """Validate admin access with scoped API key permission support.
+
+    This function enables CASA-compliant admin access by checking:
+    1. User-based admin (traditional): User must be admin or superuser
+    2. API key-based (scoped): Organization must have specific permission feature flag
+
+    This approach provides granular, auditable admin access for programmatic operations
+    while maintaining security best practices.
+
+    Args:
+        ctx: The API context
+        permission: The specific permission feature flag required for API key access
+
+    Raises:
+        HTTPException: If neither user admin nor API key permission is satisfied
+
+    Example:
+        # Require API_KEY_ADMIN_SYNC for resync operations
+        _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+    """
+    # Check 1: User-based admin (traditional path)
+    if ctx.has_user_context and (ctx.user.is_admin or ctx.user.is_superuser):
+        ctx.logger.debug(f"Admin access granted via user: {ctx.user.email}")
+        return
+
+    # Check 2: API key with scoped permission (CASA-compliant path)
+    if ctx.is_api_key_auth and ctx.has_feature(permission):
+        ctx.logger.info(
+            f"Admin access granted via API key with permission: {permission.value}",
+            extra={
+                "permission": permission.value,
+                "organization_id": str(ctx.organization.id),
+                "auth_method": ctx.auth_method.value,
+            },
+        )
+        return
+
+    # Neither condition met - deny access
+    if ctx.is_api_key_auth:
+        raise HTTPException(
+            status_code=403,
+            detail=f"API key requires '{permission.value}' feature flag for admin access",
+        )
+    raise HTTPException(status_code=403, detail="Admin access required")
 
 
 @router.get("/organizations", response_model=List[schemas.OrganizationMetrics])
@@ -846,6 +893,9 @@ async def resync_with_execution_config(
 
     The sync is dispatched to Temporal and runs asynchronously in workers, not in the backend pod.
 
+    **API Key Access**: Organizations with the `api_key_admin_sync` feature flag enabled
+    can use API keys to access this endpoint programmatically.
+
     Args:
         db: Database session
         sync_id: ID of the sync to trigger
@@ -863,7 +913,7 @@ async def resync_with_execution_config(
         - Dry run: {"enable_vector_handlers": False, "enable_raw_data_handler": False, "enable_postgres_handler": False}
         - Target specific destination: {"target_destinations": ["<uuid>"]}
     """
-    _require_admin(ctx)
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
 
     ctx.logger.info(
         f"Admin triggering resync for sync {sync_id} with execution config: {execution_config}"
