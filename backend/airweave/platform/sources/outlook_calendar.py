@@ -551,7 +551,7 @@ class OutlookCalendarSource(BaseSource):
                     ):
                         entity_count += 1
                         entity_type = type(event_entity).__name__
-                        entity_id = event_entity.id
+                        entity_id = event_entity.entity_id
                         self.logger.info(
                             f"Yielding entity #{entity_count}: {entity_type} with ID {entity_id}"
                         )
