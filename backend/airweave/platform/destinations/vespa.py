@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.parse import quote
@@ -399,7 +400,7 @@ class VespaDestination(VectorDBDestination):
         """
         self.logger.debug("Vespa schema is managed via vespa-deploy, skipping setup_collection")
 
-    async def bulk_insert(self, entities: list[BaseEntity]) -> None:
+    async def bulk_insert(self, entities: list[BaseEntity]) -> None:  # noqa: C901
         """Transform entities and batch feed to Vespa using feed_iterable.
 
         Uses pyvespa's feed_iterable for efficient concurrent feeding via HTTP/2
@@ -419,11 +420,25 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized. Call create() first.")
 
-        self.logger.info(f"Feeding {len(entities)} entities to Vespa (batch)")
+        total_start = time.perf_counter()
+        self.logger.info(f"[VespaDestination] Starting bulk_insert for {len(entities)} entities")
 
         # Transform all entities to Vespa format, grouped by schema
+        transform_start = time.perf_counter()
         docs_by_schema = self._transform_entities_by_schema(entities)
         total_docs = sum(len(docs) for docs in docs_by_schema.values())
+        transform_ms = (time.perf_counter() - transform_start) * 1000
+
+        # Count total chunks being fed
+        total_chunks = 0
+        for entity in entities:
+            if entity.vespa_content and entity.vespa_content.chunks:
+                total_chunks += len(entity.vespa_content.chunks)
+
+        self.logger.info(
+            f"[VespaDestination] Transform: {transform_ms:.1f}ms for {len(entities)} entities "
+            f"→ {total_docs} docs with {total_chunks} total chunks"
+        )
 
         if total_docs == 0:
             self.logger.warning("No documents to feed after transformation")
@@ -453,11 +468,26 @@ class VespaDestination(VectorDBDestination):
             )
 
         # Feed each schema's documents
+        feed_start = time.perf_counter()
         for schema, docs in docs_by_schema.items():
-            self.logger.debug(f"Feeding {len(docs)} documents to schema '{schema}'")
+            schema_start = time.perf_counter()
+            self.logger.debug(
+                f"[VespaDestination] Feeding {len(docs)} documents to schema '{schema}'"
+            )
             await asyncio.to_thread(_feed_schema_sync, schema, docs)
+            schema_ms = (time.perf_counter() - schema_start) * 1000
+            self.logger.info(
+                f"[VespaDestination] Fed schema '{schema}': {len(docs)} docs in {schema_ms:.1f}ms "
+                f"({schema_ms / len(docs):.1f}ms/doc)"
+            )
+        feed_ms = (time.perf_counter() - feed_start) * 1000
 
-        self.logger.info(f"Vespa feed complete: {success_count} success, {len(failed_docs)} failed")
+        total_ms = (time.perf_counter() - total_start) * 1000
+        self.logger.info(
+            f"[VespaDestination] TOTAL bulk_insert: {total_ms:.1f}ms | "
+            f"transform={transform_ms:.0f}ms, feed={feed_ms:.0f}ms | "
+            f"{success_count} success, {len(failed_docs)} failed"
+        )
 
         if failed_docs:
             self._handle_feed_failures(failed_docs, total_docs)
@@ -717,13 +747,29 @@ class VespaDestination(VectorDBDestination):
             f"num_queries={len(queries)}, limit={limit}, has_filter={filter is not None}"
         )
 
-        # Pre-compute embeddings if not provided
-        if dense_embeddings is None:
-            large_embeddings, small_embeddings = await self._embed_queries(queries)
-        else:
-            # Use provided embeddings (assume 768-dim) and compute binary-packed
+        # Use provided embeddings if they have correct dimensions (768-dim)
+        # Otherwise, re-embed with Matryoshka truncation to 768-dim
+        VESPA_EMBEDDING_DIM = 768  # Must match base_entity.sd chunk_large_embeddings
+        if (
+            dense_embeddings
+            and len(dense_embeddings) == len(queries)
+            and len(dense_embeddings[0]) == VESPA_EMBEDDING_DIM
+        ):
+            # Use provided embeddings - just binary-pack for ANN search
             large_embeddings = dense_embeddings
-            small_embeddings = [self._pack_bits_for_query(emb) for emb in dense_embeddings]
+            small_embeddings = [self._pack_bits_for_query(emb) for emb in large_embeddings]
+            self.logger.info(
+                f"[VespaSearch] Using provided {VESPA_EMBEDDING_DIM}-dim embeddings "
+                f"(no re-embedding needed)"
+            )
+        else:
+            # Re-embed with correct dimensions (fallback - should rarely happen now)
+            provided_dim = len(dense_embeddings[0]) if dense_embeddings else 0
+            self.logger.info(
+                f"[VespaSearch] Re-embedding: provided={provided_dim}-dim, "
+                f"required={VESPA_EMBEDDING_DIM}-dim"
+            )
+            large_embeddings, small_embeddings = await self._embed_queries(queries)
 
         # Translate filter to YQL clause (if present)
         yql_filter = self.translate_filter(filter) if filter else None
@@ -739,18 +785,51 @@ class VespaDestination(VectorDBDestination):
 
         self.logger.debug(f"[VespaSearch] YQL: {yql}")
 
+        # DEBUG: Log full query params (excluding large embedding values)
+        debug_params = {k: v for k, v in query_params.items() if k != "yql"}
+        for key in list(debug_params.keys()):
+            if "embedding" in key.lower() or key.startswith("input.query"):
+                debug_params[key] = f"<tensor with {len(str(debug_params[key]))} chars>"
+        self.logger.info(
+            f"[VespaSearch] QUERY PARAMS:\n  YQL: {yql}\n  Other params: {debug_params}"
+        )
+
         # Execute query in thread pool (pyvespa is synchronous)
+        import time
+
+        start_time = time.monotonic()
         try:
             response = await asyncio.to_thread(self.app.query, body=query_params)
         except Exception as e:
             self.logger.error(f"[VespaSearch] Vespa query failed: {e}")
             raise RuntimeError(f"Vespa search failed: {e}") from e
+        query_time_ms = (time.monotonic() - start_time) * 1000
 
         # Check for errors
         if not response.is_successful():
             error_msg = getattr(response, "json", {}).get("error", str(response))
             self.logger.error(f"[VespaSearch] Vespa returned error: {error_msg}")
             raise RuntimeError(f"Vespa search error: {error_msg}")
+
+        # DEBUG: Log Vespa internal metrics
+        try:
+            raw_json = response.json if hasattr(response, "json") else {}
+            root = raw_json.get("root", {})
+            coverage = root.get("coverage", {})
+            timing = raw_json.get("timing", {})
+            total_count = root.get("fields", {}).get("totalCount", 0)
+
+            self.logger.info(
+                f"\n[VespaSearch] VESPA METRICS:\n"
+                f"  Query time (client): {query_time_ms:.1f}ms\n"
+                f"  Vespa timing: {timing}\n"
+                f"  Total matching docs: {total_count}\n"
+                f"  Coverage: {coverage.get('coverage', 100)}% "
+                f"({coverage.get('documents', 0)} docs, {coverage.get('nodes', 0)} nodes)\n"
+                f"  Hits returned: {len(response.hits) if response.hits else 0}"
+            )
+        except Exception as e:
+            self.logger.debug(f"[VespaSearch] Could not extract metrics: {e}")
 
         # Convert Vespa results to SearchResult format
         raw_results = self._convert_vespa_results(response)
@@ -832,7 +911,8 @@ class VespaDestination(VectorDBDestination):
     async def _embed_queries(self, queries: List[str]) -> tuple[List[List[float]], List[List[int]]]:
         """Pre-compute embeddings for search queries.
 
-        Computes 768-dim embeddings for ranking and binary-packs them for ANN search.
+        Uses text-embedding-3-large model with Matryoshka truncation to get 768-dim
+        embeddings, then binary-packs them for ANN search.
 
         Args:
             queries: List of query texts
@@ -844,7 +924,8 @@ class VespaDestination(VectorDBDestination):
         """
         from airweave.platform.embedders import DenseEmbedder
 
-        embedder = DenseEmbedder(vector_size=768)
+        # Use default model (text-embedding-3-large) and request 768-dim via Matryoshka
+        embedder = DenseEmbedder()  # Uses text-embedding-3-large (3072 native dims)
         large_embeddings = await embedder.embed_many(queries, self.logger, dimensions=768)
 
         # Binary pack for ANN search (same logic as VespaChunkEmbedProcessor)
@@ -894,37 +975,44 @@ class VespaDestination(VectorDBDestination):
         Returns:
             Dict of Vespa query parameters
         """
+        # Calculate effective rerank counts based on requested limit
+        # Schema defaults: second-phase=200, global-phase=100
+        # Override if user requests more than defaults
+        effective_limit = limit + offset
+        second_phase_rerank = max(200, effective_limit * 2)  # 2x buffer for global phase
+        global_phase_rerank = max(100, effective_limit)  # At least what user requested
+
         query_params: Dict[str, Any] = {
             "query": primary_query,  # For userInput(@query) in YQL
             "ranking.profile": "hybrid-rrf",
-            "hits": limit + offset,
+            "hits": effective_limit,
             "presentation.summary": "full",
+            # Override schema rerank-count if user needs more than 100 results
+            "ranking.softtimeout.enable": "false",  # Ensure we get all results
+            "ranking.rerankCount": second_phase_rerank,  # Second-phase candidates
+            "ranking.globalPhase.rerankCount": global_phase_rerank,  # Final RRF output
         }
 
         # Primary embeddings for ranking (float_embedding for cosine similarity)
+        # Note: ranking.features.query() is used for rank profile expressions
+        # Use "values" format for indexed tensors (x[N]), not "cells" format (for mapped x{})
         if large_embeddings:
             query_params["ranking.features.query(float_embedding)"] = {
-                "cells": [
-                    {"address": {"x": str(i)}, "value": v}
-                    for i, v in enumerate(large_embeddings[0])
-                ]
+                "values": large_embeddings[0]
             }
-            # Primary binary embedding for ANN
-            query_params["ranking.features.query(embedding)"] = {
-                "cells": [
-                    {"address": {"x": str(i)}, "value": v}
-                    for i, v in enumerate(small_embeddings[0])
-                ]
-            }
+            # Primary binary embedding for ranking functions (not ANN)
+            query_params["ranking.features.query(embedding)"] = {"values": small_embeddings[0]}
 
         # Add embedding for each query (q0, q1, q2, ...) for multi-query nearestNeighbor
+        # CRITICAL: nearestNeighbor operator requires input.query() format, not ranking.features
+        # input.query() provides tensor values to the nearestNeighbor operator
+        # ranking.features.query() provides values for rank profile expressions
+        # Use "values" format for indexed tensors (tensor<int8>(x[96]))
         for i, (_large_emb, small_emb) in enumerate(
             zip(large_embeddings, small_embeddings, strict=False)
         ):
-            # Binary packed embedding for ANN search
-            query_params[f"ranking.features.query(q{i})"] = {
-                "cells": [{"address": {"x": str(j)}, "value": v} for j, v in enumerate(small_emb)]
-            }
+            # Binary packed embedding for ANN search (nearestNeighbor operator)
+            query_params[f"input.query(q{i})"] = {"values": small_emb}
 
         return query_params
 
@@ -1165,8 +1253,17 @@ class VespaDestination(VectorDBDestination):
 
     def _convert_vespa_results(self, response: Any) -> List[SearchResult]:
         results = []
-        for hit in response.hits or []:
+        for i, hit in enumerate(response.hits or []):
             fields = hit.get("fields", {})
+
+            # Debug: Log first few results with their field keys
+            if i < 3:
+                self.logger.debug(
+                    f"[VespaSearch] Hit {i}: id={hit.get('id', 'N/A')}, "
+                    f"relevance={hit.get('relevance', 0.0):.4f}, "
+                    f"field_keys={list(fields.keys())[:15]}..."
+                )
+
             # Just use all fields as payload, extracting id and score
             result = SearchResult(
                 id=hit.get("id", ""),
@@ -1174,6 +1271,14 @@ class VespaDestination(VectorDBDestination):
                 payload=fields,  # Pass through all Vespa fields
             )
             results.append(result)
+
+        # Summary log
+        if results:
+            first_payload = results[0].payload
+            self.logger.info(
+                f"[VespaSearch] Result sample - Available fields: {list(first_payload.keys())}"
+            )
+
         return results
 
     async def get_vector_config_names(self) -> list[str]:
