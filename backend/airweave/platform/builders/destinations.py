@@ -377,31 +377,45 @@ class DestinationsContextBuilder:
         execution_config: Optional[SyncExecutionConfig],
         logger: ContextualLogger,
     ) -> List[UUID]:
-        """Filter destination IDs based on execution config."""
+        """Filter destination IDs based on execution config.
+
+        Priority order:
+        1. target_destinations (explicit whitelist) - highest priority
+        2. exclude_destinations + skip_qdrant/skip_vespa (combined exclusions)
+        """
         if not execution_config:
             return destination_ids
 
-        # Priority 1: target_destinations
+        # Priority 1: target_destinations (explicit whitelist overrides everything)
         if execution_config.target_destinations:
             logger.info(
                 f"Using target_destinations from config: {execution_config.target_destinations}"
             )
             return execution_config.target_destinations
 
-        # Priority 2: exclude_destinations
+        # Priority 2: Build combined exclusion set from all exclusion flags
+        exclusions: set[UUID] = set()
+
+        # Add explicit UUID exclusions
         if execution_config.exclude_destinations:
+            exclusions.update(execution_config.exclude_destinations)
+
+        # Add native vector DB exclusions from boolean flags
+        if execution_config.skip_qdrant:
+            exclusions.add(NATIVE_QDRANT_UUID)
+            logger.info("Excluding native Qdrant (skip_qdrant=True)")
+
+        if execution_config.skip_vespa:
+            exclusions.add(NATIVE_VESPA_UUID)
+            logger.info("Excluding native Vespa (skip_vespa=True)")
+
+        # Apply exclusions
+        if exclusions:
             original_count = len(destination_ids)
-            filtered_ids = [
-                dest_id
-                for dest_id in destination_ids
-                if dest_id not in execution_config.exclude_destinations
-            ]
+            filtered_ids = [dest_id for dest_id in destination_ids if dest_id not in exclusions]
             excluded_count = original_count - len(filtered_ids)
             if excluded_count > 0:
-                logger.info(
-                    f"Excluded {excluded_count} destination(s) from "
-                    "execution_config.exclude_destinations"
-                )
+                logger.info(f"Excluded {excluded_count} destination(s) via execution_config")
             return filtered_ids
 
         return destination_ids
