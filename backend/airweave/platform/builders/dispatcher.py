@@ -4,14 +4,14 @@ from typing import List, Optional
 
 from airweave.core.logging import ContextualLogger
 from airweave.platform.destinations._base import BaseDestination, ProcessingRequirement
-from airweave.platform.sync.actions import ActionDispatcher
+from airweave.platform.sync.actions import EntityActionDispatcher
 from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.handlers import (
-    PostgresMetadataHandler,
-    RawDataHandler,
-    VectorDBHandler,
+    ArfHandler,
+    DestinationHandler,
+    EntityPostgresHandler,
 )
-from airweave.platform.sync.handlers.base import ActionHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 
 class DispatcherBuilder:
@@ -23,7 +23,7 @@ class DispatcherBuilder:
         destinations: List[BaseDestination],
         execution_config: Optional[SyncExecutionConfig] = None,
         logger: Optional[ContextualLogger] = None,
-    ) -> ActionDispatcher:
+    ) -> EntityActionDispatcher:
         """Build dispatcher with handlers based on config.
 
         Args:
@@ -35,7 +35,7 @@ class DispatcherBuilder:
             ActionDispatcher with configured handlers.
         """
         handlers = cls._build_handlers(destinations, execution_config, logger)
-        return ActionDispatcher(handlers=handlers)
+        return EntityActionDispatcher(handlers=handlers)
 
     @classmethod
     def _build_handlers(
@@ -43,13 +43,13 @@ class DispatcherBuilder:
         destinations: List[BaseDestination],
         execution_config: Optional[SyncExecutionConfig],
         logger: Optional[ContextualLogger],
-    ) -> List[ActionHandler]:
+    ) -> List[EntityActionHandler]:
         """Build handler list based on config."""
         enable_vector = execution_config.enable_vector_handlers if execution_config else True
         enable_raw = execution_config.enable_raw_data_handler if execution_config else True
         enable_postgres = execution_config.enable_postgres_handler if execution_config else True
 
-        handlers: List[ActionHandler] = []
+        handlers: List[EntityActionHandler] = []
 
         cls._add_vector_handler(handlers, destinations, enable_vector, logger)
         cls._add_raw_handler(handlers, enable_raw, logger)
@@ -63,7 +63,7 @@ class DispatcherBuilder:
     @classmethod
     def _add_vector_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         destinations: List[BaseDestination],
         enabled: bool,
         logger: Optional[ContextualLogger],
@@ -80,7 +80,7 @@ class DispatcherBuilder:
                 requirement = dest.processing_requirement
                 if requirement == ProcessingRequirement.CHUNKS_AND_EMBEDDINGS:
                     vector_db_destinations.append(dest)
-                elif requirement == ProcessingRequirement.RAW_ENTITIES:
+                elif requirement == ProcessingRequirement.RAW:
                     # Self-processing destinations don't need VectorDBHandler
                     pass
                 else:
@@ -93,11 +93,11 @@ class DispatcherBuilder:
                     vector_db_destinations.append(dest)
 
             if vector_db_destinations:
-                handlers.append(VectorDBHandler(destinations=vector_db_destinations))
+                handlers.append(DestinationHandler(destinations=vector_db_destinations))
                 if logger:
                     dest_names = [d.__class__.__name__ for d in vector_db_destinations]
                     logger.info(
-                        f"Created VectorDBHandler for {len(vector_db_destinations)} "
+                        f"Created DestinationHandler for {len(vector_db_destinations)} "
                         f"destination(s): {dest_names}"
                     )
         elif logger:
@@ -109,25 +109,25 @@ class DispatcherBuilder:
     @classmethod
     def _add_raw_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         enabled: bool,
         logger: Optional[ContextualLogger],
     ) -> None:
         """Add raw data handler if enabled."""
         if enabled:
-            handlers.append(RawDataHandler())
+            handlers.append(ArfHandler())
         elif logger:
             logger.info("Skipping RawDataHandler (disabled by execution_config)")
 
     @classmethod
     def _add_postgres_handler(
         cls,
-        handlers: List[ActionHandler],
+        handlers: List[EntityActionHandler],
         enabled: bool,
         logger: Optional[ContextualLogger],
     ) -> None:
         """Add Postgres metadata handler if enabled (always last)."""
         if enabled:
-            handlers.append(PostgresMetadataHandler())
+            handlers.append(EntityPostgresHandler())
         elif logger:
             logger.info("Skipping PostgresMetadataHandler (disabled by execution_config)")

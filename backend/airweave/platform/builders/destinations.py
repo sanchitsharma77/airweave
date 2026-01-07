@@ -17,6 +17,7 @@ from airweave import crud, schemas
 from airweave.core import credentials
 from airweave.core.constants.reserved_ids import (
     NATIVE_QDRANT_UUID,
+    NATIVE_VESPA_UUID,
     RESERVED_TABLE_ENTITY_ID,
 )
 from airweave.core.logging import ContextualLogger
@@ -127,6 +128,7 @@ class DestinationsContextBuilder:
         # TODO: Add other flexible destination building here for future Vespa deployments
         native_creators = {
             NATIVE_QDRANT_UUID: cls._create_native_qdrant,
+            NATIVE_VESPA_UUID: cls._create_native_vespa,
         }
 
         destinations = []
@@ -208,6 +210,10 @@ class DestinationsContextBuilder:
         if destination_connection_id == NATIVE_QDRANT_UUID:
             return await cls._create_native_qdrant(db, collection, logger)
 
+        # Special case: Native Vespa
+        if destination_connection_id == NATIVE_VESPA_UUID:
+            return await cls._create_native_vespa(db, collection, logger)
+
         # Regular case: Load from database
         return await cls._create_custom_destination(
             db=db,
@@ -249,6 +255,35 @@ class DestinationsContextBuilder:
         )
 
         logger.info("Created native Qdrant destination")
+        return destination
+
+    @classmethod
+    async def _create_native_vespa(
+        cls,
+        db: AsyncSession,
+        collection: schemas.Collection,
+        logger: ContextualLogger,
+    ) -> Optional[BaseDestination]:
+        """Create native Vespa destination."""
+        logger.info("Using native Vespa destination (settings-based)")
+        destination_model = await crud.destination.get_by_short_name(db, "vespa")
+        if not destination_model:
+            logger.warning("Vespa destination model not found")
+            return None
+
+        destination_schema = schemas.Destination.model_validate(destination_model)
+        destination_class = resource_locator.get_destination(destination_schema)
+
+        destination = await destination_class.create(
+            credentials=None,
+            config=None,
+            collection_id=collection.id,
+            organization_id=collection.organization_id,
+            vector_size=None,  # Vespa handles embeddings internally
+            logger=logger,
+        )
+
+        logger.info("Created native Vespa destination")
         return destination
 
     @classmethod
@@ -342,31 +377,45 @@ class DestinationsContextBuilder:
         execution_config: Optional[SyncExecutionConfig],
         logger: ContextualLogger,
     ) -> List[UUID]:
-        """Filter destination IDs based on execution config."""
+        """Filter destination IDs based on execution config.
+
+        Priority order:
+        1. target_destinations (explicit whitelist) - highest priority
+        2. exclude_destinations + skip_qdrant/skip_vespa (combined exclusions)
+        """
         if not execution_config:
             return destination_ids
 
-        # Priority 1: target_destinations
+        # Priority 1: target_destinations (explicit whitelist overrides everything)
         if execution_config.target_destinations:
             logger.info(
                 f"Using target_destinations from config: {execution_config.target_destinations}"
             )
             return execution_config.target_destinations
 
-        # Priority 2: exclude_destinations
+        # Priority 2: Build combined exclusion set from all exclusion flags
+        exclusions: set[UUID] = set()
+
+        # Add explicit UUID exclusions
         if execution_config.exclude_destinations:
+            exclusions.update(execution_config.exclude_destinations)
+
+        # Add native vector DB exclusions from boolean flags
+        if execution_config.skip_qdrant:
+            exclusions.add(NATIVE_QDRANT_UUID)
+            logger.info("Excluding native Qdrant (skip_qdrant=True)")
+
+        if execution_config.skip_vespa:
+            exclusions.add(NATIVE_VESPA_UUID)
+            logger.info("Excluding native Vespa (skip_vespa=True)")
+
+        # Apply exclusions
+        if exclusions:
             original_count = len(destination_ids)
-            filtered_ids = [
-                dest_id
-                for dest_id in destination_ids
-                if dest_id not in execution_config.exclude_destinations
-            ]
+            filtered_ids = [dest_id for dest_id in destination_ids if dest_id not in exclusions]
             excluded_count = original_count - len(filtered_ids)
             if excluded_count > 0:
-                logger.info(
-                    f"Excluded {excluded_count} destination(s) from "
-                    "execution_config.exclude_destinations"
-                )
+                logger.info(f"Excluded {excluded_count} destination(s) via execution_config")
             return filtered_ids
 
         return destination_ids

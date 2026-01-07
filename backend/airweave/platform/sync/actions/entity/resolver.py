@@ -12,28 +12,24 @@ from airweave import crud, models
 from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
 from airweave.db.session import get_db_context
 from airweave.platform.entities._base import BaseEntity, DeletionEntity, PolymorphicEntity
-from airweave.platform.sync.actions.types import (
-    ActionBatch,
-    DeleteAction,
-    InsertAction,
-    KeepAction,
-    UpdateAction,
+from airweave.platform.sync.actions.entity.types import (
+    EntityActionBatch,
+    EntityDeleteAction,
+    EntityInsertAction,
+    EntityKeepAction,
+    EntityUpdateAction,
 )
 from airweave.platform.sync.exceptions import SyncFailureError
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
-class ActionResolver:
+class EntityActionResolver:
     """Resolves entities to action objects (INSERT/UPDATE/DELETE/KEEP).
 
     Compares entity hashes against stored values in the database to determine
     what operation is needed for each entity.
-
-    Unlike the old ActionDeterminer which returned partitions of entities,
-    this resolver returns proper Action objects that are first-class citizens
-    in the pipeline.
     """
 
     def __init__(self, entity_map: Dict[type, UUID]):
@@ -52,7 +48,7 @@ class ActionResolver:
         self,
         entities: List[BaseEntity],
         sync_context: "SyncContext",
-    ) -> ActionBatch:
+    ) -> EntityActionBatch:
         """Resolve entities to their appropriate actions.
 
         Args:
@@ -60,7 +56,7 @@ class ActionResolver:
             sync_context: Sync context with logger
 
         Returns:
-            ActionBatch containing all resolved actions
+            EntityActionBatch containing all resolved actions
 
         Raises:
             SyncFailureError: If entity type not found in entity_map or missing hash
@@ -203,8 +199,7 @@ class ActionResolver:
             lookup_start = time.time()
             num_chunks = (len(entity_requests) + 999) // 1000
             sync_context.logger.debug(
-                f"🔍 Bulk entity lookup for {len(entity_requests)} entities "
-                f"({num_chunks} chunks)..."
+                f"Bulk entity lookup for {len(entity_requests)} entities ({num_chunks} chunks)..."
             )
 
             async with get_db_context() as db:
@@ -216,7 +211,7 @@ class ActionResolver:
 
             lookup_duration = time.time() - lookup_start
             sync_context.logger.debug(
-                f"✅ Bulk lookup complete in {lookup_duration:.2f}s - "
+                f"Bulk lookup complete in {lookup_duration:.2f}s - "
                 f"found {len(existing_map)}/{len(entity_requests)} existing"
             )
 
@@ -232,7 +227,7 @@ class ActionResolver:
         delete_entities: List[BaseEntity],
         existing_map: Dict[Tuple[str, UUID], models.Entity],
         sync_context: "SyncContext",
-    ) -> ActionBatch:
+    ) -> EntityActionBatch:
         """Create action objects for all entities.
 
         Args:
@@ -242,24 +237,24 @@ class ActionResolver:
             sync_context: Sync context for error handling
 
         Returns:
-            ActionBatch with all resolved actions
+            EntityActionBatch with all resolved actions
 
         Raises:
             SyncFailureError: If entity has no hash or type not in entity_map
         """
-        inserts: List[InsertAction] = []
-        updates: List[UpdateAction] = []
-        keeps: List[KeepAction] = []
-        deletes: List[DeleteAction] = []
+        inserts: List[EntityInsertAction] = []
+        updates: List[EntityUpdateAction] = []
+        keeps: List[EntityKeepAction] = []
+        deletes: List[EntityDeleteAction] = []
 
         # Process non-delete entities
         for entity in non_delete_entities:
             action = self._resolve_non_delete_action(entity, existing_map, sync_context)
-            if isinstance(action, InsertAction):
+            if isinstance(action, EntityInsertAction):
                 inserts.append(action)
-            elif isinstance(action, UpdateAction):
+            elif isinstance(action, EntityUpdateAction):
                 updates.append(action)
-            elif isinstance(action, KeepAction):
+            elif isinstance(action, EntityKeepAction):
                 keeps.append(action)
 
         # Process delete entities
@@ -267,7 +262,7 @@ class ActionResolver:
             action = self._create_delete_action(entity, existing_map, sync_context)
             deletes.append(action)
 
-        return ActionBatch(
+        return EntityActionBatch(
             inserts=inserts,
             updates=updates,
             keeps=keeps,
@@ -280,7 +275,7 @@ class ActionResolver:
         entity: BaseEntity,
         existing_map: Dict[Tuple[str, UUID], models.Entity],
         sync_context: "SyncContext",
-    ) -> InsertAction | UpdateAction | KeepAction:
+    ) -> EntityInsertAction | EntityUpdateAction | EntityKeepAction:
         """Resolve a non-delete entity to its action type.
 
         Args:
@@ -289,7 +284,7 @@ class ActionResolver:
             sync_context: Sync context
 
         Returns:
-            InsertAction, UpdateAction, or KeepAction
+            EntityInsertAction, EntityUpdateAction, or EntityKeepAction
 
         Raises:
             SyncFailureError: If entity has no hash or type not in entity_map
@@ -316,20 +311,20 @@ class ActionResolver:
         # Determine action based on DB state and hash
         if db_row is None:
             # New entity - INSERT
-            return InsertAction(
+            return EntityInsertAction(
                 entity=entity,
                 entity_definition_id=entity_definition_id,
             )
         elif db_row.hash != entity_hash:
             # Hash changed - UPDATE
-            return UpdateAction(
+            return EntityUpdateAction(
                 entity=entity,
                 entity_definition_id=entity_definition_id,
                 db_id=db_row.id,
             )
         else:
             # Hash unchanged - KEEP
-            return KeepAction(
+            return EntityKeepAction(
                 entity=entity,
                 entity_definition_id=entity_definition_id,
             )
@@ -339,7 +334,7 @@ class ActionResolver:
         entity: BaseEntity,
         existing_map: Dict[Tuple[str, UUID], models.Entity],
         sync_context: "SyncContext",
-    ) -> DeleteAction:
+    ) -> EntityDeleteAction:
         """Create a delete action for a DeletionEntity.
 
         Args:
@@ -348,7 +343,7 @@ class ActionResolver:
             sync_context: Sync context
 
         Returns:
-            DeleteAction with db_id if entity exists in DB
+            EntityDeleteAction with db_id if entity exists in DB
 
         Raises:
             SyncFailureError: If entity type not in entity_map
@@ -361,7 +356,7 @@ class ActionResolver:
         db_key = (entity.entity_id, entity_definition_id)
         db_row = existing_map.get(db_key)
 
-        return DeleteAction(
+        return EntityDeleteAction(
             entity=entity,
             entity_definition_id=entity_definition_id,
             db_id=db_row.id if db_row else None,
@@ -371,7 +366,7 @@ class ActionResolver:
         self,
         entities: List[BaseEntity],
         sync_context: "SyncContext",
-    ) -> ActionBatch:
+    ) -> EntityActionBatch:
         """Force all entities as INSERT actions (skip hash comparison).
 
         Used for ARF replay or when execution_config.skip_hash_comparison is True.
@@ -381,10 +376,10 @@ class ActionResolver:
             sync_context: Sync context
 
         Returns:
-            ActionBatch with all entities as inserts
+            EntityActionBatch with all entities as inserts
         """
-        inserts: List[InsertAction] = []
-        deletes: List[DeleteAction] = []
+        inserts: List[EntityInsertAction] = []
+        deletes: List[EntityDeleteAction] = []
 
         for entity in entities:
             if isinstance(entity, DeletionEntity):
@@ -396,10 +391,10 @@ class ActionResolver:
                         f"Entity type {entity.__class__.__name__} not in entity_map"
                     )
                 inserts.append(
-                    InsertAction(entity=entity, entity_definition_id=entity_definition_id)
+                    EntityInsertAction(entity=entity, entity_definition_id=entity_definition_id)
                 )
 
-        return ActionBatch(
+        return EntityActionBatch(
             inserts=inserts,
             updates=[],
             keeps=[],

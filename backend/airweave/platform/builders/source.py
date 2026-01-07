@@ -368,14 +368,14 @@ class SourceContextBuilder:
 
         if is_direct_token_injection:
             logger.debug(
-                f"Skipping token manager for {source_connection_data['short_name']} - "
+                f"⏭️ Skipping token manager for {source_connection_data['short_name']} - "
                 f"direct token injection"
             )
             return
 
         if is_proxy_mode:
             logger.info(
-                f"Skipping token manager for {source_connection_data['short_name']} - "
+                f"⏭️ Skipping token manager for {source_connection_data['short_name']} - "
                 f"proxy mode (PipedreamProxyClient manages tokens internally)"
             )
             return
@@ -392,12 +392,12 @@ class SourceContextBuilder:
             if oauth_type in (OAuthType.WITH_REFRESH, OAuthType.WITH_ROTATING_REFRESH):
                 should_create_token_manager = True
                 logger.debug(
-                    f"OAuth source {short_name} with oauth_type={oauth_type} "
+                    f"✅ OAuth source {short_name} with oauth_type={oauth_type} "
                     f"will use token manager for refresh"
                 )
             else:
                 logger.debug(
-                    f"Skipping token manager for {short_name} - "
+                    f"⏭️ Skipping token manager for {short_name} - "
                     f"oauth_type={oauth_type} does not support token refresh"
                 )
 
@@ -483,20 +483,21 @@ class SourceContextBuilder:
         # Determine whether to load cursor data
         if force_full_sync:
             logger.info(
-                "FORCE FULL SYNC: Skipping cursor data to ensure all entities are fetched "
+                "🔄 FORCE FULL SYNC: Skipping cursor data to ensure all entities are fetched "
                 "for accurate orphaned entity cleanup. Will still track cursor for next sync."
             )
             cursor_data = None
         elif execution_config and execution_config.skip_cursor_load:
             logger.info(
-                "SKIP CURSOR LOAD: Fetching all entities (execution_config.skip_cursor_load=True)"
+                "🔄 SKIP CURSOR LOAD: Fetching all entities "
+                "(execution_config.skip_cursor_load=True)"
             )
             cursor_data = None
         else:
             # Normal incremental sync - load cursor data
             cursor_data = await sync_cursor_service.get_cursor_data(db=db, sync_id=sync.id, ctx=ctx)
             if cursor_data:
-                logger.info(f"Incremental sync: Using cursor data with {len(cursor_data)} keys")
+                logger.info(f"📊 Incremental sync: Using cursor data with {len(cursor_data)} keys")
 
         return SyncCursor(
             sync_id=sync.id,
