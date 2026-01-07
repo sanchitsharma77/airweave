@@ -1,5 +1,7 @@
 """Admin-only API endpoints for organization management."""
 
+from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 from uuid import UUID
 
@@ -992,3 +994,570 @@ async def resync_with_execution_config(
     ctx.logger.info(f"✅ Admin resync job {sync_job.id} dispatched to Temporal")
 
     return sync_job
+
+
+# =============================================================================
+# Admin Sync Endpoints for API Key Access
+# =============================================================================
+
+
+class AdminSyncInfo(schemas.Sync):
+    """Extended sync info for admin listing with entity counts and status."""
+
+    total_entity_count: int = 0
+    last_job_status: Optional[str] = None
+    last_job_at: Optional[datetime] = None
+    source_short_name: Optional[str] = None
+    readable_collection_id: Optional[str] = None
+
+    # Vespa migration tracking
+    last_vespa_job_id: Optional[UUID] = None
+    last_vespa_job_status: Optional[str] = None
+    last_vespa_job_at: Optional[datetime] = None
+    last_vespa_job_config: Optional[dict] = None  # The execution_config used
+
+    class Config:
+        """Pydantic config."""
+
+        from_attributes = True
+
+
+class AdminSearchDestination(str, Enum):
+    """Destination options for admin search."""
+
+    QDRANT = "qdrant"
+    VESPA = "vespa"
+
+
+@router.post("/collections/{readable_id}/search", response_model=schemas.SearchResponse)
+async def admin_search_collection(
+    readable_id: str,
+    search_request: schemas.SearchRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+    destination: AdminSearchDestination = Query(
+        AdminSearchDestination.QDRANT,
+        description="Search destination: 'qdrant' (default) or 'vespa'",
+    ),
+) -> schemas.SearchResponse:
+    """Admin-only: Search any collection regardless of organization.
+
+    This endpoint allows admins or API keys with `api_key_admin_sync` permission
+    to search collections across organizations for migration and support purposes.
+
+    Supports selecting the search destination (Qdrant or Vespa) for migration testing.
+
+    Args:
+        readable_id: The readable ID of the collection to search
+        search_request: The search request parameters
+        db: Database session
+        ctx: API context
+        destination: Search destination ('qdrant' or 'vespa')
+
+    Returns:
+        SearchResponse with results
+
+    Raises:
+        HTTPException: If not admin or collection not found
+    """
+    import time
+
+    from sqlalchemy import select as sa_select
+
+    from airweave.models.collection import Collection
+    from airweave.search.orchestrator import orchestrator
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Get collection without organization filtering
+    result = await db.execute(sa_select(Collection).where(Collection.readable_id == readable_id))
+    collection = result.scalar_one_or_none()
+
+    if not collection:
+        raise NotFoundException(f"Collection '{readable_id}' not found")
+
+    ctx.logger.info(
+        f"Admin searching collection {readable_id} (org: {collection.organization_id}) "
+        f"using destination: {destination.value}"
+    )
+
+    start_time = time.monotonic()
+
+    # Create destination based on selection
+    dest_instance = await _create_admin_search_destination(
+        destination=destination,
+        collection_id=collection.id,
+        organization_id=collection.organization_id,
+        vector_size=collection.vector_size,
+        ctx=ctx,
+    )
+
+    # Build search context with custom destination factory
+    search_context = await _build_admin_search_context(
+        db=db,
+        collection=collection,
+        readable_id=readable_id,
+        search_request=search_request,
+        destination=dest_instance,
+        ctx=ctx,
+    )
+
+    # Execute search
+    ctx.logger.debug("Executing admin search")
+    response, state = await orchestrator.run(ctx, search_context)
+
+    duration_ms = (time.monotonic() - start_time) * 1000
+
+    ctx.logger.info(
+        f"Admin search completed for collection {readable_id} ({destination.value}): "
+        f"{len(response.results)} results in {duration_ms:.2f}ms"
+    )
+
+    return response
+
+
+async def _create_admin_search_destination(
+    destination: AdminSearchDestination,
+    collection_id: UUID,
+    organization_id: UUID,
+    vector_size: int,
+    ctx: ApiContext,
+):
+    """Create destination instance for admin search.
+
+    Args:
+        destination: Which destination to use
+        collection_id: Collection UUID
+        organization_id: Organization UUID
+        vector_size: Vector dimensions
+        ctx: API context
+
+    Returns:
+        Destination instance (Qdrant or Vespa)
+    """
+    if destination == AdminSearchDestination.VESPA:
+        from airweave.platform.destinations.vespa import VespaDestination
+
+        ctx.logger.info("Creating Vespa destination for admin search")
+        return await VespaDestination.create(
+            collection_id=collection_id,
+            organization_id=organization_id,
+            vector_size=vector_size,
+            logger=ctx.logger,
+        )
+    else:
+        from airweave.platform.destinations.qdrant import QdrantDestination
+
+        ctx.logger.info("Creating Qdrant destination for admin search")
+        return await QdrantDestination.create(
+            collection_id=collection_id,
+            organization_id=organization_id,
+            vector_size=vector_size,
+            logger=ctx.logger,
+        )
+
+
+async def _build_admin_search_context(
+    db: AsyncSession,
+    collection,
+    readable_id: str,
+    search_request: schemas.SearchRequest,
+    destination,
+    ctx: ApiContext,
+):
+    """Build search context with custom destination for admin search.
+
+    This mirrors the factory.build() but allows overriding the destination.
+    """
+    from airweave.search.factory import (
+        SearchContext,
+        factory,
+    )
+
+    # Apply defaults and validate
+    params = factory._apply_defaults_and_validate(search_request)
+
+    # Get collection sources
+    federated_sources = await factory.get_federated_sources(db, collection, ctx)
+    has_federated_sources = bool(federated_sources)
+    has_vector_sources = await factory._has_vector_sources(db, collection, ctx)
+
+    # Determine destination capabilities
+    requires_embedding = getattr(destination, "_requires_client_embedding", True)
+    supports_temporal = getattr(destination, "_supports_temporal_relevance", True)
+
+    ctx.logger.info(
+        f"[AdminSearch] Destination: {destination.__class__.__name__}, "
+        f"requires_client_embedding: {requires_embedding}, "
+        f"supports_temporal_relevance: {supports_temporal}"
+    )
+
+    if not has_federated_sources and not has_vector_sources:
+        raise ValueError("Collection has no sources")
+
+    vector_size = collection.vector_size
+    if vector_size is None:
+        raise ValueError(f"Collection {collection.readable_id} has no vector_size set.")
+
+    # Select providers for operations
+    api_keys = factory._get_available_api_keys()
+    providers = factory._create_provider_for_each_operation(
+        api_keys,
+        params,
+        has_federated_sources,
+        has_vector_sources,
+        ctx,
+        vector_size,
+        requires_client_embedding=requires_embedding,
+    )
+
+    # Create event emitter
+    from airweave.search.emitter import EventEmitter
+
+    emitter = EventEmitter(request_id=ctx.request_id, stream=False)
+
+    # Get temporal supporting sources if needed
+    temporal_supporting_sources = None
+    if params["temporal_weight"] > 0 and has_vector_sources and supports_temporal:
+        try:
+            temporal_supporting_sources = await factory._get_temporal_supporting_sources(
+                db, collection, ctx, emitter
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to check temporal relevance support: {e}") from e
+    elif params["temporal_weight"] > 0 and not supports_temporal:
+        ctx.logger.info(
+            "[AdminSearch] Skipping temporal relevance: destination does not support it"
+        )
+        temporal_supporting_sources = []
+
+    # Build operations with custom destination
+    operations = factory._build_operations(
+        params,
+        providers,
+        federated_sources,
+        has_vector_sources,
+        search_request,
+        temporal_supporting_sources,
+        vector_size,
+        destination=destination,
+        requires_client_embedding=requires_embedding,
+        db=db,
+        ctx=ctx,
+    )
+
+    return SearchContext(
+        request_id=ctx.request_id,
+        collection_id=collection.id,
+        readable_collection_id=readable_id,
+        stream=False,
+        vector_size=vector_size,
+        offset=params["offset"],
+        limit=params["limit"],
+        emitter=emitter,
+        query=search_request.query,
+        **operations,
+    )
+
+
+@router.get("/syncs", response_model=List[AdminSyncInfo])
+async def admin_list_all_syncs(
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+    skip: int = Query(0, description="Number of syncs to skip"),
+    limit: int = Query(100, le=1000, description="Maximum number of syncs to return"),
+    organization_id: Optional[UUID] = Query(None, description="Filter by organization ID"),
+) -> List[AdminSyncInfo]:
+    """Admin-only: List all syncs across organizations with entity counts.
+
+    This endpoint returns syncs with entity counts, last job status, and source
+    connection information for migration and monitoring purposes.
+
+    Args:
+        db: Database session
+        ctx: API context
+        skip: Number of syncs to skip for pagination
+        limit: Maximum number of syncs to return
+        organization_id: Optional filter by organization ID
+
+    Returns:
+        List of syncs with extended information
+
+    Raises:
+        HTTPException: If not admin
+    """
+    from sqlalchemy import func
+    from sqlalchemy import select as sa_select
+
+    from airweave.models.connection import Connection
+    from airweave.models.entity_count import EntityCount
+    from airweave.models.source_connection import SourceConnection
+    from airweave.models.sync import Sync
+    from airweave.models.sync_connection import SyncConnection
+    from airweave.models.sync_job import SyncJob
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Build base query for syncs
+    query = sa_select(Sync).order_by(Sync.created_at.desc())
+
+    if organization_id:
+        query = query.where(Sync.organization_id == organization_id)
+
+    query = query.offset(skip).limit(limit)
+
+    result = await db.execute(query)
+    syncs = list(result.scalars().all())
+
+    if not syncs:
+        return []
+
+    sync_ids = [s.id for s in syncs]
+
+    # Fetch entity counts in bulk
+    entity_count_query = (
+        sa_select(EntityCount.sync_id, func.sum(EntityCount.count).label("total_count"))
+        .where(EntityCount.sync_id.in_(sync_ids))
+        .group_by(EntityCount.sync_id)
+    )
+    entity_count_result = await db.execute(entity_count_query)
+    entity_count_map = {row.sync_id: row.total_count or 0 for row in entity_count_result}
+
+    # Fetch last job info in bulk
+    last_job_subq = (
+        sa_select(
+            SyncJob.sync_id,
+            SyncJob.status,
+            SyncJob.completed_at,
+            func.row_number()
+            .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
+            .label("rn"),
+        )
+        .where(SyncJob.sync_id.in_(sync_ids))
+        .subquery()
+    )
+    last_job_query = sa_select(last_job_subq).where(last_job_subq.c.rn == 1)
+    last_job_result = await db.execute(last_job_query)
+    last_job_map = {
+        row.sync_id: {"status": row.status, "completed_at": row.completed_at}
+        for row in last_job_result
+    }
+
+    # Fetch source connections info in bulk
+    source_conn_query = sa_select(
+        SourceConnection.sync_id,
+        SourceConnection.short_name,
+        SourceConnection.readable_collection_id,
+    ).where(SourceConnection.sync_id.in_(sync_ids))
+    source_conn_result = await db.execute(source_conn_query)
+    source_conn_map = {
+        row.sync_id: {
+            "short_name": row.short_name,
+            "readable_collection_id": row.readable_collection_id,
+        }
+        for row in source_conn_result
+    }
+
+    # Fetch sync connections to enrich with connection IDs
+    sync_conn_query = (
+        sa_select(SyncConnection, Connection)
+        .join(Connection, SyncConnection.connection_id == Connection.id)
+        .where(SyncConnection.sync_id.in_(sync_ids))
+    )
+    sync_conn_result = await db.execute(sync_conn_query)
+    sync_connections = {}
+    for sync_conn, connection in sync_conn_result:
+        sync_id = sync_conn.sync_id
+        if sync_id not in sync_connections:
+            sync_connections[sync_id] = {"source": None, "destinations": []}
+        if connection.integration_type.value == "source":
+            sync_connections[sync_id]["source"] = connection.id
+        elif connection.integration_type.value == "destination":
+            sync_connections[sync_id]["destinations"].append(connection.id)
+
+    # Fetch last Vespa-targeting job info in bulk
+    # A Vespa job has execution_config_json with skip_qdrant=true (Vespa-only)
+    # or replay_from_arf=true with skip_qdrant=true (ARF replay to Vespa)
+    vespa_job_query = (
+        sa_select(
+            SyncJob.id,
+            SyncJob.sync_id,
+            SyncJob.status,
+            SyncJob.completed_at,
+            SyncJob.execution_config_json,
+        )
+        .where(
+            SyncJob.sync_id.in_(sync_ids),
+            SyncJob.execution_config_json.isnot(None),
+            # Filter for Vespa-targeting configs (skip_qdrant=true means Vespa-only)
+            SyncJob.execution_config_json["skip_qdrant"].astext == "true",
+        )
+        .order_by(SyncJob.sync_id, SyncJob.created_at.desc())
+    )
+    vespa_job_result = await db.execute(vespa_job_query)
+    vespa_job_rows = list(vespa_job_result)
+
+    # Build map of sync_id -> most recent Vespa job (first per sync_id due to ordering)
+    vespa_job_map = {}
+    for row in vespa_job_rows:
+        if row.sync_id not in vespa_job_map:
+            vespa_job_map[row.sync_id] = {
+                "id": row.id,
+                "status": row.status,
+                "completed_at": row.completed_at,
+                "config": row.execution_config_json,
+            }
+
+    # Build response using helper function
+    admin_syncs = _build_admin_sync_info_list(
+        syncs=syncs,
+        sync_connections=sync_connections,
+        source_conn_map=source_conn_map,
+        last_job_map=last_job_map,
+        vespa_job_map=vespa_job_map,
+        entity_count_map=entity_count_map,
+    )
+
+    ctx.logger.info(
+        f"Admin listed {len(admin_syncs)} syncs "
+        f"(org_filter={organization_id}, skip={skip}, limit={limit})"
+    )
+
+    return admin_syncs
+
+
+def _build_admin_sync_info_list(
+    syncs: list,
+    sync_connections: dict,
+    source_conn_map: dict,
+    last_job_map: dict,
+    vespa_job_map: dict,
+    entity_count_map: dict,
+) -> List[AdminSyncInfo]:
+    """Build list of AdminSyncInfo from query results."""
+    admin_syncs = []
+    for sync in syncs:
+        conn_info = sync_connections.get(sync.id, {"source": None, "destinations": []})
+        source_info = source_conn_map.get(sync.id, {})
+        last_job = last_job_map.get(sync.id, {})
+        vespa_job = vespa_job_map.get(sync.id, {})
+
+        sync_dict = {**sync.__dict__}
+        if "_sa_instance_state" in sync_dict:
+            sync_dict.pop("_sa_instance_state")
+
+        sync_dict["source_connection_id"] = conn_info["source"]
+        sync_dict["destination_connection_ids"] = conn_info["destinations"]
+        sync_dict["total_entity_count"] = entity_count_map.get(sync.id, 0)
+        sync_dict["last_job_status"] = (
+            last_job.get("status").value if last_job.get("status") else None
+        )
+        sync_dict["last_job_at"] = last_job.get("completed_at")
+        sync_dict["source_short_name"] = source_info.get("short_name")
+        sync_dict["readable_collection_id"] = source_info.get("readable_collection_id")
+
+        # Vespa migration tracking
+        sync_dict["last_vespa_job_id"] = vespa_job.get("id")
+        sync_dict["last_vespa_job_status"] = (
+            vespa_job.get("status").value if vespa_job.get("status") else None
+        )
+        sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
+        sync_dict["last_vespa_job_config"] = vespa_job.get("config")
+
+        admin_syncs.append(AdminSyncInfo.model_validate(sync_dict))
+
+    return admin_syncs
+
+
+@router.post("/sync-jobs/{job_id}/cancel", response_model=schemas.SyncJob)
+async def admin_cancel_sync_job(
+    job_id: UUID,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> schemas.SyncJob:
+    """Admin-only: Cancel any sync job regardless of organization.
+
+    This endpoint allows admins or API keys with `api_key_admin_sync` permission
+    to cancel sync jobs across organizations for migration and support purposes.
+
+    Args:
+        job_id: The ID of the sync job to cancel
+        db: Database session
+        ctx: API context
+
+    Returns:
+        The updated sync job
+
+    Raises:
+        HTTPException: If not admin, job not found, or job not cancellable
+    """
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.datetime_utils import utc_now_naive
+    from airweave.core.shared_models import SyncJobStatus
+    from airweave.core.sync_job_service import sync_job_service
+    from airweave.core.temporal_service import temporal_service
+    from airweave.models.sync_job import SyncJob
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Get the sync job without organization filtering
+    result = await db.execute(sa_select(SyncJob).where(SyncJob.id == job_id))
+    sync_job = result.scalar_one_or_none()
+
+    if not sync_job:
+        raise NotFoundException(f"Sync job {job_id} not found")
+
+    ctx.logger.info(
+        f"Admin cancelling sync job {job_id} (org: {sync_job.organization_id}, "
+        f"status: {sync_job.status})"
+    )
+
+    # Check if job is in a cancellable state
+    if sync_job.status not in [SyncJobStatus.PENDING, SyncJobStatus.RUNNING]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel job in {sync_job.status.value} state",
+        )
+
+    # Set transitional status to CANCELLING immediately
+    await sync_job_service.update_status(
+        sync_job_id=job_id,
+        status=SyncJobStatus.CANCELLING,
+        ctx=ctx,
+    )
+
+    # Fire-and-forget cancellation request to Temporal
+    cancel_result = await temporal_service.cancel_sync_job_workflow(str(job_id), ctx)
+
+    if not cancel_result["success"]:
+        # Actual Temporal connectivity/availability error - revert status
+        fallback_status = (
+            SyncJobStatus.RUNNING
+            if sync_job.status == SyncJobStatus.RUNNING
+            else SyncJobStatus.PENDING
+        )
+        await sync_job_service.update_status(
+            sync_job_id=job_id,
+            status=fallback_status,
+            ctx=ctx,
+        )
+        raise HTTPException(status_code=502, detail="Failed to request cancellation from Temporal")
+
+    # If workflow wasn't found, mark job as CANCELLED directly
+    if not cancel_result["workflow_found"]:
+        ctx.logger.info(f"Workflow not found for job {job_id} - marking as CANCELLED directly")
+        await sync_job_service.update_status(
+            sync_job_id=job_id,
+            status=SyncJobStatus.CANCELLED,
+            ctx=ctx,
+            completed_at=utc_now_naive(),
+            error="Workflow not found in Temporal - may have already completed",
+        )
+
+    # Fetch the updated job from database
+    await db.refresh(sync_job)
+
+    ctx.logger.info(f"✅ Admin cancelled sync job {job_id}, new status: {sync_job.status}")
+
+    return schemas.SyncJob.model_validate(sync_job, from_attributes=True)
