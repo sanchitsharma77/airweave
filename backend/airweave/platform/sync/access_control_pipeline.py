@@ -7,8 +7,7 @@ Uses the handler/dispatcher architecture for consistency and future extensibilit
 from typing import TYPE_CHECKING, List
 
 from airweave.platform.access_control.schemas import MembershipTuple
-from airweave.platform.sync.actions.access_control_dispatcher import ACActionDispatcher
-from airweave.platform.sync.actions.access_control_resolver import ACActionResolver
+from airweave.platform.sync.actions.access_control import ACActionDispatcher, ACActionResolver
 from airweave.platform.sync.handlers.access_control_postgres import ACPostgresHandler
 
 if TYPE_CHECKING:
@@ -31,6 +30,7 @@ class AccessControlPipeline:
     def __init__(self):
         """Initialize pipeline with default components."""
         self._resolver = ACActionResolver()
+        # TODO: Move to builder as it gets more complex
         self._dispatcher = ACActionDispatcher(handlers=[ACPostgresHandler()])
 
     async def process(

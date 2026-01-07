@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from airweave import crud, schemas
 from airweave.core.shared_models import ActionType
 from airweave.db.session import get_db_context
-from airweave.platform.sync.actions.entity_types import (
+from airweave.platform.sync.actions.entity import (
     EntityActionBatch,
     EntityDeleteAction,
     EntityInsertAction,

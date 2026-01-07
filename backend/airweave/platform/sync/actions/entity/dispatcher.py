@@ -7,7 +7,7 @@ implementing all-or-nothing semantics where any failure fails the sync.
 import asyncio
 from typing import TYPE_CHECKING, List
 
-from airweave.platform.sync.actions.entity_types import EntityActionBatch
+from airweave.platform.sync.actions.entity.types import EntityActionBatch
 from airweave.platform.sync.exceptions import SyncFailureError
 from airweave.platform.sync.handlers.entity_postgres import EntityPostgresHandler
 from airweave.platform.sync.handlers.protocol import EntityActionHandler

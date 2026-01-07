@@ -6,7 +6,7 @@ for debugging, replay, and audit purposes.
 
 from typing import TYPE_CHECKING, List
 
-from airweave.platform.sync.actions.entity_types import (
+from airweave.platform.sync.actions.entity import (
     EntityActionBatch,
     EntityDeleteAction,
     EntityInsertAction,

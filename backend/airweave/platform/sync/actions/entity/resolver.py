@@ -12,7 +12,7 @@ from airweave import crud, models
 from airweave.core.constants.reserved_ids import RESERVED_TABLE_ENTITY_ID
 from airweave.db.session import get_db_context
 from airweave.platform.entities._base import BaseEntity, DeletionEntity, PolymorphicEntity
-from airweave.platform.sync.actions.entity_types import (
+from airweave.platform.sync.actions.entity.types import (
     EntityActionBatch,
     EntityDeleteAction,
     EntityInsertAction,
@@ -30,10 +30,6 @@ class EntityActionResolver:
 
     Compares entity hashes against stored values in the database to determine
     what operation is needed for each entity.
-
-    Unlike the old ActionDeterminer which returned partitions of entities,
-    this resolver returns proper Action objects that are first-class citizens
-    in the pipeline.
     """
 
     def __init__(self, entity_map: Dict[type, UUID]):
@@ -316,20 +312,20 @@ class EntityActionResolver:
         if db_row is None:
             # New entity - INSERT
             return EntityInsertAction(
-                payload=entity,
+                entity=entity,
                 entity_definition_id=entity_definition_id,
             )
         elif db_row.hash != entity_hash:
             # Hash changed - UPDATE
             return EntityUpdateAction(
-                payload=entity,
+                entity=entity,
                 entity_definition_id=entity_definition_id,
                 db_id=db_row.id,
             )
         else:
             # Hash unchanged - KEEP
             return EntityKeepAction(
-                payload=entity,
+                entity=entity,
                 entity_definition_id=entity_definition_id,
             )
 
@@ -361,7 +357,7 @@ class EntityActionResolver:
         db_row = existing_map.get(db_key)
 
         return EntityDeleteAction(
-            payload=entity,
+            entity=entity,
             entity_definition_id=entity_definition_id,
             db_id=db_row.id if db_row else None,
         )
@@ -395,7 +391,7 @@ class EntityActionResolver:
                         f"Entity type {entity.__class__.__name__} not in entity_map"
                     )
                 inserts.append(
-                    EntityInsertAction(payload=entity, entity_definition_id=entity_definition_id)
+                    EntityInsertAction(entity=entity, entity_definition_id=entity_definition_id)
                 )
 
         return EntityActionBatch(

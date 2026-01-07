@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, List
 
 from airweave import crud
 from airweave.db.session import get_db_context
-from airweave.platform.sync.actions.access_control_types import (
+from airweave.platform.sync.actions.access_control import (
     ACActionBatch,
     ACDeleteAction,
     ACInsertAction,

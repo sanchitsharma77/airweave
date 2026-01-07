@@ -6,7 +6,7 @@ Currently only PostgresHandler, but architecture supports Redis, etc.
 
 from typing import TYPE_CHECKING, List
 
-from airweave.platform.sync.actions.access_control_types import ACActionBatch
+from airweave.platform.sync.actions.access_control.types import ACActionBatch
 from airweave.platform.sync.exceptions import SyncFailureError
 
 if TYPE_CHECKING:
@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 class ACActionDispatcher:
     """Dispatches access control membership actions to handlers.
 
-    Currently single-handler (Postgres), but architecture mirrors
-    EntityActionDispatcher for future multi-handler support (Redis, etc.).
+    Currently single-handler (Postgres), but architecture supports
+    future multi-handler use (Redis cache, etc.).
     """
 
     def __init__(self, handlers: List["ACActionHandler"]):

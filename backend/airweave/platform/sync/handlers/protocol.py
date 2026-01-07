@@ -1,45 +1,36 @@
-"""Generic protocol for action handlers.
+"""Protocols for action handlers.
 
-Single protocol using generics that both entity and AC handlers implement.
-The protocol is parameterized by:
-- T: The payload type (BaseEntity or MembershipTuple)
-- B: The batch type (EntityActionBatch or ACActionBatch)
-
-Type Aliases:
-    EntityActionHandler = ActionHandler[BaseEntity, EntityActionBatch]
-    ACActionHandler = ActionHandler[MembershipTuple, ACActionBatch]
+Separate protocols for Entity and AC handlers since their behavior differs.
 """
 
-from typing import TYPE_CHECKING, Any, Generic, List, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, List, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from airweave.platform.contexts import SyncContext
-    from airweave.platform.sync.actions.types import (
-        DeleteAction,
-        InsertAction,
-        UpdateAction,
-        UpsertAction,
+    from airweave.platform.sync.actions.access_control import (
+        ACActionBatch,
+        ACDeleteAction,
+        ACInsertAction,
+        ACUpdateAction,
+        ACUpsertAction,
     )
-
-# Generic type variables
-T = TypeVar("T")  # Payload type (BaseEntity or MembershipTuple)
-B = TypeVar("B")  # Batch type (EntityActionBatch or ACActionBatch)
+    from airweave.platform.sync.actions.entity import (
+        EntityActionBatch,
+        EntityDeleteAction,
+        EntityInsertAction,
+        EntityUpdateAction,
+    )
 
 
 @runtime_checkable
-class ActionHandler(Protocol, Generic[T, B]):
-    """Generic protocol for action handlers.
+class EntityActionHandler(Protocol):
+    """Protocol for entity action handlers.
 
-    Handlers receive resolved actions and persist them to their destination.
-    Parameterized by payload type T and batch type B.
+    Handlers receive resolved entity actions and persist them to their destination.
 
     Contract:
     - Handlers MUST be idempotent (safe to retry on failure)
     - Handlers MUST raise SyncFailureError for non-recoverable errors
-
-    Type Parameters:
-        T: Payload type (e.g., BaseEntity, MembershipTuple)
-        B: Batch type (e.g., EntityActionBatch, ACActionBatch)
     """
 
     @property
@@ -49,17 +40,14 @@ class ActionHandler(Protocol, Generic[T, B]):
 
     async def handle_batch(
         self,
-        batch: B,
+        batch: "EntityActionBatch",
         sync_context: "SyncContext",
-    ) -> Any:
+    ) -> None:
         """Handle a full action batch (main entry point).
 
         Args:
-            batch: Action batch of type B
+            batch: Entity action batch
             sync_context: Sync context
-
-        Returns:
-            Handler-specific return (None for entity, int for AC)
 
         Raises:
             SyncFailureError: If any operation fails
@@ -68,78 +56,26 @@ class ActionHandler(Protocol, Generic[T, B]):
 
     async def handle_inserts(
         self,
-        actions: List["InsertAction[T]"],
+        actions: List["EntityInsertAction"],
         sync_context: "SyncContext",
     ) -> Any:
-        """Handle insert actions.
-
-        Args:
-            actions: List of InsertAction[T] objects
-            sync_context: Sync context
-
-        Returns:
-            Handler-specific return
-
-        Raises:
-            SyncFailureError: If inserts fail
-        """
+        """Handle insert actions."""
         ...
 
     async def handle_updates(
         self,
-        actions: List["UpdateAction[T]"],
+        actions: List["EntityUpdateAction"],
         sync_context: "SyncContext",
     ) -> Any:
-        """Handle update actions.
-
-        Args:
-            actions: List of UpdateAction[T] objects
-            sync_context: Sync context
-
-        Returns:
-            Handler-specific return
-
-        Raises:
-            SyncFailureError: If updates fail
-        """
+        """Handle update actions."""
         ...
 
     async def handle_deletes(
         self,
-        actions: List["DeleteAction[T]"],
+        actions: List["EntityDeleteAction"],
         sync_context: "SyncContext",
     ) -> Any:
-        """Handle delete actions.
-
-        Args:
-            actions: List of DeleteAction[T] objects
-            sync_context: Sync context
-
-        Returns:
-            Handler-specific return
-
-        Raises:
-            SyncFailureError: If deletes fail
-        """
-        ...
-
-    async def handle_upserts(
-        self,
-        actions: List["UpsertAction[T]"],
-        sync_context: "SyncContext",
-    ) -> Any:
-        """Handle upsert actions.
-
-        Args:
-            actions: List of UpsertAction[T] objects
-            sync_context: Sync context
-
-        Returns:
-            Handler-specific return
-
-        Raises:
-            SyncFailureError: If upserts fail
-        """
+        """Handle delete actions."""
         ...
 
     async def handle_orphan_cleanup(
@@ -147,30 +83,73 @@ class ActionHandler(Protocol, Generic[T, B]):
         orphan_ids: List[str],
         sync_context: "SyncContext",
     ) -> Any:
-        """Handle orphaned item cleanup at sync end.
-
-        Args:
-            orphan_ids: List of IDs that are orphaned
-            sync_context: Sync context
-
-        Returns:
-            Handler-specific return
-
-        Raises:
-            SyncFailureError: If cleanup fails
-        """
+        """Handle orphaned entity cleanup at sync end."""
         ...
 
 
-# =============================================================================
-# Type Aliases for Convenience
-# =============================================================================
+@runtime_checkable
+class ACActionHandler(Protocol):
+    """Protocol for access control membership handlers.
 
-# These are runtime type hints - they help with documentation and IDE support
-# but Python's type system doesn't fully enforce generic protocol bounds
+    Handlers receive resolved membership actions and persist them.
 
-EntityActionHandler = ActionHandler["BaseEntity", "EntityActionBatch"]
-"""Handler for entity sync - ActionHandler[BaseEntity, EntityActionBatch]"""
+    Contract:
+    - Handlers MUST be idempotent (safe to retry on failure)
+    - Handlers MUST raise SyncFailureError for non-recoverable errors
+    """
 
-ACActionHandler = ActionHandler["MembershipTuple", "ACActionBatch"]
-"""Handler for access control sync - ActionHandler[MembershipTuple, ACActionBatch]"""
+    @property
+    def name(self) -> str:
+        """Handler name for logging and debugging."""
+        ...
+
+    async def handle_batch(
+        self,
+        batch: "ACActionBatch",
+        sync_context: "SyncContext",
+    ) -> int:
+        """Handle a full action batch (main entry point).
+
+        Args:
+            batch: AC action batch
+            sync_context: Sync context
+
+        Returns:
+            Number of memberships processed
+
+        Raises:
+            SyncFailureError: If any operation fails
+        """
+        ...
+
+    async def handle_inserts(
+        self,
+        actions: List["ACInsertAction"],
+        sync_context: "SyncContext",
+    ) -> int:
+        """Handle insert actions."""
+        ...
+
+    async def handle_updates(
+        self,
+        actions: List["ACUpdateAction"],
+        sync_context: "SyncContext",
+    ) -> int:
+        """Handle update actions."""
+        ...
+
+    async def handle_deletes(
+        self,
+        actions: List["ACDeleteAction"],
+        sync_context: "SyncContext",
+    ) -> int:
+        """Handle delete actions."""
+        ...
+
+    async def handle_upserts(
+        self,
+        actions: List["ACUpsertAction"],
+        sync_context: "SyncContext",
+    ) -> int:
+        """Handle upsert actions."""
+        ...

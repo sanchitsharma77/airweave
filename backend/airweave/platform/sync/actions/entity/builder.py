@@ -1,10 +1,10 @@
-"""Dispatcher builder for action dispatch."""
+"""Builder for entity action dispatcher."""
 
 from typing import List, Optional
 
 from airweave.core.logging import ContextualLogger
 from airweave.platform.contexts.destinations import DestinationsContext
-from airweave.platform.sync.actions.entity_dispatcher import EntityActionDispatcher
+from airweave.platform.sync.actions.entity.dispatcher import EntityActionDispatcher
 from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.handlers.arf import ArfHandler
 from airweave.platform.sync.handlers.destination import DestinationHandler
@@ -12,8 +12,8 @@ from airweave.platform.sync.handlers.entity_postgres import EntityPostgresHandle
 from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 
-class DispatcherBuilder:
-    """Builds action dispatcher with configured handlers."""
+class EntityDispatcherBuilder:
+    """Builds entity action dispatcher with configured handlers."""
 
     @classmethod
     def build(

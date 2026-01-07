@@ -1,13 +1,13 @@
 """Action resolver for access control memberships.
 
 Currently simple: all memberships become ACUpsertAction.
-Future: May compare hashes to determine INSERT/UPDATE/KEEP.
+Future: May compare hashes to determine INSERT/UPDATE/KEEP/DELETE.
 """
 
 from typing import TYPE_CHECKING, List
 
 from airweave.platform.access_control.schemas import MembershipTuple
-from airweave.platform.sync.actions.access_control_types import (
+from airweave.platform.sync.actions.access_control.types import (
     ACActionBatch,
     ACUpsertAction,
 )
