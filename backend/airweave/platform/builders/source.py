@@ -63,6 +63,15 @@ class SourceContextBuilder:
         ctx = infra.ctx
         logger = infra.logger
 
+        # Check for ARF replay mode - override source with ArfReplaySource
+        if execution_config and execution_config.replay_from_arf:
+            return await cls._build_arf_replay_context(
+                db=db,
+                sync=sync,
+                infra=infra,
+                execution_config=execution_config,
+            )
+
         # 1. Load source connection data
         source_connection_data = await cls._get_source_connection_data(db, sync, ctx)
 
@@ -89,6 +98,62 @@ class SourceContextBuilder:
 
         # 4. Set cursor on source
         source.set_cursor(cursor)
+
+        return SourceContext(source=source, cursor=cursor)
+
+    @classmethod
+    async def _build_arf_replay_context(
+        cls,
+        db: AsyncSession,
+        sync: schemas.Sync,
+        infra: InfraContext,
+        execution_config: SyncExecutionConfig,
+    ) -> SourceContext:
+        """Build source context for ARF replay mode.
+
+        Creates an ArfReplaySource instead of the normal source,
+        reading entities from ARF storage.
+
+        Args:
+            db: Database session
+            sync: Sync configuration
+            infra: Infrastructure context
+            execution_config: Execution config (must have replay_from_arf=True)
+
+        Returns:
+            SourceContext with ArfReplaySource
+        """
+        from airweave.platform.storage.replay_source import ArfReplaySource
+
+        logger = infra.logger
+        logger.info(f"🔄 ARF Replay mode: Creating ArfReplaySource for sync {sync.id}")
+
+        # Create the ARF replay source
+        source = await ArfReplaySource.create(
+            sync_id=sync.id,
+            logger=logger,
+            restore_files=True,
+        )
+
+        # Set logger on source
+        if hasattr(source, "set_logger"):
+            source.set_logger(logger)
+
+        # Validate ARF data exists
+        if not await source.validate():
+            from airweave.core.exceptions import NotFoundException
+
+            raise NotFoundException(
+                f"ARF data not found for sync {sync.id}. "
+                f"Cannot replay - ensure ARF capture was enabled for previous syncs."
+            )
+
+        # No cursor for ARF replay (we're replaying all entities)
+        cursor = SyncCursor(
+            sync_id=sync.id,
+            cursor_schema=None,
+            cursor_data=None,
+        )
 
         return SourceContext(source=source, cursor=cursor)
 
@@ -376,7 +441,7 @@ class SourceContextBuilder:
         cls, source: BaseSource, sync_job: Optional[Any], logger: ContextualLogger
     ) -> None:
         """Setup file downloader for file-based sources."""
-        from airweave.platform.downloader import FileDownloadService
+        from airweave.platform.storage import FileService
 
         # Require sync_job - we're always in sync context when this is called
         if not sync_job or not hasattr(sync_job, "id"):
@@ -386,7 +451,7 @@ class SourceContextBuilder:
                 "where sync_job exists."
             )
 
-        file_downloader = FileDownloadService(sync_job_id=str(sync_job.id))
+        file_downloader = FileService(sync_job_id=sync_job.id)
         source.set_file_downloader(file_downloader)
         logger.debug(
             f"File downloader configured for {source.__class__.__name__} "
