@@ -85,19 +85,19 @@ class SyncExecutionConfig(BaseModel):
 
     @classmethod
     def replay_from_arf_to_vector_dbs(cls) -> "SyncExecutionConfig":
-        """Replay entities from ARF to all vector DBs.
+        """Replay entities from ARF to all vector DBs only.
 
         Reads entities from ARF storage instead of calling the source.
         Disables ARF handler to avoid re-capturing data we're reading from.
-        Enables postgres handler to write entity metadata and hashes.
-        Skips hash comparison to force all entities through (INSERT action).
+        Disables postgres handler - only writes to vector DBs, no metadata changes.
+        Skips hash comparison since we're bypassing postgres entirely.
         Skips cursor since we're replaying all entities.
         """
         return cls(
             replay_from_arf=True,
             enable_vector_handlers=True,
             enable_raw_data_handler=False,
-            enable_postgres_handler=True,
+            enable_postgres_handler=False,
             skip_hash_comparison=True,
             skip_cursor_load=True,
             skip_cursor_updates=True,
