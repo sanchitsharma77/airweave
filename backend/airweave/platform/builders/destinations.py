@@ -17,7 +17,6 @@ from airweave import crud, schemas
 from airweave.core import credentials
 from airweave.core.constants.reserved_ids import (
     NATIVE_QDRANT_UUID,
-    NATIVE_VESPA_UUID,
     RESERVED_TABLE_ENTITY_ID,
 )
 from airweave.core.logging import ContextualLogger
@@ -128,7 +127,6 @@ class DestinationsContextBuilder:
         # TODO: Add other flexible destination building here for future Vespa deployments
         native_creators = {
             NATIVE_QDRANT_UUID: cls._create_native_qdrant,
-            NATIVE_VESPA_UUID: cls._create_native_vespa,
         }
 
         destinations = []
@@ -210,10 +208,6 @@ class DestinationsContextBuilder:
         if destination_connection_id == NATIVE_QDRANT_UUID:
             return await cls._create_native_qdrant(db, collection, logger)
 
-        # Special case: Native Vespa
-        if destination_connection_id == NATIVE_VESPA_UUID:
-            return await cls._create_native_vespa(db, collection, logger)
-
         # Regular case: Load from database
         return await cls._create_custom_destination(
             db=db,
@@ -255,35 +249,6 @@ class DestinationsContextBuilder:
         )
 
         logger.info("Created native Qdrant destination")
-        return destination
-
-    @classmethod
-    async def _create_native_vespa(
-        cls,
-        db: AsyncSession,
-        collection: schemas.Collection,
-        logger: ContextualLogger,
-    ) -> Optional[BaseDestination]:
-        """Create native Vespa destination."""
-        logger.info("Using native Vespa destination (settings-based)")
-        destination_model = await crud.destination.get_by_short_name(db, "vespa")
-        if not destination_model:
-            logger.warning("Vespa destination model not found")
-            return None
-
-        destination_schema = schemas.Destination.model_validate(destination_model)
-        destination_class = resource_locator.get_destination(destination_schema)
-
-        destination = await destination_class.create(
-            credentials=None,
-            config=None,
-            collection_id=collection.id,
-            organization_id=collection.organization_id,
-            vector_size=None,  # Vespa handles embeddings internally
-            logger=logger,
-        )
-
-        logger.info("Created native Vespa destination")
         return destination
 
     @classmethod
