@@ -7,6 +7,7 @@ This module provides unified storage abstractions including:
 """
 
 from airweave.core.config import settings
+from airweave.platform.storage.arf_reader import ArfReader
 from airweave.platform.storage.backend import (
     AzureBlobBackend,
     FilesystemBackend,
@@ -22,6 +23,7 @@ from airweave.platform.storage.exceptions import (
 )
 from airweave.platform.storage.file_service import FileDownloadService, FileService
 from airweave.platform.storage.paths import StoragePaths, paths
+from airweave.platform.storage.replay_source import ArfReplaySource
 from airweave.platform.storage.sync_file_manager import (
     SyncFileManager,
     sync_file_manager,
@@ -36,6 +38,9 @@ __all__ = [
     # File service
     "FileService",
     "FileDownloadService",  # Backwards compatibility
+    # ARF
+    "ArfReader",
+    "ArfReplaySource",
     # Paths
     "StoragePaths",
     "paths",
