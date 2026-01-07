@@ -1010,11 +1010,10 @@ class AdminSyncInfo(schemas.Sync):
     source_short_name: Optional[str] = None
     readable_collection_id: Optional[str] = None
 
-    # Vespa migration tracking
+    # Last job that wrote to Vespa (skip_vespa != true)
     last_vespa_job_id: Optional[UUID] = None
     last_vespa_job_status: Optional[str] = None
     last_vespa_job_at: Optional[datetime] = None
-    last_vespa_job_config: Optional[dict] = None  # The execution_config used
 
     class Config:
         """Pydantic config."""
@@ -1375,10 +1374,13 @@ async def admin_list_all_syncs(
         elif connection.integration_type.value == "destination":
             sync_connections[sync_id]["destinations"].append(connection.id)
 
-    # Fetch last Vespa-targeting job info in bulk
-    # A Vespa job has execution_config_json with skip_qdrant=true (Vespa-only)
-    # or replay_from_arf=true with skip_qdrant=true (ARF replay to Vespa)
-    vespa_job_query = (
+    # Fetch last ARF -> Vespa replay job info in bulk
+    # An ARF -> Vespa replay job has:
+    #   - replay_from_arf=true (read from ARF storage)
+    #   - skip_vespa is NOT true (writes to Vespa)
+    from sqlalchemy import or_
+
+    arf_to_vespa_job_query = (
         sa_select(
             SyncJob.id,
             SyncJob.sync_id,
@@ -1389,12 +1391,17 @@ async def admin_list_all_syncs(
         .where(
             SyncJob.sync_id.in_(sync_ids),
             SyncJob.execution_config_json.isnot(None),
-            # Filter for Vespa-targeting configs (skip_qdrant=true means Vespa-only)
-            SyncJob.execution_config_json["skip_qdrant"].astext == "true",
+            # Must be replay from ARF
+            SyncJob.execution_config_json["replay_from_arf"].astext == "true",
+            # Must NOT skip Vespa (skip_vespa is absent or false)
+            or_(
+                SyncJob.execution_config_json["skip_vespa"].astext != "true",
+                SyncJob.execution_config_json["skip_vespa"].is_(None),
+            ),
         )
         .order_by(SyncJob.sync_id, SyncJob.created_at.desc())
     )
-    vespa_job_result = await db.execute(vespa_job_query)
+    vespa_job_result = await db.execute(arf_to_vespa_job_query)
     vespa_job_rows = list(vespa_job_result)
 
     # Build map of sync_id -> most recent Vespa job (first per sync_id due to ordering)
