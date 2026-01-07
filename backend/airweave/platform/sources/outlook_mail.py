@@ -1240,7 +1240,7 @@ class OutlookMailSource(BaseSource):
                         self.logger.debug(
                             (
                                 f"Yielding delta entity #{entity_count}: {entity_type} "
-                                f"with ID {entity.id}"
+                                f"with ID {entity.entity_id}"
                             )
                         )
                         yield entity
@@ -1256,7 +1256,7 @@ class OutlookMailSource(BaseSource):
                         self.logger.debug(
                             (
                                 f"Yielding full sync entity #{entity_count}: {entity_type} "
-                                f"with ID {entity.id}"
+                                f"with ID {entity.entity_id}"
                             )
                         )
                         yield entity
