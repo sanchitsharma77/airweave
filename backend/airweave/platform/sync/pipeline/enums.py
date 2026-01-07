@@ -12,5 +12,6 @@ class ProcessingRequirement(Enum):
     """
 
     CHUNKS_AND_EMBEDDINGS = "chunks_and_embeddings"
+    VESPA_CHUNKS_AND_EMBEDDINGS = "vespa_chunks_and_embeddings"
     TEXT_ONLY = "text_only"
     RAW = "raw"

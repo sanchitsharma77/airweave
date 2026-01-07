@@ -70,6 +70,21 @@ class Retrieval(SearchOperation):
         is_bulk = dense_embeddings and len(dense_embeddings) > 1
         num_embeddings = len(dense_embeddings) if dense_embeddings else 0
 
+        # DEBUG: Log inputs
+        expanded_queries = state.get("expanded_queries", [])
+        ctx.logger.debug(
+            f"\n[Retrieval] INPUT:\n"
+            f"  Original query: '{context.query[:100]}...'\n"
+            f"  Expanded queries: {expanded_queries}\n"
+            f"  Dense embeddings: {num_embeddings} x "
+            f"{len(dense_embeddings[0]) if dense_embeddings else 0}-dim\n"
+            f"  Sparse embeddings: {'yes' if sparse_embeddings else 'no'}\n"
+            f"  Filter: {filter_obj}\n"
+            f"  Temporal config: {temporal_config}\n"
+            f"  Strategy: {retrieval_strategy}\n"
+            f"  Destination: {self.destination.__class__.__name__}\n"
+        )
+
         # Emit vector search start
         await context.emitter.emit(
             "vector_search_start",
@@ -124,8 +139,27 @@ class Retrieval(SearchOperation):
             final_results = paginated_results
 
         # Write to state
-        ctx.logger.debug(f"[Retrieval] results: {final_count}")
         state["results"] = final_results
+
+        # DEBUG: Log output with sample results
+        sample_results = []
+        for r in final_results[:3]:
+            payload = r.get("payload", {})
+            sample_results.append(
+                {
+                    "name": payload.get("name", "N/A")[:50],
+                    "entity_type": payload.get("airweave_system_metadata_entity_type", "N/A"),
+                    "score": r.get("score", 0),
+                }
+            )
+        ctx.logger.debug(
+            f"\n[Retrieval] OUTPUT:\n"
+            f"  Raw results from destination: {len(raw_results)}\n"
+            f"  After dedup (if bulk): {len(results_as_dicts)}\n"
+            f"  After pagination: {final_count}\n"
+            f"  Passed to next stage: {len(final_results)} (reranking={has_reranking})\n"
+            f"  Top 3 results: {sample_results}\n"
+        )
 
         # Report metrics for analytics
         self._report_metrics(

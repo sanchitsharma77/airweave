@@ -13,8 +13,8 @@ from airweave import schemas
 from airweave.api.context import ApiContext
 from airweave.core.config import settings
 from airweave.core.logging import logger
-from airweave.platform.builders import DispatcherBuilder, SyncContextBuilder
-from airweave.platform.sync.actions import ActionResolver
+from airweave.platform.builders import SyncContextBuilder
+from airweave.platform.sync.actions import EntityActionResolver, EntityDispatcherBuilder
 from airweave.platform.sync.config import SyncExecutionConfig
 from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.orchestrator import SyncOrchestrator
@@ -90,14 +90,14 @@ class SyncFactory:
         # Step 2: Build dispatcher using DispatcherBuilder
         logger.debug("Initializing pipeline components...")
 
-        dispatcher = DispatcherBuilder.build(
+        dispatcher = EntityDispatcherBuilder.build(
             destinations=sync_context.destinations,
             execution_config=execution_config,
             logger=sync_context.logger,
         )
 
         # Step 3: Build pipeline
-        action_resolver = ActionResolver(entity_map=sync_context.entity_map)
+        action_resolver = EntityActionResolver(entity_map=sync_context.entity_map)
 
         entity_pipeline = EntityPipeline(
             entity_tracker=sync_context.entity_tracker,

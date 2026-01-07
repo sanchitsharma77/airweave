@@ -45,7 +45,11 @@ class UserFilter(SearchOperation):
         self.filter = filter
 
     def depends_on(self) -> List[str]:
-        """Depends on query interpretation (reads state["filter"] if it ran)."""
+        """Depends on query interpretation.
+
+        Reads from state:
+        - state["filter"] from QueryInterpretation (if ran)
+        """
         return ["QueryInterpretation"]
 
     async def execute(

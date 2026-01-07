@@ -5,19 +5,22 @@ destinations via get_content_processor(). This inverts the dependency -
 destinations declare what they need rather than handlers guessing.
 
 Available Processors:
-- ChunkEmbedProcessor: Full pipeline (text → chunks → embeddings) for Qdrant/Pinecone
-- TextOnlyProcessor: Text extraction only, destination embeds (Vespa)
+- QdrantChunkEmbedProcessor: Full pipeline (text → chunks → embeddings) for Qdrant/Pinecone
+- VespaChunkEmbedProcessor: Chunks + embeddings as arrays for Vespa (entity-as-document)
+- TextOnlyProcessor: Text extraction only (legacy)
 - RawProcessor: No processing, raw entities (S3)
 """
 
-from .chunk_embed import ChunkEmbedProcessor
 from .protocol import ContentProcessor
+from .qdrant_chunk_embed import QdrantChunkEmbedProcessor
 from .raw import RawProcessor
 from .text_only import TextOnlyProcessor
+from .vespa_chunk_embed import VespaChunkEmbedProcessor
 
 __all__ = [
     "ContentProcessor",
-    "ChunkEmbedProcessor",
+    "QdrantChunkEmbedProcessor",
+    "VespaChunkEmbedProcessor",
     "TextOnlyProcessor",
     "RawProcessor",
 ]

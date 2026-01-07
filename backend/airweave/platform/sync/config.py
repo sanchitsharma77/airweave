@@ -23,7 +23,7 @@ class SyncExecutionConfig(BaseModel):
     # Handler toggles
     enable_vector_handlers: bool = Field(True, description="Enable VectorDBHandler")
     enable_raw_data_handler: bool = Field(True, description="Enable RawDataHandler (ARF)")
-    enable_postgres_handler: bool = Field(True, description="Enable PostgresMetadataHandler")
+    enable_postgres_handler: bool = Field(True, description="Enable EntityPostgresHandler")
 
     # Behavior flags
     skip_hash_comparison: bool = Field(False, description="Force INSERT for all entities")

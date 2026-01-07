@@ -5,7 +5,7 @@
 #
 # PHASED RANKING (recommended by Vespa docs):
 # - first-phase: cheap, runs on ALL matched candidates
-#   - Re-use ANN match score (closeness) + BM25 over chunks/payload
+#   - Reuse ANN match score (closeness) + BM25 over chunks/payload
 # - second-phase: expensive, runs on top rerank-count candidates
 #   - Per-chunk cosine similarity with large embeddings
 #   - Per-chunk BM25 aggregations (max, avg top-3)
@@ -92,6 +92,25 @@ schema base_entity {
             indexing: attribute | summary
         }
 
+        # =============================================================================
+        # Access Control Fields
+        # =============================================================================
+        # Only populated for sources with supports_access_control=True
+        # For sources without AC, these fields will be absent and no filter is applied
+
+        # Whether the entity is publicly accessible (visible to everyone)
+        field access_is_public type bool {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
+        # List of principal IDs (users/groups) that can view this entity
+        # Format: "user:email@example.com" or "group:sp:123" or "group:ad:DOMAIN\\Group"
+        field access_viewers type array<string> {
+            indexing: attribute | summary
+            attribute: fast-search
+        }
+
         # Textual representation - this is what Vespa chunks and embeds
         # Also stored in summary for downstream operations (reranking, answer generation)
         field textual_representation type string {
@@ -104,24 +123,21 @@ schema base_entity {
             indexing: index | summary
             index: enable-bm25
         }
-    }
-
-    struct breadcrumb {
-        field entity_id   type string {}
-        field name        type string {}
-        field entity_type type string {}
-    }
 
     # Chunked text, keyword indexed for BM25
+        # Pre-computed externally by VespaChunkEmbedProcessor
+        # MUST be inside document block to be feedable
     field chunks type array<string> {
-        indexing: input textual_representation | chunk fixed-length 1024 | summary | index
+            indexing: summary | index
         index: enable-bm25
     }
 
     # Binary packed embeddings for fast ANN retrieval (small and fast)
     # Uses hamming distance on packed int8 - 32x faster than float cosine
+        # Pre-computed externally by VespaChunkEmbedProcessor (768-dim → binary → 96 int8)
+        # MUST be inside document block to be feedable
     field chunk_small_embeddings type tensor<int8>(chunk{}, x[96]) {
-        indexing: input textual_representation | chunk fixed-length 1024 | embed | pack_bits | attribute | index
+            indexing: attribute | index
         attribute {
             distance-metric: hamming
         }
@@ -135,11 +151,20 @@ schema base_entity {
 
     # High-precision embeddings for ranking (not indexed for ANN - too expensive)
     # Uses angular distance which maps to cosine similarity
+        # Pre-computed externally by VespaChunkEmbedProcessor (768-dim float)
+        # MUST be inside document block to be feedable
     field chunk_large_embeddings type tensor<bfloat16>(chunk{}, x[768]) {
-        indexing: input textual_representation | chunk fixed-length 1024 | embed | attribute
+            indexing: attribute
         attribute {
             distance-metric: angular
         }
+        }
+    }
+
+    struct breadcrumb {
+        field entity_id   type string {}
+        field name        type string {}
+        field entity_type type string {}
     }
 
     # Default fieldset used by userInput() / unspecified text search
@@ -162,6 +187,8 @@ schema base_entity {
         summary airweave_system_metadata_hash {}
         summary airweave_system_metadata_original_entity_id {}
         summary airweave_system_metadata_source_name {}
+        summary access_is_public {}
+        summary access_viewers {}
         summary textual_representation {}
         summary payload {}
     }
@@ -273,7 +300,7 @@ schema base_entity {
 
         # -----------------------------------------------------------------------
         # FIRST PHASE: Cheap, runs on all matched candidates
-        # Re-uses ANN match score + BM25 (both already computed during matching)
+        # Reuses ANN match score + BM25 (both already computed during matching)
         # No arbitrary coefficients - just addition since RRF handles normalization
         # -----------------------------------------------------------------------
         first-phase {

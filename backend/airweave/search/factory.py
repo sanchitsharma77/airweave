@@ -152,6 +152,8 @@ class SearchFactory:
             vector_size,
             destination=destination,
             requires_client_embedding=requires_embedding,
+            db=db,
+            ctx=ctx,
         )
 
         search_context = SearchContext(
@@ -294,6 +296,8 @@ class SearchFactory:
         vector_size: Optional[int] = None,
         destination: Optional[BaseDestination] = None,
         requires_client_embedding: bool = True,
+        db: Optional[AsyncSession] = None,
+        ctx: Optional[ApiContext] = None,
     ) -> Dict[str, Any]:
         """Build operation instances for the search context.
 
@@ -312,6 +316,8 @@ class SearchFactory:
             vector_size: Vector dimensions for this collection (used by EmbedQuery)
             destination: The destination instance for search (Qdrant, Vespa, etc.)
             requires_client_embedding: Whether destination needs client-side embeddings
+            db: Database session for access control queries
+            ctx: API context with user and organization info
         """
         # Operations that need client-side embeddings (Qdrant-specific for now)
         # TODO: Make these destination-agnostic when filter DSL is abstracted

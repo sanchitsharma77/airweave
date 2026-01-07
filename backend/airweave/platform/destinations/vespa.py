@@ -1,7 +1,9 @@
 """Vespa destination implementation.
 
-Vespa handles chunking and embedding internally via schema definition,
-so this destination only transforms entities and feeds them to Vespa.
+Vespa stores entities with pre-computed chunks and embeddings as arrays.
+The VespaChunkEmbedProcessor handles chunking and embedding externally,
+storing results in entity.vespa_content which this destination transforms
+to Vespa's tensor format.
 
 IMPORTANT: pyvespa methods are synchronous and would block the event loop.
 All pyvespa calls are wrapped in asyncio.to_thread() to maintain concurrency.
@@ -11,9 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from urllib.parse import quote
 from uuid import UUID
+
+import httpx
 
 from airweave.core.config import settings
 from airweave.core.logging import ContextualLogger
@@ -92,16 +98,21 @@ def _get_schema_fields_for_entity(entity: BaseEntity) -> set[str]:
     "Vespa",
     "vespa",
     supports_vector=True,
-    requires_client_embedding=False,
+    requires_client_embedding=True,  # We now embed externally
     supports_temporal_relevance=False,
 )
 class VespaDestination(VectorDBDestination):
-    """Vespa destination - Vespa handles chunking/embedding internally."""
+    """Vespa destination with external chunking and embedding.
 
-    # Vespa embeds server-side, only needs text extraction
+    Uses VespaChunkEmbedProcessor to chunk text and compute embeddings externally,
+    storing them in entity.vespa_content as arrays. This destination transforms
+    those arrays to Vespa's tensor format for efficient storage and retrieval.
+    """
+
+    # Use VespaChunkEmbedProcessor for external chunking/embedding
     from airweave.platform.sync.pipeline import ProcessingRequirement
 
-    processing_requirement = ProcessingRequirement.TEXT_ONLY
+    processing_requirement = ProcessingRequirement.VESPA_CHUNKS_AND_EMBEDDINGS
 
     def __init__(self):
         """Initialize the Vespa destination."""
@@ -190,6 +201,7 @@ class VespaDestination(VectorDBDestination):
         fields = self._build_base_fields(entity)
         self._add_system_metadata_fields(fields, entity, entity_type)
         self._add_type_specific_fields(fields, entity)
+        self._add_vespa_content_fields(fields, entity)  # Add chunks and embeddings
         self._add_payload_field(fields, entity)
 
         # Remove None values from top-level fields
@@ -281,6 +293,65 @@ class VespaDestination(VectorDBDestination):
             if entity.local_path:
                 fields["local_path"] = entity.local_path
 
+    def _add_vespa_content_fields(self, fields: dict[str, Any], entity: BaseEntity) -> None:
+        """Add pre-computed chunks and embeddings from VespaContent.
+
+        VespaChunkEmbedProcessor populates entity.vespa_content with:
+        - chunks: List[str] - chunked text segments
+        - chunk_small_embeddings: List[List[int]] - binary-packed for ANN (96 int8)
+        - chunk_large_embeddings: List[List[float]] - full precision for ranking (768 dim)
+
+        This method transforms those to Vespa's tensor format.
+
+        Args:
+            fields: Fields dict to update
+            entity: The entity to extract vespa_content from
+        """
+        vc = entity.vespa_content
+        if vc is None:
+            return
+
+        # Chunks array - direct assignment
+        if vc.chunks:
+            fields["chunks"] = vc.chunks
+
+        # Small embeddings - transform to Vespa tensor format (int8)
+        if vc.chunk_small_embeddings:
+            fields["chunk_small_embeddings"] = self._to_vespa_tensor(
+                vc.chunk_small_embeddings, indexed_dim=96
+            )
+
+        # Large embeddings - transform to Vespa tensor format (bfloat16)
+        if vc.chunk_large_embeddings:
+            fields["chunk_large_embeddings"] = self._to_vespa_tensor(
+                vc.chunk_large_embeddings, indexed_dim=768
+            )
+
+    def _to_vespa_tensor(self, embeddings: List[List[Union[int, float]]], indexed_dim: int) -> dict:
+        """Convert Python list of embeddings to Vespa tensor format.
+
+        Vespa expects tensors with mixed dimensions (mapped + indexed) in cell format:
+        {"cells": [{"address": {"chunk": "0", "x": "0"}, "value": v}, ...]}
+
+        For tensor<int8>(chunk{}, x[96]) or tensor<bfloat16>(chunk{}, x[768]):
+        - chunk{} is a mapped dimension (sparse, labeled)
+        - x[N] is an indexed dimension (dense, positional)
+
+        Args:
+            embeddings: List of embedding vectors (one per chunk)
+            indexed_dim: Expected dimension of each embedding
+
+        Returns:
+            Vespa tensor dict with cells format
+        """
+        cells = []
+        for chunk_idx, embedding in enumerate(embeddings):
+            for x_idx, value in enumerate(embedding):
+                cells.append(
+                    {"address": {"chunk": str(chunk_idx), "x": str(x_idx)}, "value": value}
+                )
+        return {"cells": cells}
+
     def _add_payload_field(self, fields: dict[str, Any], entity: BaseEntity) -> None:
         """Extract extra fields into payload JSON."""
         schema_fields = _get_schema_fields_for_entity(entity)
@@ -308,7 +379,7 @@ class VespaDestination(VectorDBDestination):
         """
         self.logger.debug("Vespa schema is managed via vespa-deploy, skipping setup_collection")
 
-    async def bulk_insert(self, entities: list[BaseEntity]) -> None:
+    async def bulk_insert(self, entities: list[BaseEntity]) -> None:  # noqa: C901
         """Transform entities and batch feed to Vespa using feed_iterable.
 
         Uses pyvespa's feed_iterable for efficient concurrent feeding via HTTP/2
@@ -328,11 +399,26 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized. Call create() first.")
 
-        self.logger.info(f"Feeding {len(entities)} entities to Vespa (batch)")
+        total_start = time.perf_counter()
+        self.logger.info(f"[VespaDestination] Starting bulk_insert for {len(entities)} entities")
 
         # Transform all entities to Vespa format, grouped by schema
+        transform_start = time.perf_counter()
         docs_by_schema = self._transform_entities_by_schema(entities)
         total_docs = sum(len(docs) for docs in docs_by_schema.values())
+        transform_ms = (time.perf_counter() - transform_start) * 1000
+
+        # Count total chunks being fed
+        total_chunks = 0
+        for entity in entities:
+            if entity.vespa_content and entity.vespa_content.chunks:
+                total_chunks += len(entity.vespa_content.chunks)
+
+        self.logger.info(
+            f"[VespaDestination] Transform: {transform_ms:.1f}ms for {len(entities)} entities "
+            f"→ {total_docs} docs with {total_chunks} total chunks"
+        )
+
         if total_docs == 0:
             self.logger.warning("No documents to feed after transformation")
             return
@@ -361,11 +447,26 @@ class VespaDestination(VectorDBDestination):
             )
 
         # Feed each schema's documents
+        feed_start = time.perf_counter()
         for schema, docs in docs_by_schema.items():
-            self.logger.debug(f"Feeding {len(docs)} documents to schema '{schema}'")
+            schema_start = time.perf_counter()
+            self.logger.debug(
+                f"[VespaDestination] Feeding {len(docs)} documents to schema '{schema}'"
+            )
             await asyncio.to_thread(_feed_schema_sync, schema, docs)
+            schema_ms = (time.perf_counter() - schema_start) * 1000
+            self.logger.info(
+                f"[VespaDestination] Fed schema '{schema}': {len(docs)} docs in {schema_ms:.1f}ms "
+                f"({schema_ms / len(docs):.1f}ms/doc)"
+            )
+        feed_ms = (time.perf_counter() - feed_start) * 1000
 
-        self.logger.info(f"Vespa feed complete: {success_count} success, {len(failed_docs)} failed")
+        total_ms = (time.perf_counter() - total_start) * 1000
+        self.logger.info(
+            f"[VespaDestination] TOTAL bulk_insert: {total_ms:.1f}ms | "
+            f"transform={transform_ms:.0f}ms, feed={feed_ms:.0f}ms | "
+            f"{success_count} success, {len(failed_docs)} failed"
+        )
 
         if failed_docs:
             self._handle_feed_failures(failed_docs, total_docs)
@@ -425,7 +526,10 @@ class VespaDestination(VectorDBDestination):
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
     async def delete_by_sync_id(self, sync_id: UUID) -> None:
-        """Delete all documents from a sync run.
+        """Delete all documents from a sync run using selection-based bulk delete.
+
+        Uses Vespa's /document/v1 DELETE with selection parameter for efficient
+        server-side deletion instead of fetching IDs and deleting one-by-one.
 
         Args:
             sync_id: The sync ID to delete documents for
@@ -433,19 +537,21 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Search across all schemas
+        # Selection expression for this sync within this collection
+        selection = (
+            f"airweave_system_metadata_sync_id=='{sync_id}' and "
+            f"airweave_system_metadata_collection_id=='{self.collection_id}'"
+        )
+
+        # Delete from all schemas
         for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata_sync_id contains '{sync_id}' and "
-                f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
+            await self._delete_by_selection(schema, selection)
 
     async def delete_by_collection_id(self, collection_id: UUID) -> None:
-        """Delete all documents for a collection.
+        """Delete all documents for a collection using selection-based bulk delete.
 
-        Used when deleting an entire collection.
+        Uses Vespa's /document/v1 DELETE with selection parameter for efficient
+        server-side deletion instead of fetching IDs and deleting one-by-one.
 
         Args:
             collection_id: The collection ID to delete documents for
@@ -453,16 +559,82 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Search across all schemas
+        # Selection expression for this collection
+        selection = f"airweave_system_metadata_collection_id=='{collection_id}'"
+
+        # Delete from all schemas
         for schema in self._get_all_vespa_schemas():
-            yql = (
-                f"select documentid from {schema} where "
-                f"airweave_system_metadata_collection_id contains '{collection_id}'"
-            )
-            await self._delete_by_query(yql, schema)
+            await self._delete_by_selection(schema, selection)
+
+    async def _delete_by_selection(self, schema: str, selection: str) -> int:
+        """Delete documents using Vespa's selection-based bulk delete API.
+
+        This is MUCH faster than query-then-delete because it performs server-side
+        deletion in a single streaming operation rather than individual HTTP calls.
+
+        Uses: DELETE /document/v1/{namespace}/{doctype}/docid?selection={expr}&cluster={cluster}
+
+        Args:
+            schema: The Vespa schema/document type to delete from
+            selection: Document selection expression (e.g., "field=='value'")
+
+        Returns:
+            Number of documents deleted (estimated from response)
+        """
+        # Build the bulk delete URL
+        base_url = f"{settings.VESPA_URL}:{settings.VESPA_PORT}"
+        encoded_selection = quote(selection, safe="")
+        url = (
+            f"{base_url}/document/v1/airweave/{schema}/docid"
+            f"?selection={encoded_selection}"
+            f"&cluster={settings.VESPA_CLUSTER}"
+        )
+
+        self.logger.debug(f"[Vespa] Bulk delete from {schema} with selection: {selection}")
+
+        deleted_count = 0
+        try:
+            async with httpx.AsyncClient(timeout=settings.VESPA_TIMEOUT) as client:
+                # Use streaming to handle potentially large deletions
+                async with client.stream("DELETE", url) as response:
+                    if response.status_code == 200:
+                        # Vespa returns JSON Lines with deletion results
+                        async for line in response.aiter_lines():
+                            if line.strip():
+                                try:
+                                    result = json.loads(line)
+                                    # Count successful deletions from the response
+                                    if result.get("id"):
+                                        deleted_count += 1
+                                except json.JSONDecodeError:
+                                    pass  # Skip malformed lines
+                    elif response.status_code == 400:
+                        # Bad selection expression
+                        body = await response.aread()
+                        self.logger.error(f"[Vespa] Invalid selection expression: {body.decode()}")
+                    else:
+                        body = await response.aread()
+                        self.logger.error(
+                            f"[Vespa] Bulk delete failed ({response.status_code}): {body.decode()}"
+                        )
+
+            if deleted_count > 0:
+                self.logger.info(f"[Vespa] Deleted {deleted_count} documents from {schema}")
+            else:
+                self.logger.debug(f"[Vespa] No documents to delete from {schema}")
+
+        except httpx.TimeoutException:
+            self.logger.error(f"[Vespa] Bulk delete timed out after {settings.VESPA_TIMEOUT}s")
+        except Exception as e:
+            self.logger.error(f"[Vespa] Bulk delete error: {e}")
+
+        return deleted_count
 
     async def bulk_delete_by_parent_ids(self, parent_ids: list[str], sync_id: UUID) -> None:
-        """Delete all documents for multiple parent IDs.
+        """Delete all documents for multiple parent IDs using selection-based bulk delete.
+
+        Batches parent IDs into groups to create efficient OR selections rather than
+        making individual delete calls per parent ID.
 
         Args:
             parent_ids: List of parent entity IDs
@@ -471,107 +643,23 @@ class VespaDestination(VectorDBDestination):
         if not parent_ids or not self.app:
             return
 
-        # Delete each parent's documents from all schemas
-        for parent_id in parent_ids:
-            for schema in self._get_all_vespa_schemas():
-                yql = (
-                    f"select documentid from {schema} where "
-                    f"airweave_system_metadata_original_entity_id contains '{parent_id}' and "
-                    f"airweave_system_metadata_collection_id contains '{self.collection_id}'"
-                )
-                await self._delete_by_query(yql, schema)
+        # Batch parent IDs to avoid overly long selection expressions
+        batch_size = 50  # Keep selection expressions manageable
+        for i in range(0, len(parent_ids), batch_size):
+            batch = parent_ids[i : i + batch_size]
 
-    async def _delete_by_query(self, yql: str, schema: str) -> None:
-        """Execute a delete operation based on a YQL query with pagination.
-
-        IMPORTANT: pyvespa query() and delete_data() are synchronous,
-        so we run them in a thread pool to avoid blocking the event loop.
-
-        Args:
-            yql: YQL query to find documents to delete
-            schema: The Vespa schema to delete from
-        """
-        if not self.app:
-            return
-
-        batch_size = 400  # Vespa's default maxHits limit
-        total_deleted = 0
-
-        try:
-            while True:
-                response = await asyncio.to_thread(self.app.query, yql=yql, hits=batch_size)
-
-                if not response.is_successful():
-                    self.logger.error(f"Error during delete operation: {response.json}")
-                    return
-
-                hits = response.hits or []
-                done, batch_deleted = await self._process_delete_batch(
-                    hits, schema, batch_size, total_deleted
-                )
-                total_deleted += batch_deleted
-                if done:
-                    break
-
-        except Exception as e:
-            self.logger.error(f"Error during delete operation: {e}")
-
-    async def _process_delete_batch(
-        self, hits: list, schema: str, batch_size: int, total_deleted: int
-    ) -> tuple[bool, int]:
-        """Process a batch of hits for deletion.
-
-        Returns:
-            Tuple of (is_done, deleted_count)
-        """
-        if not hits:
-            if total_deleted > 0:
-                self.logger.info(
-                    f"Deleted {total_deleted} total documents from Vespa schema '{schema}'"
-                )
-            else:
-                self.logger.debug(f"No documents found to delete from {schema}")
-            return True, 0
-
-        self.logger.debug(f"Deleting batch of {len(hits)} documents from Vespa schema '{schema}'")
-
-        doc_ids = self._extract_doc_ids_from_hits(hits)
-        deleted = await asyncio.to_thread(self._delete_docs_sync, doc_ids, schema)
-
-        if len(hits) < batch_size:
-            if total_deleted + deleted > 0:
-                self.logger.info(
-                    f"Deleted {total_deleted + deleted} total documents from "
-                    f"Vespa schema '{schema}'"
-                )
-            return True, deleted
-
-        return False, deleted
-
-    def _extract_doc_ids_from_hits(self, hits: list) -> list[str]:
-        """Extract user-specified IDs from Vespa document IDs."""
-        doc_ids = []
-        for hit in hits:
-            doc_id = hit.get("id", "")
-            if doc_id:
-                # Format: id:namespace:doctype::user_id
-                parts = doc_id.split("::")
-                if len(parts) >= 2:
-                    doc_ids.append(parts[-1])
-        return doc_ids
-
-    def _delete_docs_sync(self, doc_ids: list[str], schema: str) -> int:
-        """Synchronously delete documents by ID. Must be run in thread pool."""
-        deleted = 0
-        for user_id in doc_ids:
-            delete_response = self.app.delete_data(
-                schema=schema,
-                data_id=user_id,
-                namespace="airweave",
+            # Build OR selection for this batch of parent IDs
+            parent_conditions = " or ".join(
+                f"airweave_system_metadata_original_entity_id=='{pid}'" for pid in batch
             )
-            if delete_response.is_successful():
-                deleted += 1
-        return deleted
+            selection = (
+                f"({parent_conditions}) and "
+                f"airweave_system_metadata_collection_id=='{self.collection_id}'"
+            )
+
+            # Delete from all schemas
+            for schema in self._get_all_vespa_schemas():
+                await self._delete_by_selection(schema, selection)
 
     # Production search settings (100k+ entities, LLM input)
     # targetHits: 400 per method → ~800 candidates before deduplication
@@ -593,8 +681,8 @@ class VespaDestination(VectorDBDestination):
     ) -> List[SearchResult]:
         """Execute hybrid search against Vespa with multi-query support.
 
-        Vespa handles embedding generation server-side, so dense_embeddings is ignored.
-        YQL is built at runtime with proper filter injection into WHERE clause.
+        Embeddings are pre-computed externally via DenseEmbedder and passed as
+        tensor parameters. This eliminates server-side embedding computation.
 
         Multi-Query Support:
             When query expansion provides multiple queries (primary + expanded), each
@@ -611,7 +699,8 @@ class VespaDestination(VectorDBDestination):
             limit: Maximum number of results to return
             offset: Number of results to skip (pagination)
             filter: Optional filter dict (translated to YQL WHERE clause)
-            dense_embeddings: Ignored - Vespa embeds server-side
+            dense_embeddings: Pre-computed 768-dim embeddings (one per query).
+                             If None, will be computed via DenseEmbedder.
             sparse_embeddings: Ignored - Vespa handles BM25 server-side
             retrieval_strategy: Search strategy (currently always hybrid)
             temporal_config: Ignored - temporal relevance not yet supported for Vespa
@@ -637,30 +726,89 @@ class VespaDestination(VectorDBDestination):
             f"num_queries={len(queries)}, limit={limit}, has_filter={filter is not None}"
         )
 
+        # Use provided embeddings if they have correct dimensions (768-dim)
+        # Otherwise, re-embed with Matryoshka truncation to 768-dim
+        VESPA_EMBEDDING_DIM = 768  # Must match base_entity.sd chunk_large_embeddings
+        if (
+            dense_embeddings
+            and len(dense_embeddings) == len(queries)
+            and len(dense_embeddings[0]) == VESPA_EMBEDDING_DIM
+        ):
+            # Use provided embeddings - just binary-pack for ANN search
+            large_embeddings = dense_embeddings
+            small_embeddings = [self._pack_bits_for_query(emb) for emb in large_embeddings]
+            self.logger.info(
+                f"[VespaSearch] Using provided {VESPA_EMBEDDING_DIM}-dim embeddings "
+                f"(no re-embedding needed)"
+            )
+        else:
+            # Re-embed with correct dimensions (fallback - should rarely happen now)
+            provided_dim = len(dense_embeddings[0]) if dense_embeddings else 0
+            self.logger.info(
+                f"[VespaSearch] Re-embedding: provided={provided_dim}-dim, "
+                f"required={VESPA_EMBEDDING_DIM}-dim"
+            )
+            large_embeddings, small_embeddings = await self._embed_queries(queries)
+
         # Translate filter to YQL clause (if present)
         yql_filter = self.translate_filter(filter) if filter else None
 
         # Build YQL with proper filter injection and multi-query support
         yql = self._build_search_yql(queries, airweave_collection_id, yql_filter)
 
-        # Build query parameters with embeddings for all queries
-        query_params = self._build_query_params(queries, primary_query, limit, offset)
+        # Build query parameters with pre-computed embeddings
+        query_params = self._build_query_params(
+            queries, primary_query, limit, offset, large_embeddings, small_embeddings
+        )
         query_params["yql"] = yql
 
         self.logger.debug(f"[VespaSearch] YQL: {yql}")
 
+        # DEBUG: Log full query params (excluding large embedding values)
+        debug_params = {k: v for k, v in query_params.items() if k != "yql"}
+        for key in list(debug_params.keys()):
+            if "embedding" in key.lower() or key.startswith("input.query"):
+                debug_params[key] = f"<tensor with {len(str(debug_params[key]))} chars>"
+        self.logger.info(
+            f"[VespaSearch] QUERY PARAMS:\n  YQL: {yql}\n  Other params: {debug_params}"
+        )
+
         # Execute query in thread pool (pyvespa is synchronous)
+        import time
+
+        start_time = time.monotonic()
         try:
             response = await asyncio.to_thread(self.app.query, body=query_params)
         except Exception as e:
             self.logger.error(f"[VespaSearch] Vespa query failed: {e}")
             raise RuntimeError(f"Vespa search failed: {e}") from e
+        query_time_ms = (time.monotonic() - start_time) * 1000
 
         # Check for errors
         if not response.is_successful():
             error_msg = getattr(response, "json", {}).get("error", str(response))
             self.logger.error(f"[VespaSearch] Vespa returned error: {error_msg}")
             raise RuntimeError(f"Vespa search error: {error_msg}")
+
+        # DEBUG: Log Vespa internal metrics
+        try:
+            raw_json = response.json if hasattr(response, "json") else {}
+            root = raw_json.get("root", {})
+            coverage = root.get("coverage", {})
+            timing = raw_json.get("timing", {})
+            total_count = root.get("fields", {}).get("totalCount", 0)
+
+            self.logger.info(
+                f"\n[VespaSearch] VESPA METRICS:\n"
+                f"  Query time (client): {query_time_ms:.1f}ms\n"
+                f"  Vespa timing: {timing}\n"
+                f"  Total matching docs: {total_count}\n"
+                f"  Coverage: {coverage.get('coverage', 100)}% "
+                f"({coverage.get('documents', 0)} docs, {coverage.get('nodes', 0)} nodes)\n"
+                f"  Hits returned: {len(response.hits) if response.hits else 0}"
+            )
+        except Exception as e:
+            self.logger.debug(f"[VespaSearch] Could not extract metrics: {e}")
 
         # Convert Vespa results to SearchResult format
         raw_results = self._convert_vespa_results(response)
@@ -739,14 +887,58 @@ class VespaDestination(VectorDBDestination):
         yql = f"select * from base_entity where {' AND '.join(where_parts)}"
         return yql
 
+    async def _embed_queries(self, queries: List[str]) -> tuple[List[List[float]], List[List[int]]]:
+        """Pre-compute embeddings for search queries.
+
+        Uses text-embedding-3-large model with Matryoshka truncation to get 768-dim
+        embeddings, then binary-packs them for ANN search.
+
+        Args:
+            queries: List of query texts
+
+        Returns:
+            Tuple of (large_embeddings, small_embeddings) where:
+            - large_embeddings: 768-dim float vectors for ranking
+            - small_embeddings: 96 int8 binary-packed vectors for ANN
+        """
+        from airweave.platform.embedders import DenseEmbedder
+
+        # Use default model (text-embedding-3-large) and request 768-dim via Matryoshka
+        embedder = DenseEmbedder()  # Uses text-embedding-3-large (3072 native dims)
+        large_embeddings = await embedder.embed_many(queries, self.logger, dimensions=768)
+
+        # Binary pack for ANN search (same logic as VespaChunkEmbedProcessor)
+        small_embeddings = [self._pack_bits_for_query(emb) for emb in large_embeddings]
+
+        return large_embeddings, small_embeddings
+
+    def _pack_bits_for_query(self, embedding: List[float]) -> List[int]:
+        """Binary pack a query embedding for Vespa's hamming distance ANN.
+
+        Args:
+            embedding: 768-dim float embedding
+
+        Returns:
+            96 int8 values (768 bits packed into 96 bytes)
+        """
+        import numpy as np
+
+        arr = np.array(embedding, dtype=np.float32)
+        bits = (arr > 0).astype(np.uint8)
+        packed = np.packbits(bits)
+        packed_int8 = packed.astype(np.int8)
+        return packed_int8.tolist()
+
     def _build_query_params(
         self,
         queries: List[str],
         primary_query: str,
         limit: int,
         offset: int,
+        large_embeddings: List[List[float]],
+        small_embeddings: List[List[int]],
     ) -> Dict[str, Any]:
-        """Build Vespa query parameters with embeddings for all queries.
+        """Build Vespa query parameters with pre-computed embeddings.
 
         Creates embedding parameters for each query (q0, q1, q2, ...) to support
         multiple nearestNeighbor operators in the YQL.
@@ -756,26 +948,50 @@ class VespaDestination(VectorDBDestination):
             primary_query: The primary query (first in list)
             limit: Maximum number of results
             offset: Results to skip (pagination)
+            large_embeddings: Pre-computed 768-dim embeddings (one per query)
+            small_embeddings: Pre-computed binary-packed embeddings (one per query)
 
         Returns:
             Dict of Vespa query parameters
         """
-        escaped_primary = self._escape_query_for_yql(primary_query)
+        # Calculate effective rerank counts based on requested limit
+        # Schema defaults: second-phase=200, global-phase=100
+        # Override if user requests more than defaults
+        effective_limit = limit + offset
+        second_phase_rerank = max(200, effective_limit * 2)  # 2x buffer for global phase
+        global_phase_rerank = max(100, effective_limit)  # At least what user requested
 
         query_params: Dict[str, Any] = {
             "query": primary_query,  # For userInput(@query) in YQL
             "ranking.profile": "hybrid-rrf",
-            "hits": limit + offset,
+            "hits": effective_limit,
             "presentation.summary": "full",
-            # Keep legacy embedding params for backward compatibility with rank profile
-            "ranking.features.query(embedding)": f'embed(nomicmb, "{escaped_primary}")',
-            "ranking.features.query(float_embedding)": f'embed(nomicmb, "{escaped_primary}")',
+            # Override schema rerank-count if user needs more than 100 results
+            "ranking.softtimeout.enable": "false",  # Ensure we get all results
+            "ranking.rerankCount": second_phase_rerank,  # Second-phase candidates
+            "ranking.globalPhase.rerankCount": global_phase_rerank,  # Final RRF output
         }
 
-        # Add embedding for each query (q0, q1, q2, ...)
-        for i, q in enumerate(queries):
-            escaped_q = self._escape_query_for_yql(q)
-            query_params[f"ranking.features.query(q{i})"] = f'embed(nomicmb, "{escaped_q}")'
+        # Primary embeddings for ranking (float_embedding for cosine similarity)
+        # Note: ranking.features.query() is used for rank profile expressions
+        # Use "values" format for indexed tensors (x[N]), not "cells" format (for mapped x{})
+        if large_embeddings:
+            query_params["ranking.features.query(float_embedding)"] = {
+                "values": large_embeddings[0]
+            }
+            # Primary binary embedding for ranking functions (not ANN)
+            query_params["ranking.features.query(embedding)"] = {"values": small_embeddings[0]}
+
+        # Add embedding for each query (q0, q1, q2, ...) for multi-query nearestNeighbor
+        # CRITICAL: nearestNeighbor operator requires input.query() format, not ranking.features
+        # input.query() provides tensor values to the nearestNeighbor operator
+        # ranking.features.query() provides values for rank profile expressions
+        # Use "values" format for indexed tensors (tensor<int8>(x[96]))
+        for i, (_large_emb, small_emb) in enumerate(
+            zip(large_embeddings, small_embeddings, strict=False)
+        ):
+            # Binary packed embedding for ANN search (nearestNeighbor operator)
+            query_params[f"input.query(q{i})"] = {"values": small_emb}
 
         return query_params
 
@@ -882,6 +1098,7 @@ class VespaDestination(VectorDBDestination):
     def _map_field_name(self, key: str) -> str:
         """Map logical field names to Vespa field paths (flattened metadata fields)."""
         meta_field_map = {
+            # System metadata fields
             "collection_id": "airweave_system_metadata_collection_id",
             "entity_type": "airweave_system_metadata_entity_type",
             "sync_id": "airweave_system_metadata_sync_id",
@@ -890,6 +1107,9 @@ class VespaDestination(VectorDBDestination):
             "hash": "airweave_system_metadata_hash",
             "original_entity_id": "airweave_system_metadata_original_entity_id",
             "source_name": "airweave_system_metadata_source_name",
+            # Access control fields (dot notation -> flat field)
+            "access.is_public": "access_is_public",
+            "access.viewers": "access_viewers",
         }
         return meta_field_map.get(key, key)
 
@@ -918,24 +1138,77 @@ class VespaDestination(VectorDBDestination):
         if "has_id" in condition:
             return self._translate_has_id_condition(condition)
 
+        # Handle is_null check (for mixed collection access control)
+        if "key" in condition and "is_null" in condition:
+            return self._translate_is_null_condition(condition)
+
         # Fallback - return empty (will be filtered out)
         self.logger.debug(f"[VespaSearch] Unknown condition type: {condition}")
         return ""
 
     def _translate_match_condition(self, condition: Dict[str, Any]) -> str:
-        """Translate a match condition to YQL."""
+        """Translate a match condition to YQL.
+
+        Handles various match types:
+        - {"value": "x"} -> simple equality/contains
+        - {"any": ["a", "b"]} -> OR across array values (for access control filtering)
+        - Direct value -> simple equality/contains
+        """
         key = self._map_field_name(condition["key"])
         match = condition["match"]
+
+        # Handle "any" operator for array fields (access control filtering)
+        # Example: {"key": "access.viewers", "match": {"any": ["user:a@x.com", "group:sp:1"]}}
+        # Generates: (access_viewers contains "user:a@x.com" OR ...)
+        if isinstance(match, dict) and "any" in match:
+            values = match["any"]
+            if not values:
+                return "false"  # No principals = no access
+            clauses = [f'{key} contains "{self._escape_yql_value(v)}"' for v in values]
+            return f"({' OR '.join(clauses)})"
+
+        # Handle simple value match
         value = match.get("value", "") if isinstance(match, dict) else match
 
         if isinstance(value, str):
-            escaped_value = value.replace('"', '\\"')
+            escaped_value = self._escape_yql_value(value)
             return f'{key} contains "{escaped_value}"'
         elif isinstance(value, bool):
             return f"{key} = {str(value).lower()}"
         elif isinstance(value, (int, float)):
             return f"{key} = {value}"
         return f'{key} contains "{value}"'
+
+    def _escape_yql_value(self, value: str) -> str:
+        """Escape special characters for YQL string literals.
+
+        Args:
+            value: Raw string value
+
+        Returns:
+            Escaped string safe for YQL
+        """
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _translate_is_null_condition(self, condition: Dict[str, Any]) -> str:
+        """Translate is_null condition to YQL.
+
+        Used for mixed collection access control: entities from non-AC sources
+        don't have access fields, so we need to check if the field is null/absent.
+
+        Args:
+            condition: Condition with "key" and "is_null" fields
+
+        Returns:
+            YQL condition string: "isNull(field)" or "!isNull(field)"
+        """
+        key = self._map_field_name(condition["key"])
+        is_null = condition["is_null"]
+
+        if is_null:
+            return f"isNull({key})"
+        else:
+            return f"!isNull({key})"
 
     def _translate_range_condition(self, condition: Dict[str, Any]) -> str:
         """Translate a range condition to YQL."""
@@ -959,8 +1232,17 @@ class VespaDestination(VectorDBDestination):
 
     def _convert_vespa_results(self, response: Any) -> List[SearchResult]:
         results = []
-        for hit in response.hits or []:
+        for i, hit in enumerate(response.hits or []):
             fields = hit.get("fields", {})
+
+            # Debug: Log first few results with their field keys
+            if i < 3:
+                self.logger.debug(
+                    f"[VespaSearch] Hit {i}: id={hit.get('id', 'N/A')}, "
+                    f"relevance={hit.get('relevance', 0.0):.4f}, "
+                    f"field_keys={list(fields.keys())[:15]}..."
+                )
+
             # Just use all fields as payload, extracting id and score
             result = SearchResult(
                 id=hit.get("id", ""),
@@ -968,6 +1250,14 @@ class VespaDestination(VectorDBDestination):
                 payload=fields,  # Pass through all Vespa fields
             )
             results.append(result)
+
+        # Summary log
+        if results:
+            first_payload = results[0].payload
+            self.logger.info(
+                f"[VespaSearch] Result sample - Available fields: {list(first_payload.keys())}"
+            )
+
         return results
 
     async def get_vector_config_names(self) -> list[str]:

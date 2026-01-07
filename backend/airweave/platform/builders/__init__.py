@@ -11,12 +11,12 @@ Builder Types:
 - TrackingContextBuilder: Creates TrackingContext
 - SyncContextBuilder: Orchestrates all builders to create SyncContext
 - CleanupContextBuilder: Creates CleanupContext for deletion operations
-- DispatcherBuilder: Creates ActionDispatcher with handlers
+
+Note: Dispatcher builders live in platform/sync/actions/{domain}/
 """
 
 from airweave.platform.builders.cleanup import CleanupContextBuilder
 from airweave.platform.builders.destinations import DestinationsContextBuilder
-from airweave.platform.builders.dispatcher import DispatcherBuilder
 from airweave.platform.builders.infra import InfraContextBuilder
 from airweave.platform.builders.scope import ScopeContextBuilder
 from airweave.platform.builders.source import SourceContextBuilder
@@ -26,7 +26,6 @@ from airweave.platform.builders.tracking import TrackingContextBuilder
 __all__ = [
     "CleanupContextBuilder",
     "DestinationsContextBuilder",
-    "DispatcherBuilder",
     "InfraContextBuilder",
     "ScopeContextBuilder",
     "SourceContextBuilder",
