@@ -20,7 +20,6 @@ from airweave.platform.contexts.batch import BatchContext
 from airweave.platform.contexts.cleanup import CleanupContext
 from airweave.platform.contexts.destinations import DestinationsContext
 from airweave.platform.contexts.infra import InfraContext
-from airweave.platform.contexts.protocol import HandlerContext
 from airweave.platform.contexts.scope import ScopeContext
 from airweave.platform.contexts.source import SourceContext
 from airweave.platform.contexts.sync import SyncContext
