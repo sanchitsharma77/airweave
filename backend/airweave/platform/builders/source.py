@@ -376,7 +376,7 @@ class SourceContextBuilder:
         cls, source: BaseSource, sync_job: Optional[Any], logger: ContextualLogger
     ) -> None:
         """Setup file downloader for file-based sources."""
-        from airweave.platform.downloader import FileDownloadService
+        from airweave.platform.storage import FileService
 
         # Require sync_job - we're always in sync context when this is called
         if not sync_job or not hasattr(sync_job, "id"):
@@ -386,7 +386,7 @@ class SourceContextBuilder:
                 "where sync_job exists."
             )
 
-        file_downloader = FileDownloadService(sync_job_id=str(sync_job.id))
+        file_downloader = FileService(sync_job_id=sync_job.id)
         source.set_file_downloader(file_downloader)
         logger.debug(
             f"File downloader configured for {source.__class__.__name__} "

@@ -1,4 +1,10 @@
-"""Storage integration module for Airweave."""
+"""Storage integration module for Airweave.
+
+This module provides unified storage abstractions including:
+- StorageBackend: Abstract interface for persistent storage (filesystem, Azure Blob)
+- FileService: File download and restoration to temp directory
+- paths: Centralized path constants for all storage operations
+"""
 
 from airweave.core.config import settings
 from airweave.platform.storage.backend import (
@@ -7,27 +13,40 @@ from airweave.platform.storage.backend import (
     StorageBackend,
 )
 from airweave.platform.storage.exceptions import (
+    FileSkippedException,
     StorageAuthenticationError,
     StorageConnectionError,
     StorageException,
     StorageNotFoundError,
     StorageQuotaExceededError,
 )
+from airweave.platform.storage.file_service import FileDownloadService, FileService
+from airweave.platform.storage.paths import StoragePaths, paths
 from airweave.platform.storage.sync_file_manager import (
     SyncFileManager,
     sync_file_manager,
 )
 
 __all__ = [
+    # Backend
     "StorageBackend",
     "FilesystemBackend",
     "AzureBlobBackend",
     "storage_backend",
+    # File service
+    "FileService",
+    "FileDownloadService",  # Backwards compatibility
+    # Paths
+    "StoragePaths",
+    "paths",
+    # Exceptions
     "StorageException",
     "StorageConnectionError",
     "StorageAuthenticationError",
     "StorageNotFoundError",
     "StorageQuotaExceededError",
+    "FileSkippedException",
+    # Sync file manager
     "SyncFileManager",
     "sync_file_manager",
 ]
