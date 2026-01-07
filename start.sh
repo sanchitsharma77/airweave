@@ -238,6 +238,37 @@ echo ""
 echo "Waiting for services to initialize..."
 sleep 10
 
+# Check if Vespa document API is ready (wait for vespa-init to complete)
+echo "Checking Vespa readiness..."
+MAX_VESPA_RETRIES=60
+VESPA_RETRY_COUNT=0
+VESPA_READY=false
+
+while [ $VESPA_RETRY_COUNT -lt $MAX_VESPA_RETRIES ]; do
+  # Check if vespa-init has completed (exited with status 0)
+  INIT_STATUS=$(${CONTAINER_CMD} inspect airweave-vespa-init --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+  INIT_EXIT_CODE=$(${CONTAINER_CMD} inspect airweave-vespa-init --format='{{.State.ExitCode}}' 2>/dev/null || echo "1")
+
+  if [ "$INIT_STATUS" = "exited" ] && [ "$INIT_EXIT_CODE" = "0" ]; then
+    # Init completed, now check if document API is accessible
+    if curl -sf http://localhost:8081/state/v1/health | grep -q '"up"' 2>/dev/null; then
+      echo "✅ Vespa is ready! (init completed, document API accessible)"
+      VESPA_READY=true
+      break
+    fi
+  fi
+
+  echo "⏳ Waiting for Vespa to be ready... (attempt $((VESPA_RETRY_COUNT + 1))/$MAX_VESPA_RETRIES, init_status=$INIT_STATUS)"
+  VESPA_RETRY_COUNT=$((VESPA_RETRY_COUNT + 1))
+  sleep 5
+done
+
+if [ "$VESPA_READY" = false ]; then
+  echo "⚠️  Vespa may not be fully ready after $MAX_VESPA_RETRIES attempts"
+  echo "Check vespa logs with: docker logs airweave-vespa"
+  echo "Check vespa-init logs with: docker logs airweave-vespa-init"
+fi
+
 # Check if backend is healthy (with retries)
 echo "Checking backend health..."
 MAX_RETRIES=30
@@ -306,7 +337,12 @@ echo ""
 echo "Other services:"
 echo "📊 Temporal UI:    http://localhost:8088"
 echo "🗄️  PostgreSQL:    localhost:5432"
-echo "🔍 Qdrant:        http://localhost:6333"
+echo "🔍 Qdrant:         http://localhost:6333"
+if curl -sf http://localhost:8081/state/v1/health | grep -q '"up"' 2>/dev/null; then
+  echo "🔎 Vespa:          http://localhost:8081"
+else
+  echo "⚠️  Vespa:          Not responding (check logs with: docker logs airweave-vespa)"
+fi
 
 if [ "$USE_LOCAL_EMBEDDINGS" = true ]; then
   echo "🤖 Embeddings:    http://localhost:9878 (local text2vec)"
