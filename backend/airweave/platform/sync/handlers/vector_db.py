@@ -489,7 +489,7 @@ class VectorDBHandler(ActionHandler):
                     break
 
                 chunk_entity = entity.model_copy(
-                    update={'textual_representation': chunk_text}, deep=True
+                    update={"textual_representation": chunk_text}, deep=True
                 )
                 chunk_entity.entity_id = f"{original_entity_id}__chunk_{chunk_idx}"
 
