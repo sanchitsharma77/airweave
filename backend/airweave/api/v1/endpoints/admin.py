@@ -1456,8 +1456,12 @@ def _build_admin_sync_info_list(
         sync_dict["source_connection_id"] = conn_info["source"]
         sync_dict["destination_connection_ids"] = conn_info["destinations"]
         sync_dict["total_entity_count"] = entity_count_map.get(sync.id, 0)
+        # Handle status - may be enum or string depending on query
+        last_status = last_job.get("status")
         sync_dict["last_job_status"] = (
-            last_job.get("status").value if last_job.get("status") else None
+            (last_status.value if hasattr(last_status, "value") else last_status)
+            if last_status
+            else None
         )
         sync_dict["last_job_at"] = last_job.get("completed_at")
         sync_dict["source_short_name"] = source_info.get("short_name")
@@ -1465,8 +1469,11 @@ def _build_admin_sync_info_list(
 
         # Vespa migration tracking
         sync_dict["last_vespa_job_id"] = vespa_job.get("id")
+        vespa_status = vespa_job.get("status")
         sync_dict["last_vespa_job_status"] = (
-            vespa_job.get("status").value if vespa_job.get("status") else None
+            (vespa_status.value if hasattr(vespa_status, "value") else vespa_status)
+            if vespa_status
+            else None
         )
         sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
         sync_dict["last_vespa_job_config"] = vespa_job.get("config")
