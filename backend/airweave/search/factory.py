@@ -603,8 +603,8 @@ class SearchFactory:
     ) -> BaseDestination:
         """Get the destination instance for a collection.
 
-        Queries the sync configuration to find the destination and instantiates it.
-        Falls back to native Qdrant if no destination is configured.
+        ALWAYS returns Qdrant as the default search destination.
+        Vespa search will be added via a specialized endpoint later.
 
         Args:
             db: Database session
@@ -612,62 +612,17 @@ class SearchFactory:
             ctx: API context
 
         Returns:
-            BaseDestination instance (Qdrant, Vespa, etc.)
+            QdrantDestination instance (always Qdrant for now)
         """
-        from sqlalchemy import select
-
-        from airweave.core.constants.reserved_ids import NATIVE_QDRANT_UUID, NATIVE_VESPA_UUID
-        from airweave.models.sync_connection import SyncConnection
         from airweave.platform.destinations.qdrant import QdrantDestination
-        from airweave.platform.destinations.vespa import VespaDestination
 
-        # Get source connections for this collection
-        source_connections = await crud.source_connection.get_for_collection(
-            db, readable_collection_id=collection.readable_id, ctx=ctx
-        )
-
-        if not source_connections:
-            raise ValueError(
-                f"Collection {collection.readable_id} has no source connections. "
-                "Cannot determine search destination."
-            )
-
-        # Check destination configuration from source connections
-        for source_connection in source_connections:
-            if not source_connection.sync_id:
-                continue
-
-            # Get the sync's destination connections via SyncConnection
-            result = await db.execute(
-                select(SyncConnection.connection_id).where(
-                    SyncConnection.sync_id == source_connection.sync_id
-                )
-            )
-            destination_connection_ids = [row[0] for row in result.fetchall()]
-
-            # Check for Vespa
-            if NATIVE_VESPA_UUID in destination_connection_ids:
-                ctx.logger.info(f"[SearchFactory] Collection {collection.readable_id} uses Vespa")
-                return await VespaDestination.create(
-                    collection_id=collection.id,
-                    organization_id=ctx.organization.id,
-                    logger=ctx.logger,
-                )
-
-            # Check for Qdrant
-            if NATIVE_QDRANT_UUID in destination_connection_ids:
-                ctx.logger.info(f"[SearchFactory] Collection {collection.readable_id} uses Qdrant")
-                return await QdrantDestination.create(
-                    collection_id=collection.id,
-                    organization_id=ctx.organization.id,
-                    vector_size=collection.vector_size,
-                    logger=ctx.logger,
-                )
-
-        # No recognized destination found - fail explicitly
-        raise ValueError(
-            f"Collection {collection.readable_id} has no recognized vector destination "
-            "(expected Qdrant or Vespa). Check source connection sync configuration."
+        # ALWAYS use Qdrant for search (Vespa endpoint coming later)
+        ctx.logger.info(f"[SearchFactory] Collection {collection.readable_id} uses Qdrant")
+        return await QdrantDestination.create(
+            collection_id=collection.id,
+            organization_id=ctx.organization.id,
+            vector_size=collection.vector_size,
+            logger=ctx.logger,
         )
 
     async def _get_temporal_supporting_sources(
