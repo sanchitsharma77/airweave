@@ -104,7 +104,7 @@ class StoragePaths:
 
         if len(safe) > max_length or safe != value:
             prefix = safe[:50] if len(safe) > 50 else safe
-            hash_suffix = hashlib.md5(value.encode()).hexdigest()[:12]
+            hash_suffix = hashlib.md5(value.encode(), usedforsecurity=False).hexdigest()[:12]
             safe = f"{prefix}_{hash_suffix}"
 
         return safe[:max_length]
