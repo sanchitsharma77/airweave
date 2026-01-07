@@ -11,6 +11,7 @@ Key differences from QdrantChunkEmbedProcessor:
 - Embedding: 768-dim for ranking + binary-packed 96 int8 for ANN
 """
 
+import time
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import numpy as np
@@ -63,8 +64,19 @@ class VespaChunkEmbedProcessor(ContentProcessor):
         if not entities:
             return []
 
+        total_start = time.perf_counter()
+        sync_context.logger.debug(
+            f"[VespaChunkEmbedProcessor] Starting processing of {len(entities)} entities"
+        )
+
         # Step 1: Build textual representations
+        step_start = time.perf_counter()
         processed = await text_builder.build_for_batch(entities, sync_context)
+        text_build_ms = (time.perf_counter() - step_start) * 1000
+        sync_context.logger.debug(
+            f"[VespaChunkEmbedProcessor] Text building: {text_build_ms:.1f}ms "
+            f"for {len(processed)} entities"
+        )
 
         # Step 2: Filter empty representations
         processed = await filter_empty_representations(processed, sync_context, "VespaChunkEmbed")
@@ -73,7 +85,14 @@ class VespaChunkEmbedProcessor(ContentProcessor):
             return []
 
         # Step 3: Chunk entities (returns chunk lists per entity)
+        step_start = time.perf_counter()
         chunk_lists = await self._chunk_entities(processed, sync_context)
+        chunk_ms = (time.perf_counter() - step_start) * 1000
+        total_chunks = sum(len(cl) for cl in chunk_lists)
+        sync_context.logger.debug(
+            f"[VespaChunkEmbedProcessor] Chunking: {chunk_ms:.1f}ms → "
+            f"{total_chunks} chunks from {len(processed)} entities"
+        )
 
         # Step 4: Flatten chunks for batch embedding
         all_chunks, chunk_counts = self._flatten_chunks(chunk_lists)
@@ -83,17 +102,35 @@ class VespaChunkEmbedProcessor(ContentProcessor):
             return []
 
         # Step 5: Embed all chunks in one batch (768-dim)
+        step_start = time.perf_counter()
         large_embeddings = await self._embed_chunks(all_chunks, sync_context)
+        embed_ms = (time.perf_counter() - step_start) * 1000
+        ms_per_chunk = embed_ms / len(all_chunks)
+        sync_context.logger.debug(
+            f"[VespaChunkEmbedProcessor] OpenAI embedding: {embed_ms:.1f}ms "
+            f"for {len(all_chunks)} chunks ({ms_per_chunk:.1f}ms/chunk)"
+        )
 
         # Step 6: Binary pack embeddings for ANN (768 float → 96 int8)
+        step_start = time.perf_counter()
         small_embeddings = [self._pack_bits(emb) for emb in large_embeddings]
+        pack_ms = (time.perf_counter() - step_start) * 1000
+        sync_context.logger.debug(
+            f"[VespaChunkEmbedProcessor] Binary packing: {pack_ms:.1f}ms "
+            f"for {len(large_embeddings)} embeddings"
+        )
 
         # Step 7: Assign to entities (unflatten)
+        step_start = time.perf_counter()
         self._assign_vespa_content(processed, chunk_lists, large_embeddings, small_embeddings)
+        assign_ms = (time.perf_counter() - step_start) * 1000
 
+        total_ms = (time.perf_counter() - total_start) * 1000
         sync_context.logger.debug(
-            f"[VespaChunkEmbedProcessor] {len(entities)} entities → "
-            f"{sum(chunk_counts)} chunks embedded"
+            f"[VespaChunkEmbedProcessor] TOTAL: {total_ms:.1f}ms | "
+            f"{len(entities)} entities → {sum(chunk_counts)} chunks | "
+            f"text={text_build_ms:.0f}ms, chunk={chunk_ms:.0f}ms, embed={embed_ms:.0f}ms, "
+            f"pack={pack_ms:.0f}ms, assign={assign_ms:.0f}ms"
         )
 
         return processed
@@ -198,6 +235,10 @@ class VespaChunkEmbedProcessor(ContentProcessor):
     ) -> List[List[float]]:
         """Embed all chunks in one batch using 768-dim Matryoshka embeddings.
 
+        Uses text-embedding-3-large model (3072 native dims) with Matryoshka truncation
+        to get 768-dim embeddings. This provides a good balance between quality and
+        storage cost for Vespa's two-phase ranking (ANN + re-ranking).
+
         Args:
             chunks: List of chunk texts
             sync_context: Sync context with logger
@@ -207,8 +248,9 @@ class VespaChunkEmbedProcessor(ContentProcessor):
         """
         from airweave.platform.embedders import DenseEmbedder
 
-        # Use DenseEmbedder with explicit 768-dim for Matryoshka
-        embedder = DenseEmbedder(vector_size=LARGE_EMBEDDING_DIM)
+        # Use default model (text-embedding-3-large) and request 768-dim via Matryoshka
+        # Note: Don't pass vector_size - that selects a model. Use dimensions param instead.
+        embedder = DenseEmbedder()  # Uses text-embedding-3-large (3072 native dims)
         embeddings = await embedder.embed_many(chunks, sync_context, dimensions=LARGE_EMBEDDING_DIM)
 
         return embeddings
