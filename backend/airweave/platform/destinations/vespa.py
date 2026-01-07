@@ -1096,9 +1096,15 @@ class VespaDestination(VectorDBDestination):
         return None
 
     def _map_field_name(self, key: str) -> str:
-        """Map logical field names to Vespa field paths (flattened metadata fields)."""
+        """Map logical field names to Vespa field paths (flattened metadata fields).
+
+        Handles multiple input formats:
+        - Short names: "entity_type" -> "airweave_system_metadata_entity_type"
+        - Dotted notation: "airweave_system_metadata.entity_type" -> flattened
+        - Already flat: "airweave_system_metadata_entity_type" -> unchanged
+        """
         meta_field_map = {
-            # System metadata fields
+            # System metadata fields (short form)
             "collection_id": "airweave_system_metadata_collection_id",
             "entity_type": "airweave_system_metadata_entity_type",
             "sync_id": "airweave_system_metadata_sync_id",
@@ -1107,6 +1113,16 @@ class VespaDestination(VectorDBDestination):
             "hash": "airweave_system_metadata_hash",
             "original_entity_id": "airweave_system_metadata_original_entity_id",
             "source_name": "airweave_system_metadata_source_name",
+            # Dotted notation from QueryInterpretation (Qdrant-style)
+            "airweave_system_metadata.collection_id": "airweave_system_metadata_collection_id",
+            "airweave_system_metadata.entity_type": "airweave_system_metadata_entity_type",
+            "airweave_system_metadata.sync_id": "airweave_system_metadata_sync_id",
+            "airweave_system_metadata.sync_job_id": "airweave_system_metadata_sync_job_id",
+            "airweave_system_metadata.hash": "airweave_system_metadata_hash",
+            "airweave_system_metadata.original_entity_id": (
+                "airweave_system_metadata_original_entity_id"
+            ),
+            "airweave_system_metadata.source_name": "airweave_system_metadata_source_name",
             # Access control fields (dot notation -> flat field)
             "access.is_public": "access_is_public",
             "access.viewers": "access_viewers",
@@ -1211,16 +1227,50 @@ class VespaDestination(VectorDBDestination):
             return f"!isNull({key})"
 
     def _translate_range_condition(self, condition: Dict[str, Any]) -> str:
-        """Translate a range condition to YQL."""
+        """Translate a range condition to YQL.
+
+        Handles datetime conversion for created_at/updated_at fields which are
+        stored as epoch milliseconds in Vespa but may come as ISO strings from
+        QueryInterpretation.
+        """
         key = self._map_field_name(condition["key"])
         range_cond = condition["range"]
         parts = []
 
+        # Fields that are stored as epoch milliseconds in Vespa
+        epoch_ms_fields = {"created_at", "updated_at"}
+
         for op, symbol in [("gt", ">"), ("gte", ">="), ("lt", "<"), ("lte", "<=")]:
             if op in range_cond:
-                parts.append(f"{key} {symbol} {range_cond[op]}")
+                value = range_cond[op]
+                # Convert ISO datetime strings to epoch milliseconds for date fields
+                if key in epoch_ms_fields and isinstance(value, str):
+                    value = self._parse_datetime_to_epoch_ms(value)
+                parts.append(f"{key} {symbol} {value}")
 
         return " AND ".join(parts) if parts else ""
+
+    def _parse_datetime_to_epoch_ms(self, value: str) -> int:
+        """Parse ISO datetime string to epoch milliseconds.
+
+        Args:
+            value: ISO format datetime string (e.g., "2025-12-01T00:00:00Z")
+
+        Returns:
+            Epoch milliseconds as integer
+        """
+        from datetime import datetime
+
+        try:
+            # Handle ISO format with Z suffix
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            dt = datetime.fromisoformat(value)
+            return int(dt.timestamp() * 1000)
+        except (ValueError, AttributeError) as e:
+            self.logger.warning(f"[VespaSearch] Failed to parse datetime '{value}': {e}")
+            # Return the original value if parsing fails
+            return value
 
     def _translate_has_id_condition(self, condition: Dict[str, Any]) -> str:
         """Translate a has_id condition to YQL."""
