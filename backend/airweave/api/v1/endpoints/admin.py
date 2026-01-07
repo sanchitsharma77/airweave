@@ -67,8 +67,59 @@ def _require_admin(ctx: ApiContext) -> None:
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def _require_admin_permission(ctx: ApiContext, permission: FeatureFlagEnum) -> None:
+    """Validate admin access with scoped API key permission support.
+
+    This function enables CASA-compliant admin access by checking:
+    1. User-based admin (traditional): User must be admin or superuser
+    2. API key-based (scoped): Organization must have specific permission feature flag
+
+    This approach provides granular, auditable admin access for programmatic operations
+    while maintaining security best practices.
+
+    Args:
+        ctx: The API context
+        permission: The specific permission feature flag required for API key access
+
+    Raises:
+        HTTPException: If neither user admin nor API key permission is satisfied
+
+    Example:
+        # Require API_KEY_ADMIN_SYNC for resync operations
+        _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+    """
+    # Check 1: User-based admin (traditional path)
+    if ctx.has_user_context and (ctx.user.is_admin or ctx.user.is_superuser):
+        ctx.logger.debug(f"Admin access granted via user: {ctx.user.email}")
+        return
+
+    # Check 2: API key with scoped permission (CASA-compliant path)
+    if ctx.is_api_key_auth and ctx.has_feature(permission):
+        ctx.logger.info(
+            f"Admin access granted via API key with permission: {permission.value}",
+            extra={
+                "permission": permission.value,
+                "organization_id": str(ctx.organization.id),
+                "auth_method": ctx.auth_method.value,
+            },
+        )
+        return
+
+    # Neither condition met - deny access
+    if ctx.is_api_key_auth:
+        raise HTTPException(
+            status_code=403,
+            detail=f"API key requires '{permission.value}' feature flag for admin access",
+        )
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
 def _build_sort_subqueries(query, sort_by: str):
-    """Build necessary subqueries for sorting and return updated query + subqueries.
+    """Build sort subqueries based on sort_by field.
+
+    Args:
+        query: The base SQLAlchemy query to extend
+        sort_by: Field to sort by
 
     Returns:
         Tuple of (query, subqueries_dict) where subqueries_dict contains named subqueries.
@@ -869,6 +920,9 @@ async def resync_with_execution_config(
 
     The sync is dispatched to Temporal and runs asynchronously in workers, not in the backend pod.
 
+    **API Key Access**: Organizations with the `api_key_admin_sync` feature flag enabled
+    can use API keys to access this endpoint programmatically.
+
     Args:
         db: Database session
         sync_id: ID of the sync to trigger
@@ -887,7 +941,7 @@ async def resync_with_execution_config(
           "enable_postgres_handler": false}
         - Target specific destination: {"target_destinations": ["<uuid>"]}
     """
-    _require_admin(ctx)
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
 
     ctx.logger.info(
         f"Admin triggering resync for sync {sync_id} with execution config: {execution_config}"
