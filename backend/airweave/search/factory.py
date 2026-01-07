@@ -333,11 +333,10 @@ class SearchFactory:
             "query_expansion": (
                 QueryExpansion(providers=providers["expansion"]) if params["expand_query"] else None
             ),
-            # Operations that depend on client-side embeddings
-            # TODO: Make filter operations destination-agnostic
+            # Query interpretation - destination-agnostic (filters are translated by destination)
             "query_interpretation": (
                 QueryInterpretation(providers=providers["interpretation"])
-                if (params["interpret_filters"] and needs_embedding_ops)
+                if (params["interpret_filters"] and has_vector_sources)
                 else None
             ),
             "embed_query": (
@@ -364,9 +363,10 @@ class SearchFactory:
                 )
                 else None
             ),
+            # User filter - destination-agnostic (filters are translated by destination)
             "user_filter": (
                 UserFilter(filter=search_request.filter)
-                if (search_request.filter and needs_embedding_ops)
+                if (search_request.filter and has_vector_sources)
                 else None
             ),
             # Unified retrieval operation (destination-agnostic)
@@ -519,10 +519,9 @@ class SearchFactory:
                 "Configure CEREBRAS_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY",
             )
 
-        # Query interpretation (only for destinations that need client-side embeddings)
-        # TODO: Make destination-agnostic when filter DSL is abstracted
-        needs_embedding_ops = has_vector_sources and requires_client_embedding
-        if params["interpret_filters"] and needs_embedding_ops:
+        # Query interpretation - works with any destination (filters are translated)
+        # Produces Qdrant-style filters which destinations translate to their native format
+        if params["interpret_filters"] and has_vector_sources:
             self._add_provider_list_or_error(
                 providers,
                 "interpretation",
