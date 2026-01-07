@@ -32,6 +32,13 @@ class SyncExecutionConfig(BaseModel):
         False, description="Don't save cursor progress (for ARF-only syncs)"
     )
 
+    # ARF replay mode
+    replay_from_arf: bool = Field(
+        False,
+        description="Replay entities from ARF storage instead of calling the source. "
+        "Uses the sync's existing ARF data.",
+    )
+
     @model_validator(mode="after")
     def validate_config_logic(self):
         """Validate that config combinations make sense."""
@@ -71,6 +78,26 @@ class SyncExecutionConfig(BaseModel):
         """
         return cls(
             enable_vector_handlers=False,
+            enable_postgres_handler=False,
+            skip_hash_comparison=True,
+            skip_cursor_load=True,
+            skip_cursor_updates=True,
+        )
+
+    @classmethod
+    def replay_from_arf_to_vector_dbs(cls) -> "SyncExecutionConfig":
+        """Replay entities from ARF to all vector DBs only.
+
+        Reads entities from ARF storage instead of calling the source.
+        Disables ARF handler to avoid re-capturing data we're reading from.
+        Disables postgres handler - only writes to vector DBs, no metadata changes.
+        Skips hash comparison since we're bypassing postgres entirely.
+        Skips cursor since we're replaying all entities.
+        """
+        return cls(
+            replay_from_arf=True,
+            enable_vector_handlers=True,
+            enable_raw_data_handler=False,
             enable_postgres_handler=False,
             skip_hash_comparison=True,
             skip_cursor_load=True,

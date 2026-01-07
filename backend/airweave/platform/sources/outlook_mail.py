@@ -19,7 +19,6 @@ from airweave.core.logging import logger
 from airweave.core.shared_models import RateLimitLevel
 from airweave.platform.cursors import OutlookMailCursor
 from airweave.platform.decorators import source
-from airweave.platform.downloader import FileSkippedException
 from airweave.platform.entities._base import BaseEntity, Breadcrumb
 from airweave.platform.entities.outlook_mail import (
     OutlookAttachmentEntity,
@@ -30,6 +29,7 @@ from airweave.platform.entities.outlook_mail import (
 )
 from airweave.platform.sources._base import BaseSource
 from airweave.platform.sources.retry_helpers import wait_rate_limit_with_backoff
+from airweave.platform.storage import FileSkippedException
 from airweave.platform.utils.filename_utils import safe_filename
 from airweave.schemas.source_connection import AuthenticationMethod, OAuthType
 
@@ -1240,7 +1240,7 @@ class OutlookMailSource(BaseSource):
                         self.logger.debug(
                             (
                                 f"Yielding delta entity #{entity_count}: {entity_type} "
-                                f"with ID {entity.id}"
+                                f"with ID {entity.entity_id}"
                             )
                         )
                         yield entity
@@ -1256,7 +1256,7 @@ class OutlookMailSource(BaseSource):
                         self.logger.debug(
                             (
                                 f"Yielding full sync entity #{entity_count}: {entity_type} "
-                                f"with ID {entity.id}"
+                                f"with ID {entity.entity_id}"
                             )
                         )
                         yield entity
