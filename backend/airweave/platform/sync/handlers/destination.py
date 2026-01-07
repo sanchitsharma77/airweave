@@ -11,7 +11,7 @@ import httpcore
 import httpx
 
 from airweave.platform.destinations._base import BaseDestination
-from airweave.platform.sync.actions.entity import (
+from airweave.platform.sync.actions.entity.types import (
     EntityActionBatch,
     EntityDeleteAction,
     EntityInsertAction,
