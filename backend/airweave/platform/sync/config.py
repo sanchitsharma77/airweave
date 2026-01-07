@@ -14,16 +14,20 @@ class SyncExecutionConfig(BaseModel):
     Config is persisted in sync_job.execution_config_json to avoid Temporal bloat.
     """
 
-    # Destination selection
+    # Destination selection (by UUID - advanced)
     target_destinations: Optional[List[UUID]] = Field(
         None, description="If set, ONLY write to these destinations"
     )
     exclude_destinations: Optional[List[UUID]] = Field(None, description="Skip these destinations")
 
+    # Native vector DB toggles (simple boolean flags)
+    skip_qdrant: bool = Field(False, description="Skip writing to native Qdrant destination")
+    skip_vespa: bool = Field(False, description="Skip writing to native Vespa destination")
+
     # Handler toggles
     enable_vector_handlers: bool = Field(True, description="Enable VectorDBHandler")
     enable_raw_data_handler: bool = Field(True, description="Enable RawDataHandler (ARF)")
-    enable_postgres_handler: bool = Field(True, description="Enable PostgresMetadataHandler")
+    enable_postgres_handler: bool = Field(True, description="Enable EntityPostgresHandler")
 
     # Behavior flags
     skip_hash_comparison: bool = Field(False, description="Force INSERT for all entities")
@@ -54,8 +58,9 @@ class SyncExecutionConfig(BaseModel):
         # 2. Warn about replay configs that re-write to ARF
         if self.target_destinations and self.enable_raw_data_handler:
             warnings.warn(
-                "Writing to specific destinations with raw_data_handler enabled may duplicate "
-                "ARF data. Consider disable_raw_data_handler if replaying from ARF.",
+                "Writing to specific destinations with raw_data_handler enabled "
+                "may duplicate ARF data. Consider disable_raw_data_handler if "
+                "replaying from ARF.",
                 stacklevel=2,
             )
 
@@ -63,8 +68,18 @@ class SyncExecutionConfig(BaseModel):
 
     @classmethod
     def default(cls) -> "SyncExecutionConfig":
-        """Normal sync to all destinations."""
+        """Normal sync to all destinations (Qdrant + Vespa)."""
         return cls()
+
+    @classmethod
+    def qdrant_only(cls) -> "SyncExecutionConfig":
+        """Write to Qdrant only, skip Vespa."""
+        return cls(skip_vespa=True)
+
+    @classmethod
+    def vespa_only(cls) -> "SyncExecutionConfig":
+        """Write to Vespa only, skip Qdrant."""
+        return cls(skip_qdrant=True)
 
     @classmethod
     def arf_capture_only(cls) -> "SyncExecutionConfig":

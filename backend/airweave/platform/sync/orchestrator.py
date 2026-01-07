@@ -13,7 +13,7 @@ from airweave.core.shared_models import SyncJobStatus
 from airweave.core.sync_cursor_service import sync_cursor_service
 from airweave.core.sync_job_service import sync_job_service
 from airweave.db.session import get_db_context
-from airweave.platform.sync.context import SyncContext
+from airweave.platform.contexts import SyncContext
 from airweave.platform.sync.entity_pipeline import EntityPipeline
 from airweave.platform.sync.exceptions import EntityProcessingError, SyncFailureError
 from airweave.platform.sync.stream import AsyncSourceStream
@@ -45,18 +45,10 @@ class SyncOrchestrator:
         self.stream = stream  # Stream is now passed in, not created here!
         self.sync_context = sync_context
 
-        # Knobs read from context - use explicit defaults instead of getattr
-        self.should_batch: bool = (
-            sync_context.should_batch if hasattr(sync_context, "should_batch") else True
-        )
-        self.batch_size: int = (
-            sync_context.batch_size if hasattr(sync_context, "batch_size") else 64
-        )
-        self.max_batch_latency_ms: int = (
-            sync_context.max_batch_latency_ms
-            if hasattr(sync_context, "max_batch_latency_ms")
-            else 200
-        )
+        # Batch config from context
+        self.should_batch = sync_context.should_batch
+        self.batch_size = sync_context.batch_size
+        self.max_batch_latency_ms = sync_context.max_batch_latency_ms
 
     async def run(self) -> schemas.Sync:
         """Execute the synchronization process."""
@@ -185,7 +177,7 @@ class SyncOrchestrator:
     async def _process_entities(self) -> None:  # noqa: C901
         """Process entities using micro-batching with bounded inner concurrency."""
         self.sync_context.logger.info(
-            f"Starting pull-based processing from source {self.sync_context.source._name} "
+            f"Starting pull-based processing from source {self.sync_context.source_instance._name} "
             f"(max workers: {self.worker_pool.max_workers}, "
             f"batch_size: {self.batch_size}, max_batch_latency_ms: {self.max_batch_latency_ms})"
         )
@@ -449,10 +441,8 @@ class SyncOrchestrator:
                 self.sync_context.logger.info(
                     "🧹 Starting orphaned entity cleanup phase (first sync - no cursor data)"
                 )
+            # Dispatcher handles ALL handlers: Destination, ARF, and Postgres
             await self.entity_pipeline.cleanup_orphaned_entities(self.sync_context)
-
-            # Also cleanup stale raw data entities
-            await self._cleanup_stale_raw_data_if_needed()
         elif (
             has_cursor_data and not self.sync_context.force_full_sync and source_supports_continuous
         ):
@@ -460,19 +450,6 @@ class SyncOrchestrator:
                 "⏩ Skipping orphaned entity cleanup for INCREMENTAL sync "
                 "(cursor data exists, only changed entities are processed)"
             )
-
-    async def _cleanup_stale_raw_data_if_needed(self) -> None:
-        """Cleanup stale raw data entities after full sync."""
-        try:
-            from airweave.platform.sync import raw_data_service
-
-            # Only cleanup if we were tracking
-            deleted = await raw_data_service.cleanup_stale_entities(self.sync_context)
-            if deleted:
-                self.sync_context.logger.info(f"🧹 Cleaned up {deleted} stale raw data entities")
-
-        except Exception as e:
-            self.sync_context.logger.warning(f"Failed to cleanup stale raw data: {e}")
 
     async def _finalize_progress_and_trackers(
         self, status: SyncJobStatus, error: Optional[str] = None

@@ -114,6 +114,190 @@ def _require_admin_permission(ctx: ApiContext, permission: FeatureFlagEnum) -> N
     raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def _build_sort_subqueries(query, sort_by: str):
+    """Build sort subqueries based on sort_by field.
+
+    Args:
+        query: The base SQLAlchemy query to extend
+        sort_by: Field to sort by
+
+    Returns:
+        Tuple of (query, subqueries_dict) where subqueries_dict contains named subqueries.
+    """
+    from datetime import datetime
+
+    from sqlalchemy import select as sa_select
+
+    from airweave.models.billing_period import BillingPeriod
+    from airweave.models.source_connection import SourceConnection
+    from airweave.models.usage import Usage
+    from airweave.models.user import User
+    from airweave.schemas.billing_period import BillingPeriodStatus
+
+    subqueries = {}
+
+    # For usage-based sorting, join Usage and BillingPeriod
+    if sort_by in ["entity_count", "query_count"]:
+        now = datetime.utcnow()
+        query = query.outerjoin(
+            BillingPeriod,
+            and_(
+                BillingPeriod.organization_id == Organization.id,
+                BillingPeriod.period_start <= now,
+                BillingPeriod.period_end > now,
+                BillingPeriod.status.in_(
+                    [
+                        BillingPeriodStatus.ACTIVE,
+                        BillingPeriodStatus.TRIAL,
+                        BillingPeriodStatus.GRACE,
+                    ]
+                ),
+            ),
+        ).outerjoin(Usage, Usage.billing_period_id == BillingPeriod.id)
+        subqueries["Usage"] = Usage
+
+    # For user_count sorting
+    if sort_by == "user_count":
+        user_count_subq = (
+            sa_select(
+                UserOrganization.organization_id,
+                func.count(UserOrganization.user_id).label("user_count"),
+            )
+            .group_by(UserOrganization.organization_id)
+            .subquery()
+        )
+        query = query.outerjoin(
+            user_count_subq, Organization.id == user_count_subq.c.organization_id
+        )
+        subqueries["user_count_subq"] = user_count_subq
+
+    # For source_connection_count sorting
+    if sort_by == "source_connection_count":
+        source_connection_count_subq = (
+            sa_select(
+                SourceConnection.organization_id,
+                func.count(SourceConnection.id).label("source_connection_count"),
+            )
+            .group_by(SourceConnection.organization_id)
+            .subquery()
+        )
+        query = query.outerjoin(
+            source_connection_count_subq,
+            Organization.id == source_connection_count_subq.c.organization_id,
+        )
+        subqueries["source_connection_count_subq"] = source_connection_count_subq
+
+    # For last_active_at sorting
+    if sort_by == "last_active_at":
+        max_active_subq = (
+            sa_select(
+                UserOrganization.organization_id,
+                func.max(User.last_active_at).label("max_last_active"),
+            )
+            .join(User, UserOrganization.user_id == User.id)
+            .group_by(UserOrganization.organization_id)
+            .subquery()
+        )
+        query = query.outerjoin(
+            max_active_subq, Organization.id == max_active_subq.c.organization_id
+        )
+        subqueries["max_active_subq"] = max_active_subq
+
+    return query, subqueries
+
+
+def _get_sort_column(sort_by: str, subqueries: dict):
+    """Get the SQLAlchemy column to sort by."""
+    from airweave.models.usage import Usage
+
+    # Map sort_by to column
+    column_map = {
+        "billing_plan": OrganizationBilling.billing_plan,
+        "billing_status": OrganizationBilling.billing_status,
+        "entity_count": Usage.entities,
+        "query_count": Usage.queries,
+        "is_member": Organization.created_at,  # Handled client-side
+    }
+
+    if sort_by in column_map:
+        return column_map[sort_by]
+    if sort_by == "user_count" and "user_count_subq" in subqueries:
+        return subqueries["user_count_subq"].c.user_count
+    if sort_by == "source_connection_count" and "source_connection_count_subq" in subqueries:
+        return subqueries["source_connection_count_subq"].c.source_connection_count
+    if sort_by == "last_active_at" and "max_active_subq" in subqueries:
+        return subqueries["max_active_subq"].c.max_last_active
+    if hasattr(Organization, sort_by):
+        return getattr(Organization, sort_by)
+    return Organization.created_at  # Default
+
+
+async def _update_or_create_membership(
+    db: AsyncSession, ctx: ApiContext, organization_id: UUID, role: str
+) -> bool:
+    """Update existing membership or create new one. Returns True if membership changed."""
+    # Check if user is already a member
+    existing_user_org = None
+    for user_org in ctx.user.user_organizations:
+        if user_org.organization.id == organization_id:
+            existing_user_org = user_org
+            break
+
+    if existing_user_org:
+        return await _update_membership_role(db, ctx, organization_id, role, existing_user_org)
+
+    return await _create_new_membership(db, ctx, organization_id, role)
+
+
+async def _update_membership_role(
+    db: AsyncSession, ctx: ApiContext, organization_id: UUID, role: str, existing_user_org
+) -> bool:
+    """Update role if different, return True if changed."""
+    if existing_user_org.role == role:
+        ctx.logger.info(
+            f"Admin {ctx.user.email} already member of org {organization_id} with role {role}"
+        )
+        return False
+
+    from sqlalchemy import update
+
+    stmt = (
+        update(UserOrganization)
+        .where(
+            UserOrganization.user_id == ctx.user.id,
+            UserOrganization.organization_id == organization_id,
+        )
+        .values(role=role)
+    )
+    await db.execute(stmt)
+    await db.commit()
+    ctx.logger.info(f"Admin {ctx.user.email} updated role in org {organization_id} to {role}")
+    return True
+
+
+async def _create_new_membership(
+    db: AsyncSession, ctx: ApiContext, organization_id: UUID, role: str
+) -> bool:
+    """Create new membership, return True if successful."""
+    try:
+        user_org = UserOrganization(
+            user_id=ctx.user.id,
+            organization_id=organization_id,
+            role=role,
+            is_primary=False,
+        )
+        db.add(user_org)
+        await db.commit()
+        ctx.logger.info(
+            f"Admin {ctx.user.email} added self to org {organization_id} with role {role}"
+        )
+        return True
+    except Exception as e:
+        ctx.logger.error(f"Failed to add admin to organization: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add user to organization: {str(e)}")
+
+
 @router.get("/organizations", response_model=List[schemas.OrganizationMetrics])
 async def list_all_organizations(
     db: AsyncSession = Depends(deps.get_db),
@@ -147,125 +331,20 @@ async def list_all_organizations(
     """
     _require_admin(ctx)
 
-    # Import for joins
-    from datetime import datetime
-
-    from airweave.models.billing_period import BillingPeriod
-    from airweave.models.usage import Usage
-    from airweave.models.user import User
-    from airweave.schemas.billing_period import BillingPeriodStatus
-
     # Build the base query with billing join
     query = select(Organization).outerjoin(
         OrganizationBilling, Organization.id == OrganizationBilling.organization_id
     )
 
-    # For usage-based sorting, we need to join Usage and BillingPeriod
-    # Only add these joins if sorting by usage fields
-    usage_sort_fields = ["entity_count", "query_count"]
-    if sort_by in usage_sort_fields:
-        now = datetime.utcnow()
-        query = query.outerjoin(
-            BillingPeriod,
-            and_(
-                BillingPeriod.organization_id == Organization.id,
-                BillingPeriod.period_start <= now,
-                BillingPeriod.period_end > now,
-                BillingPeriod.status.in_(
-                    [
-                        BillingPeriodStatus.ACTIVE,
-                        BillingPeriodStatus.TRIAL,
-                        BillingPeriodStatus.GRACE,
-                    ]
-                ),
-            ),
-        ).outerjoin(Usage, Usage.billing_period_id == BillingPeriod.id)
-
-    # For user_count sorting, create subquery
-    if sort_by == "user_count":
-        from sqlalchemy import select as sa_select
-
-        user_count_subq = (
-            sa_select(
-                UserOrganization.organization_id,
-                func.count(UserOrganization.user_id).label("user_count"),
-            )
-            .group_by(UserOrganization.organization_id)
-            .subquery()
-        )
-
-        query = query.outerjoin(
-            user_count_subq, Organization.id == user_count_subq.c.organization_id
-        )
-
-    # For source_connection_count sorting, create subquery
-    if sort_by == "source_connection_count":
-        from sqlalchemy import select as sa_select
-
-        from airweave.models.source_connection import SourceConnection
-
-        source_connection_count_subq = (
-            sa_select(
-                SourceConnection.organization_id,
-                func.count(SourceConnection.id).label("source_connection_count"),
-            )
-            .group_by(SourceConnection.organization_id)
-            .subquery()
-        )
-
-        query = query.outerjoin(
-            source_connection_count_subq,
-            Organization.id == source_connection_count_subq.c.organization_id,
-        )
-
-    # For last_active_at sorting, join with User through UserOrganization
-    if sort_by == "last_active_at":
-        # Subquery to get max last_active_at per organization
-        from sqlalchemy import select as sa_select
-
-        max_active_subq = (
-            sa_select(
-                UserOrganization.organization_id,
-                func.max(User.last_active_at).label("max_last_active"),
-            )
-            .join(User, UserOrganization.user_id == User.id)
-            .group_by(UserOrganization.organization_id)
-            .subquery()
-        )
-
-        query = query.outerjoin(
-            max_active_subq, Organization.id == max_active_subq.c.organization_id
-        )
+    # Build sort subqueries based on sort_by field
+    query, subqueries = _build_sort_subqueries(query, sort_by)
 
     # Apply search filter
     if search:
         query = query.where(Organization.name.ilike(f"%{search}%"))
 
-    # Apply sorting - handle special cases for joined fields
-    # Note: is_member sorting is handled client-side since it requires admin user context
-    sort_column = None
-    if sort_by == "billing_plan":
-        sort_column = OrganizationBilling.billing_plan
-    elif sort_by == "billing_status":
-        sort_column = OrganizationBilling.billing_status
-    elif sort_by == "entity_count":
-        sort_column = Usage.entities
-    elif sort_by == "query_count":
-        sort_column = Usage.queries
-    elif sort_by == "user_count":
-        sort_column = user_count_subq.c.user_count
-    elif sort_by == "source_connection_count":
-        sort_column = source_connection_count_subq.c.source_connection_count
-    elif sort_by == "last_active_at":
-        sort_column = max_active_subq.c.max_last_active
-    elif sort_by == "is_member":
-        # This will be handled client-side, use created_at as default
-        sort_column = Organization.created_at
-    elif hasattr(Organization, sort_by):
-        sort_column = getattr(Organization, sort_by)
-    else:
-        # Default to created_at if invalid field
-        sort_column = Organization.created_at
+    # Apply sorting (is_member sorting handled client-side)
+    sort_column = _get_sort_column(sort_by, subqueries)
 
     if sort_order.lower() == "asc":
         query = query.order_by(sort_column.asc().nullslast())
@@ -434,59 +513,7 @@ async def add_self_to_organization(
         "org_metadata": org.org_metadata,
     }
 
-    membership_changed = False
-
-    # Check if user is already a member
-    existing_user_org = None
-    for user_org in ctx.user.user_organizations:
-        if user_org.organization.id == organization_id:
-            existing_user_org = user_org
-            break
-
-    if existing_user_org:
-        # Update role if different
-        if existing_user_org.role != role:
-            from sqlalchemy import update
-
-            stmt = (
-                update(UserOrganization)
-                .where(
-                    UserOrganization.user_id == ctx.user.id,
-                    UserOrganization.organization_id == organization_id,
-                )
-                .values(role=role)
-            )
-            await db.execute(stmt)
-            await db.commit()
-            membership_changed = True
-            ctx.logger.info(
-                f"Admin {ctx.user.email} updated role in org {organization_id} to {role}"
-            )
-        else:
-            ctx.logger.info(
-                f"Admin {ctx.user.email} already member of org {organization_id} with role {role}"
-            )
-    else:
-        # Add user to organization - create UserOrganization relationship directly
-        try:
-            user_org = UserOrganization(
-                user_id=ctx.user.id,
-                organization_id=organization_id,
-                role=role,
-                is_primary=False,
-            )
-            db.add(user_org)
-            await db.commit()
-            membership_changed = True
-            ctx.logger.info(
-                f"Admin {ctx.user.email} added self to org {organization_id} with role {role}"
-            )
-        except Exception as e:
-            ctx.logger.error(f"Failed to add admin to organization: {e}")
-            await db.rollback()
-            raise HTTPException(
-                status_code=500, detail=f"Failed to add user to organization: {str(e)}"
-            )
+    membership_changed = await _update_or_create_membership(db, ctx, organization_id, role)
 
     # Also add to Auth0 if available
     try:
@@ -875,7 +902,7 @@ async def resync_with_execution_config(
     ctx: ApiContext = Depends(deps.get_context),
     execution_config: Optional[SyncExecutionConfig] = Body(
         None,
-        description="Optional execution config for controlling sync behavior (handler toggles, flags, etc.)",
+        description="Optional execution config for sync behavior (handler toggles, etc.)",
         examples=[
             {
                 "enable_vector_handlers": False,
@@ -909,8 +936,9 @@ async def resync_with_execution_config(
         HTTPException: If user is not admin or sync not found
 
     Example execution configs:
-        - ARF capture only: {"enable_vector_handlers": False, "enable_postgres_handler": False}
-        - Dry run: {"enable_vector_handlers": False, "enable_raw_data_handler": False, "enable_postgres_handler": False}
+        - ARF capture only: {"enable_vector_handlers": false, "enable_postgres_handler": false}
+        - Dry run: {"enable_vector_handlers": false, "enable_raw_data_handler": false,
+          "enable_postgres_handler": false}
         - Target specific destination: {"target_destinations": ["<uuid>"]}
     """
     _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)

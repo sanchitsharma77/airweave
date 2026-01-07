@@ -1,23 +1,23 @@
 """Action dispatcher for concurrent handler execution.
 
-Dispatches resolved actions to all registered handlers concurrently,
+Dispatches resolved entity actions to all registered handlers concurrently,
 implementing all-or-nothing semantics where any failure fails the sync.
 """
 
 import asyncio
 from typing import TYPE_CHECKING, List
 
-from airweave.platform.sync.actions.types import ActionBatch
+from airweave.platform.sync.actions.entity.types import EntityActionBatch
 from airweave.platform.sync.exceptions import SyncFailureError
-from airweave.platform.sync.handlers.base import ActionHandler
-from airweave.platform.sync.handlers.postgres import PostgresMetadataHandler
+from airweave.platform.sync.handlers.entity_postgres import EntityPostgresHandler
+from airweave.platform.sync.handlers.protocol import EntityActionHandler
 
 if TYPE_CHECKING:
-    from airweave.platform.sync.context import SyncContext
+    from airweave.platform.contexts import SyncContext
 
 
-class ActionDispatcher:
-    """Dispatches actions to all registered handlers concurrently.
+class EntityActionDispatcher:
+    """Dispatches entity actions to all registered handlers concurrently.
 
     Implements all-or-nothing semantics:
     - Destination handlers (Qdrant, RawData) run concurrently
@@ -31,20 +31,20 @@ class ActionDispatcher:
     3. If any fails → SyncFailureError, no Postgres writes
     """
 
-    def __init__(self, handlers: List[ActionHandler]):
+    def __init__(self, handlers: List[EntityActionHandler]):
         """Initialize dispatcher with handlers.
 
         Args:
             handlers: List of handlers to dispatch to (configured at factory time)
-                     PostgresMetadataHandler is automatically separated for
+                     EntityPostgresHandler is automatically separated for
                      sequential execution after other handlers.
         """
         # Separate postgres handler from destination handlers
-        self._destination_handlers: List[ActionHandler] = []
-        self._postgres_handler: PostgresMetadataHandler | None = None
+        self._destination_handlers: List[EntityActionHandler] = []
+        self._postgres_handler: EntityPostgresHandler | None = None
 
         for handler in handlers:
-            if isinstance(handler, PostgresMetadataHandler):
+            if isinstance(handler, EntityPostgresHandler):
                 self._postgres_handler = handler
             else:
                 self._destination_handlers.append(handler)
@@ -55,7 +55,7 @@ class ActionDispatcher:
 
     async def dispatch(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Dispatch action batch to all handlers.
@@ -73,12 +73,12 @@ class ActionDispatcher:
             SyncFailureError: If any handler fails
         """
         if not batch.has_mutations:
-            sync_context.logger.debug("[Dispatcher] No mutations to dispatch")
+            sync_context.logger.debug("[EntityDispatcher] No mutations to dispatch")
             return
 
         handler_names = [h.name for h in self._destination_handlers]
         sync_context.logger.debug(
-            f"[Dispatcher] Dispatching {batch.summary()} to handlers: {handler_names}"
+            f"[EntityDispatcher] Dispatching {batch.summary()} to handlers: {handler_names}"
         )
 
         # Step 1: Execute destination handlers concurrently
@@ -88,17 +88,22 @@ class ActionDispatcher:
         if self._postgres_handler:
             await self._dispatch_to_postgres(batch, sync_context)
 
-        sync_context.logger.debug("[Dispatcher] All handlers completed successfully")
+        sync_context.logger.debug("[EntityDispatcher] All handlers completed successfully")
 
     async def dispatch_orphan_cleanup(
         self,
         orphan_entity_ids: List[str],
         sync_context: "SyncContext",
     ) -> None:
-        """Dispatch orphan cleanup to all destination handlers.
+        """Dispatch orphan cleanup to ALL handlers concurrently.
 
         Called at the end of sync for entities that exist in DB but were not
         encountered during this sync run.
+
+        Each handler independently cleans up its own storage:
+        - DestinationHandler → vector stores (Qdrant, Vespa)
+        - ArfHandler → ARF storage
+        - EntityPostgresHandler → postgres DB
 
         Args:
             orphan_entity_ids: Entity IDs to clean up
@@ -110,33 +115,41 @@ class ActionDispatcher:
         if not orphan_entity_ids:
             return
 
-        sync_context.logger.debug(
-            f"[Dispatcher] Dispatching orphan cleanup for {len(orphan_entity_ids)} entities"
+        # Collect ALL handlers
+        all_handlers = list(self._destination_handlers)
+        if self._postgres_handler:
+            all_handlers.append(self._postgres_handler)
+
+        if not all_handlers:
+            return
+
+        sync_context.logger.info(
+            f"[EntityDispatcher] Dispatching orphan cleanup for {len(orphan_entity_ids)} entities "
+            f"to {len(all_handlers)} handlers"
         )
 
-        # Execute cleanup on all destination handlers concurrently
+        # Execute all handlers concurrently
         tasks = [
             asyncio.create_task(
                 self._dispatch_orphan_to_handler(handler, orphan_entity_ids, sync_context),
                 name=f"orphan-{handler.name}",
             )
-            for handler in self._destination_handlers
+            for handler in all_handlers
         ]
-
-        if not tasks:
-            return
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Check for failures
         failures = []
-        for handler, result in zip(self._destination_handlers, results, strict=False):
+        for handler, result in zip(all_handlers, results, strict=False):
             if isinstance(result, Exception):
                 failures.append((handler.name, result))
 
         if failures:
             failure_msgs = [f"{name}: {err}" for name, err in failures]
-            raise SyncFailureError(f"[Dispatcher] Orphan cleanup failed: {', '.join(failure_msgs)}")
+            raise SyncFailureError(
+                f"[EntityDispatcher] Orphan cleanup failed: {', '.join(failure_msgs)}"
+            )
 
     # -------------------------------------------------------------------------
     # Internal Methods
@@ -144,7 +157,7 @@ class ActionDispatcher:
 
     async def _dispatch_to_destinations(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Dispatch to all destination handlers concurrently.
@@ -179,12 +192,14 @@ class ActionDispatcher:
 
         if failures:
             failure_msgs = [f"{name}: {err}" for name, err in failures]
-            sync_context.logger.error(f"[Dispatcher] Handler failures: {failure_msgs}")
-            raise SyncFailureError(f"[Dispatcher] Handler(s) failed: {', '.join(failure_msgs)}")
+            sync_context.logger.error(f"[EntityDispatcher] Handler failures: {failure_msgs}")
+            raise SyncFailureError(
+                f"[EntityDispatcher] Handler(s) failed: {', '.join(failure_msgs)}"
+            )
 
     async def _dispatch_to_postgres(
         self,
-        batch: ActionBatch,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Dispatch to PostgreSQL metadata handler (after destinations succeed).
@@ -201,13 +216,15 @@ class ActionDispatcher:
         except SyncFailureError:
             raise
         except Exception as e:
-            sync_context.logger.error(f"[Dispatcher] PostgreSQL handler failed: {e}", exc_info=True)
-            raise SyncFailureError(f"[Dispatcher] PostgreSQL failed: {e}")
+            sync_context.logger.error(
+                f"[EntityDispatcher] PostgreSQL handler failed: {e}", exc_info=True
+            )
+            raise SyncFailureError(f"[EntityDispatcher] PostgreSQL failed: {e}")
 
     async def _dispatch_to_handler(
         self,
-        handler: ActionHandler,
-        batch: ActionBatch,
+        handler: EntityActionHandler,
+        batch: EntityActionBatch,
         sync_context: "SyncContext",
     ) -> None:
         """Dispatch to single handler with error wrapping.
@@ -226,13 +243,13 @@ class ActionDispatcher:
             raise
         except Exception as e:
             sync_context.logger.error(
-                f"[Dispatcher] Handler {handler.name} failed: {e}", exc_info=True
+                f"[EntityDispatcher] Handler {handler.name} failed: {e}", exc_info=True
             )
             raise SyncFailureError(f"Handler {handler.name} failed: {e}")
 
     async def _dispatch_orphan_to_handler(
         self,
-        handler: ActionHandler,
+        handler: EntityActionHandler,
         orphan_entity_ids: List[str],
         sync_context: "SyncContext",
     ) -> None:
@@ -252,7 +269,7 @@ class ActionDispatcher:
             raise
         except Exception as e:
             sync_context.logger.error(
-                f"[Dispatcher] Handler {handler.name} orphan cleanup failed: {e}",
+                f"[EntityDispatcher] Handler {handler.name} orphan cleanup failed: {e}",
                 exc_info=True,
             )
             raise SyncFailureError(f"Handler {handler.name} orphan cleanup failed: {e}")

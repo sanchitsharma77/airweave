@@ -29,6 +29,7 @@ __all__ = [
     "BatchContext",
     "CleanupContext",
     "DestinationsContext",
+    "HandlerContext",
     "InfraContext",
     "ScopeContext",
     "SourceContext",
