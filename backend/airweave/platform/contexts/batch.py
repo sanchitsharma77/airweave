@@ -8,7 +8,6 @@ class BatchContext:
     """Micro-batching configuration for entity processing.
 
     Controls HOW entities are processed (batching behavior).
-    For WHAT to process (handlers, destinations), see SyncExecutionConfig.
 
     Attributes:
         should_batch: Whether to use micro-batched pipeline

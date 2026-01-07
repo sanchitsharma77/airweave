@@ -477,7 +477,7 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
     # Calculate cutoff times
     now = utc_now_naive()
     cancelling_pending_cutoff = now - timedelta(minutes=3)
-    running_cutoff = now - timedelta(minutes=5)
+    running_cutoff = now - timedelta(minutes=15)  # Jobs older than 15 min with no activity
 
     stuck_job_count = 0
     cancelled_count = 0
@@ -510,11 +510,23 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
                 started_before=running_cutoff,
             )
 
-            logger.info(f"Found {len(running_jobs)} RUNNING jobs that started > 5 minutes ago")
+            logger.info(
+                f"Found {len(running_jobs)} RUNNING jobs started >15min ago (will check activity)"
+            )
 
             # Check which RUNNING jobs have no recent activity (via Redis snapshot)
+            # Skip ARF-only jobs (they don't update entity stats, so no activity expected)
             stuck_running_jobs = []
             for job in running_jobs:
+                # Skip ARF-only backfills (no postgres handler = no stats updates)
+                if job.execution_config_json:
+                    is_arf_only = not job.execution_config_json.get("enable_postgres_handler", True)
+                    if is_arf_only:
+                        logger.debug(
+                            f"Skipping ARF-only job {job.id} from stuck detection "
+                            f"(no stats updates expected)"
+                        )
+                        continue
                 job_id_str = str(job.id)
                 snapshot_key = f"sync_progress_snapshot:{job_id_str}"
 
@@ -530,6 +542,7 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
 
                     if not last_update_str:
                         # Old snapshot without timestamp - fall back to DB check
+                        # (ARF-only jobs already skipped above, so safe to check DB)
                         latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
                             db=db, sync_job_id=job.id
                         )
@@ -567,6 +580,7 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
                     logger.warning(
                         f"Error checking job {job_id_str}: {e}, falling back to DB check"
                     )
+                    # ARF-only jobs already skipped above, so safe to check DB
                     latest_entity_time = await crud.entity.get_latest_entity_time_for_job(
                         db=db, sync_job_id=job.id
                     )
@@ -574,7 +588,7 @@ async def cleanup_stuck_sync_jobs_activity() -> None:
                         stuck_running_jobs.append(job)
 
             logger.info(
-                f"Found {len(stuck_running_jobs)} RUNNING jobs with no activity in last 5 minutes"
+                f"Found {len(stuck_running_jobs)} RUNNING jobs with no activity in last 15 minutes"
             )
 
             # Combine all stuck jobs

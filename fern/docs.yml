@@ -39,6 +39,8 @@ navigation:
       path: docs/pages/framework-integrations/llamaindex.mdx
     - page: Vercel AI SDK
       path: docs/pages/framework-integrations/vercel-ai-sdk.mdx
+    - page: Google Antigravity
+      path: docs/pages/framework-integrations/google-antigravity.mdx
   - section: Authentication
     contents:
     - section: Auth Providers
