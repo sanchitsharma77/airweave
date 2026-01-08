@@ -1,4 +1,10 @@
-"""Admin-only API endpoints for organization management."""
+"""Admin-only API endpoints for organization management.
+
+TODO: Enhance CRUD layer to support bypassing organization filtering cleanly.
+Currently admin endpoints manually construct SQLAlchemy queries to bypass ctx-based
+org filtering. Consider adding a `skip_org_filter=True` parameter to CRUD methods
+or a dedicated `crud_admin` module for cross-org operations.
+"""
 
 from datetime import datetime
 from enum import Enum
