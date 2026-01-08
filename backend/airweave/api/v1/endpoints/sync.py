@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from typing import Any, AsyncGenerator, List, Optional, Union
+from typing import Any, AsyncGenerator, List, Optional
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, Query
@@ -18,38 +18,6 @@ from airweave.core.pubsub import core_pubsub
 from airweave.core.sync_service import sync_service
 
 router = TrailingSlashRouter()
-
-
-@router.get("/", response_model=Union[list[schemas.Sync], list[schemas.SyncWithSourceConnection]])
-async def list_syncs(
-    *,
-    db: AsyncSession = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
-    with_source_connection: bool = False,
-    ctx: ApiContext = Depends(deps.get_context),
-) -> list[schemas.Sync] | list[schemas.SyncWithSourceConnection]:
-    """List all syncs for the current user.
-
-    Args:
-    -----
-        db: The database session
-        skip: The number of syncs to skip
-        limit: The number of syncs to return
-        with_source_connection: Whether to include the source connection in the response
-        ctx: The current authentication context
-
-    Returns:
-    --------
-        list[schemas.Sync] | list[schemas.SyncWithSourceConnection]: A list of syncs
-    """
-    return await sync_service.list_syncs(
-        db=db,
-        ctx=ctx,
-        skip=skip,
-        limit=limit,
-        with_source_connection=with_source_connection,
-    )
 
 
 @router.get("/jobs", response_model=list[schemas.SyncJob])

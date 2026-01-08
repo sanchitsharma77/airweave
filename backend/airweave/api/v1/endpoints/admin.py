@@ -956,12 +956,13 @@ async def resync_with_execution_config(
     # Bypass organization filtering for all queries (admin access)
     from sqlalchemy import select as sa_select
 
-    from airweave.core.shared_models import SyncJobStatus
+    from airweave.core.shared_models import IntegrationType, SyncJobStatus
     from airweave.db.unit_of_work import UnitOfWork
     from airweave.models.collection import Collection
     from airweave.models.connection import Connection
     from airweave.models.source_connection import SourceConnection
     from airweave.models.sync import Sync
+    from airweave.models.sync_connection import SyncConnection
     from airweave.models.sync_job import SyncJob
 
     # Get the sync without organization filtering
@@ -969,6 +970,25 @@ async def resync_with_execution_config(
     sync_obj = result.scalar_one_or_none()
     if not sync_obj:
         raise NotFoundException(f"Sync {sync_id} not found")
+
+    # Get connection IDs from SyncConnection table (bypass org filtering)
+    sync_connections_result = await db.execute(
+        sa_select(SyncConnection, Connection)
+        .join(Connection, SyncConnection.connection_id == Connection.id)
+        .where(SyncConnection.sync_id == sync_id)
+    )
+    sync_connections = sync_connections_result.all()
+
+    source_connection_id = None
+    destination_connection_ids = []
+    for _sync_conn, conn in sync_connections:
+        if conn.integration_type == IntegrationType.SOURCE:
+            source_connection_id = conn.id
+        else:
+            destination_connection_ids.append(conn.id)
+
+    if not source_connection_id:
+        raise NotFoundException(f"Source connection not found for sync {sync_id}")
 
     # Check for existing active jobs (bypass org filtering)
     active_jobs_result = await db.execute(
@@ -990,8 +1010,26 @@ async def resync_with_execution_config(
             status_code=400, detail=f"Cannot start new sync: a sync job is already {job_status}"
         )
 
-    # Create sync job with execution config (bypass org filtering)
-    sync_schema = schemas.Sync.model_validate(sync_obj, from_attributes=True)
+    # Enrich sync dict with connection IDs for schema validation
+    sync_dict = {
+        "id": sync_obj.id,
+        "organization_id": sync_obj.organization_id,
+        "name": sync_obj.name,
+        "description": sync_obj.description,
+        "status": sync_obj.status,
+        "cron_schedule": sync_obj.cron_schedule,
+        "next_scheduled_run": sync_obj.next_scheduled_run,
+        "temporal_schedule_id": sync_obj.temporal_schedule_id,
+        "sync_type": sync_obj.sync_type,
+        "sync_metadata": sync_obj.sync_metadata,
+        "created_at": sync_obj.created_at,
+        "modified_at": sync_obj.modified_at,
+        "created_by_email": sync_obj.created_by_email,
+        "modified_by_email": sync_obj.modified_by_email,
+        "source_connection_id": source_connection_id,
+        "destination_connection_ids": destination_connection_ids,
+    }
+    sync_schema = schemas.Sync.model_validate(sync_dict)
     async with UnitOfWork(db) as uow:
         sync_job_obj = SyncJob(
             sync_id=sync_id,
