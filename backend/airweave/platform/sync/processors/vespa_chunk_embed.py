@@ -187,7 +187,6 @@ class VespaChunkEmbedProcessor(ContentProcessor):
             await sync_context.entity_tracker.record_skipped(len(unsupported))
 
         if not supported:
-            # Return empty chunk lists for all entities
             return [[] for _ in entities]
 
         chunker = CodeChunker()
