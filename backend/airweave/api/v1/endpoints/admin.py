@@ -1,4 +1,10 @@
-"""Admin-only API endpoints for organization management."""
+"""Admin-only API endpoints for organization management.
+
+TODO: Enhance CRUD layer to support bypassing organization filtering cleanly.
+Currently admin endpoints manually construct SQLAlchemy queries to bypass ctx-based
+org filtering. Consider adding a `skip_org_filter=True` parameter to CRUD methods
+or a dedicated `crud_admin` module for cross-org operations.
+"""
 
 from datetime import datetime
 from enum import Enum
@@ -18,8 +24,6 @@ from airweave.core.context_cache_service import context_cache
 from airweave.core.exceptions import InvalidStateError, NotFoundException
 from airweave.core.organization_service import organization_service
 from airweave.core.shared_models import FeatureFlag as FeatureFlagEnum
-from airweave.core.source_connection_service_helpers import source_connection_helpers
-from airweave.core.sync_service import sync_service
 from airweave.core.temporal_service import temporal_service
 from airweave.crud.crud_organization_billing import organization_billing
 from airweave.db.unit_of_work import UnitOfWork
@@ -949,51 +953,99 @@ async def resync_with_execution_config(
         f"Admin triggering resync for sync {sync_id} with execution config: {execution_config}"
     )
 
-    # Get the sync to validate it exists
-    sync_obj = await crud.sync.get(db, id=sync_id, ctx=ctx)
+    # Bypass organization filtering for all queries (admin access)
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.shared_models import SyncJobStatus
+    from airweave.db.unit_of_work import UnitOfWork
+    from airweave.models.collection import Collection
+    from airweave.models.connection import Connection
+    from airweave.models.source_connection import SourceConnection
+    from airweave.models.sync import Sync
+    from airweave.models.sync_job import SyncJob
+
+    # Get the sync without organization filtering
+    result = await db.execute(sa_select(Sync).where(Sync.id == sync_id))
+    sync_obj = result.scalar_one_or_none()
     if not sync_obj:
         raise NotFoundException(f"Sync {sync_id} not found")
 
-    # Create sync job with execution config (convert Pydantic to dict for DB storage)
-    sync, sync_job = await sync_service.trigger_sync_run(
-        db=db,
-        sync_id=sync_id,
-        ctx=ctx,
-        execution_config=execution_config.model_dump() if execution_config else None,
+    # Check for existing active jobs (bypass org filtering)
+    active_jobs_result = await db.execute(
+        sa_select(SyncJob).where(
+            SyncJob.sync_id == sync_id,
+            SyncJob.status.in_(
+                [
+                    SyncJobStatus.PENDING,
+                    SyncJobStatus.RUNNING,
+                    SyncJobStatus.CANCELLING,
+                ]
+            ),
+        )
     )
+    active_jobs = list(active_jobs_result.scalars().all())
+    if active_jobs:
+        job_status = active_jobs[0].status.value.lower()
+        raise HTTPException(
+            status_code=400, detail=f"Cannot start new sync: a sync job is already {job_status}"
+        )
 
-    # Get source connection and collection for Temporal workflow
-    source_conn = await crud.source_connection.get_by_sync_id(db=db, sync_id=sync.id, ctx=ctx)
+    # Create sync job with execution config (bypass org filtering)
+    sync_schema = schemas.Sync.model_validate(sync_obj, from_attributes=True)
+    async with UnitOfWork(db) as uow:
+        sync_job_obj = SyncJob(
+            sync_id=sync_id,
+            organization_id=sync_obj.organization_id,
+            status=SyncJobStatus.PENDING,
+            execution_config_json=execution_config.model_dump() if execution_config else None,
+        )
+        uow.session.add(sync_job_obj)
+        await uow.commit()
+        await uow.session.refresh(sync_job_obj)
+
+    sync_job_schema = schemas.SyncJob.model_validate(sync_job_obj, from_attributes=True)
+
+    # Get source connection (bypass org filtering)
+    source_conn_result = await db.execute(
+        sa_select(SourceConnection).where(SourceConnection.sync_id == sync_id)
+    )
+    source_conn = source_conn_result.scalar_one_or_none()
     if not source_conn:
         raise NotFoundException(f"Source connection not found for sync {sync_id}")
 
-    collection = await crud.collection.get_by_readable_id(
-        db=db, readable_id=source_conn.readable_collection_id, ctx=ctx
+    # Get collection (bypass org filtering)
+    collection_result = await db.execute(
+        sa_select(Collection).where(Collection.readable_id == source_conn.readable_collection_id)
     )
+    collection = collection_result.scalar_one_or_none()
     if not collection:
         raise NotFoundException(f"Collection {source_conn.readable_collection_id} not found")
 
     collection_schema = schemas.Collection.model_validate(collection, from_attributes=True)
 
-    # Get the Connection object (not SourceConnection) for Temporal
-    connection_schema = await source_connection_helpers.get_connection_for_source_connection(
-        db=db, source_connection=source_conn, ctx=ctx
+    # Get the Connection object (bypass org filtering)
+    connection_result = await db.execute(
+        sa_select(Connection).where(Connection.id == source_conn.connection_id)
     )
+    connection = connection_result.scalar_one_or_none()
+    if not connection:
+        raise NotFoundException("Connection not found for source connection")
+    connection_schema = schemas.Connection.model_validate(connection, from_attributes=True)
 
     # Dispatch to Temporal
-    ctx.logger.info(f"Dispatching sync job {sync_job.id} to Temporal with execution config")
+    ctx.logger.info(f"Dispatching sync job {sync_job_schema.id} to Temporal with execution config")
     await temporal_service.run_source_connection_workflow(
-        sync=sync,
-        sync_job=sync_job,
+        sync=sync_schema,
+        sync_job=sync_job_schema,
         collection=collection_schema,
         connection=connection_schema,
         ctx=ctx,
         force_full_sync=False,
     )
 
-    ctx.logger.info(f"✅ Admin resync job {sync_job.id} dispatched to Temporal")
+    ctx.logger.info(f"✅ Admin resync job {sync_job_schema.id} dispatched to Temporal")
 
-    return sync_job
+    return sync_job_schema
 
 
 # =============================================================================
