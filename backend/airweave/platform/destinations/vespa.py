@@ -537,14 +537,14 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Selection expression for this sync within this collection
-        selection = (
-            f"airweave_system_metadata_sync_id=='{sync_id}' and "
-            f"airweave_system_metadata_collection_id=='{self.collection_id}'"
-        )
-
-        # Delete from all schemas
+        # Delete from all schemas (each schema handles its own field qualification)
         for schema in self._get_all_vespa_schemas():
+            # Build schema-qualified selection expression
+            # Note: Document selection language requires explicit schema.field references
+            selection = (
+                f"{schema}.airweave_system_metadata_sync_id=='{sync_id}' and "
+                f"{schema}.airweave_system_metadata_collection_id=='{self.collection_id}'"
+            )
             await self._delete_by_selection(schema, selection)
 
     async def delete_by_collection_id(self, collection_id: UUID) -> None:
@@ -559,11 +559,11 @@ class VespaDestination(VectorDBDestination):
         if not self.app:
             raise RuntimeError("Vespa client not initialized")
 
-        # Selection expression for this collection
-        selection = f"airweave_system_metadata_collection_id=='{collection_id}'"
-
-        # Delete from all schemas
+        # Delete from all schemas (each schema handles its own field qualification)
         for schema in self._get_all_vespa_schemas():
+            # Build schema-qualified selection expression
+            # Note: Document selection language requires explicit schema.field references
+            selection = f"{schema}.airweave_system_metadata_collection_id=='{collection_id}'"
             await self._delete_by_selection(schema, selection)
 
     async def _delete_by_selection(self, schema: str, selection: str) -> int:
@@ -576,12 +576,15 @@ class VespaDestination(VectorDBDestination):
 
         Args:
             schema: The Vespa schema/document type to delete from
-            selection: Document selection expression (e.g., "field=='value'")
+            selection: Document selection expression with schema-qualified field names
+                       (e.g., "base_entity.field=='value'")
+                       Note: Vespa's document selection language (different from YQL) requires
+                       explicit schema.field references unlike the YQL `from` clause.
 
         Returns:
             Number of documents deleted (estimated from response)
         """
-        # Build the bulk delete URL
+        # Build the bulk delete URL with the already-qualified selection
         base_url = f"{settings.VESPA_URL}:{settings.VESPA_PORT}"
         encoded_selection = quote(selection, safe="")
         url = (
