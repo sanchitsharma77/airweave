@@ -41,6 +41,8 @@ navigation:
       path: docs/pages/framework-integrations/vercel-ai-sdk.mdx
     - page: Google Antigravity
       path: docs/pages/framework-integrations/google-antigravity.mdx
+    - page: Pipedream
+      path: docs/pages/framework-integrations/pipedream.mdx
   - section: Authentication
     contents:
     - section: Auth Providers
