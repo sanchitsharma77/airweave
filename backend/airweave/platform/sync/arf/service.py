@@ -252,8 +252,6 @@ class ArfService:
         deleted = await self.storage.delete(entity_path)
 
         if deleted:
-            # Update manifest
-            await self._update_manifest(sync_context, delta_entities=-1, delta_files=-1)
             sync_context.logger.debug(f"Deleted ARF entity: {entity_id}")
 
         return deleted
