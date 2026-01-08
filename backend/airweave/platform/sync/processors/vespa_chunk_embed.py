@@ -199,8 +199,10 @@ class VespaChunkEmbedProcessor(ContentProcessor):
 
         # Map back to original entity order
         # Create lookup: entity -> chunk_list
-        supported_map = {id(e): chunks for e, chunks in zip(supported, supported_chunk_lists, strict=True)}
-        
+        supported_map = {
+            id(e): chunks for e, chunks in zip(supported, supported_chunk_lists, strict=True)
+        }
+
         # Return chunk lists in original order (empty list for unsupported)
         return [supported_map.get(id(e), []) for e in entities]
 
