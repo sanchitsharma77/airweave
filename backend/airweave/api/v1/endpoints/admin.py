@@ -1060,7 +1060,8 @@ async def resync_with_execution_config(
     )
     active_jobs = list(active_jobs_result.scalars().all())
     if active_jobs:
-        job_status = active_jobs[0].status.value.lower()
+        status = active_jobs[0].status
+        job_status = (status.value if hasattr(status, "value") else status).lower()
         raise HTTPException(
             status_code=400, detail=f"Cannot start new sync: a sync job is already {job_status}"
         )
@@ -1679,11 +1680,12 @@ async def admin_cancel_sync_job(
         f"status: {sync_job.status})"
     )
 
-    # Check if job is in a cancellable state
-    if sync_job.status not in [SyncJobStatus.PENDING, SyncJobStatus.RUNNING]:
+    # Check if job is in a cancellable state (handle status as string or enum)
+    job_status_str = sync_job.status.value if hasattr(sync_job.status, "value") else sync_job.status
+    if job_status_str not in [SyncJobStatus.PENDING.value, SyncJobStatus.RUNNING.value]:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot cancel job in {sync_job.status.value} state",
+            detail=f"Cannot cancel job in {job_status_str} state",
         )
 
     # Set transitional status to CANCELLING immediately
