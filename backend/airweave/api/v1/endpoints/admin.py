@@ -1026,6 +1026,9 @@ async def resync_with_execution_config(
     if not sync_obj:
         raise NotFoundException(f"Sync {sync_id} not found")
 
+    # Capture organization_id immediately before other async operations expire the model
+    sync_organization_id = sync_obj.organization_id
+
     # Get connection IDs from SyncConnection table (bypass org filtering)
     sync_connections_result = await db.execute(
         sa_select(SyncConnection, Connection)
@@ -1128,12 +1131,12 @@ async def resync_with_execution_config(
 
     # Build context for the sync's organization (not the admin's API key org)
     # This ensures Temporal workers can access resources in the correct org context
-    sync_org_ctx = await _build_org_context(db, sync_obj.organization_id, ctx)
+    sync_org_ctx = await _build_org_context(db, sync_organization_id, ctx)
 
     # Dispatch to Temporal with the sync's organization context
     ctx.logger.info(
         f"Dispatching sync job {sync_job_schema.id} to Temporal "
-        f"(sync org: {sync_obj.organization_id}, admin org: {ctx.organization.id})"
+        f"(sync org: {sync_organization_id}, admin org: {ctx.organization.id})"
     )
     await temporal_service.run_source_connection_workflow(
         sync=sync_schema,
