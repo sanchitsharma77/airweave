@@ -120,6 +120,61 @@ def _require_admin_permission(ctx: ApiContext, permission: FeatureFlagEnum) -> N
     raise HTTPException(status_code=403, detail="Admin access required")
 
 
+async def _build_org_context(
+    db: AsyncSession,
+    target_org_id: UUID,
+    admin_ctx: ApiContext,
+) -> ApiContext:
+    """Build a context for a target organization (for cross-org admin operations).
+
+    This allows admin endpoints to execute operations (CRUD, Temporal workflows) in the
+    context of a different organization than the admin's API key belongs to.
+
+    The resulting context:
+    - Uses the target organization's data (id, name, feature flags)
+    - Preserves admin's request_id and logger for tracing
+    - Preserves auth_method and auth_metadata for audit
+
+    Args:
+        db: Database session
+        target_org_id: The organization ID to build context for
+        admin_ctx: The admin's original context (for logging/tracing)
+
+    Returns:
+        ApiContext configured for the target organization
+    """
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.logging import LoggerConfigurator
+
+    # Fetch target organization
+    org_result = await db.execute(sa_select(Organization).where(Organization.id == target_org_id))
+    org_obj = org_result.scalar_one_or_none()
+    if not org_obj:
+        raise NotFoundException(f"Organization {target_org_id} not found")
+
+    target_org = schemas.Organization.model_validate(org_obj, from_attributes=True)
+
+    # Build new context with target org but preserve admin's request tracing
+    return ApiContext(
+        request_id=admin_ctx.request_id,
+        organization=target_org,
+        user=admin_ctx.user,  # Preserve user if any (for audit trail)
+        auth_method=admin_ctx.auth_method,
+        auth_metadata=admin_ctx.auth_metadata,
+        logger=LoggerConfigurator.configure_logger(
+            "airweave.admin.cross_org",
+            dimensions={
+                "request_id": admin_ctx.request_id,
+                "organization_id": str(target_org.id),
+                "organization_name": target_org.name,
+                "admin_org_id": str(admin_ctx.organization.id),
+                "auth_method": admin_ctx.auth_method.value,
+            },
+        ),
+    )
+
+
 def _build_sort_subqueries(query, sort_by: str):
     """Build sort subqueries based on sort_by field.
 
@@ -1070,14 +1125,21 @@ async def resync_with_execution_config(
         raise NotFoundException("Connection not found for source connection")
     connection_schema = schemas.Connection.model_validate(connection, from_attributes=True)
 
-    # Dispatch to Temporal
-    ctx.logger.info(f"Dispatching sync job {sync_job_schema.id} to Temporal with execution config")
+    # Build context for the sync's organization (not the admin's API key org)
+    # This ensures Temporal workers can access resources in the correct org context
+    sync_org_ctx = await _build_org_context(db, sync_obj.organization_id, ctx)
+
+    # Dispatch to Temporal with the sync's organization context
+    ctx.logger.info(
+        f"Dispatching sync job {sync_job_schema.id} to Temporal "
+        f"(sync org: {sync_obj.organization_id}, admin org: {ctx.organization.id})"
+    )
     await temporal_service.run_source_connection_workflow(
         sync=sync_schema,
         sync_job=sync_job_schema,
         collection=collection_schema,
         connection=connection_schema,
-        ctx=ctx,
+        ctx=sync_org_ctx,  # Use sync's org context, not admin's
         force_full_sync=False,
     )
 
