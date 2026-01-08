@@ -1026,6 +1026,9 @@ async def resync_with_execution_config(
     if not sync_obj:
         raise NotFoundException(f"Sync {sync_id} not found")
 
+    # Capture organization_id immediately before other async operations expire the model
+    sync_organization_id = sync_obj.organization_id
+
     # Get connection IDs from SyncConnection table (bypass org filtering)
     sync_connections_result = await db.execute(
         sa_select(SyncConnection, Connection)
@@ -1060,7 +1063,8 @@ async def resync_with_execution_config(
     )
     active_jobs = list(active_jobs_result.scalars().all())
     if active_jobs:
-        job_status = active_jobs[0].status.value.lower()
+        status = active_jobs[0].status
+        job_status = (status.value if hasattr(status, "value") else status).lower()
         raise HTTPException(
             status_code=400, detail=f"Cannot start new sync: a sync job is already {job_status}"
         )
@@ -1127,12 +1131,12 @@ async def resync_with_execution_config(
 
     # Build context for the sync's organization (not the admin's API key org)
     # This ensures Temporal workers can access resources in the correct org context
-    sync_org_ctx = await _build_org_context(db, sync_obj.organization_id, ctx)
+    sync_org_ctx = await _build_org_context(db, sync_organization_id, ctx)
 
     # Dispatch to Temporal with the sync's organization context
     ctx.logger.info(
         f"Dispatching sync job {sync_job_schema.id} to Temporal "
-        f"(sync org: {sync_obj.organization_id}, admin org: {ctx.organization.id})"
+        f"(sync org: {sync_organization_id}, admin org: {ctx.organization.id})"
     )
     await temporal_service.run_source_connection_workflow(
         sync=sync_schema,
@@ -1679,11 +1683,12 @@ async def admin_cancel_sync_job(
         f"status: {sync_job.status})"
     )
 
-    # Check if job is in a cancellable state
-    if sync_job.status not in [SyncJobStatus.PENDING, SyncJobStatus.RUNNING]:
+    # Check if job is in a cancellable state (handle status as string or enum)
+    job_status_str = sync_job.status.value if hasattr(sync_job.status, "value") else sync_job.status
+    if job_status_str not in [SyncJobStatus.PENDING.value, SyncJobStatus.RUNNING.value]:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot cancel job in {sync_job.status.value} state",
+            detail=f"Cannot cancel job in {job_status_str} state",
         )
 
     # Set transitional status to CANCELLING immediately
