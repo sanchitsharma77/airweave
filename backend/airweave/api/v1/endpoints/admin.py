@@ -1579,18 +1579,23 @@ async def admin_list_all_syncs(
     entity_count_result = await db.execute(entity_count_query)
     entity_count_map = {row.sync_id: row.total_count or 0 for row in entity_count_result}
 
-    # Fetch ARF entity counts in bulk
+    # Fetch ARF entity counts in bulk (parallelized for speed)
+    import asyncio
+
     from airweave.platform.sync.arf.service import ArfService
 
     arf_service = ArfService()
-    arf_count_map = {}
-    for sync in syncs:
+    
+    # Parallelize ARF counts for all syncs
+    async def get_arf_count_safe(sync_id):
         try:
-            count = await arf_service.get_entity_count(str(sync.id))
-            arf_count_map[sync.id] = count
+            return await arf_service.get_entity_count(str(sync_id))
         except Exception:
-            # ARF storage may not exist or be accessible
-            arf_count_map[sync.id] = None
+            return None
+    
+    arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
+    arf_counts = await asyncio.gather(*arf_count_tasks)
+    arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
 
     # Fetch last N jobs per sync for failure filtering (if requested)
     sync_failure_map = {}
