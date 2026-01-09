@@ -98,6 +98,8 @@ export function SyncsTab() {
     const [cancellingSync, setCancellingSync] = useState<string | null>(null);
     const [deletingSync, setDeletingSync] = useState<string | null>(null);
     const [resyncDialogOpen, setResyncDialogOpen] = useState(false);
+    const [bulkResyncDialogOpen, setBulkResyncDialogOpen] = useState(false);
+    const [selectedSyncs, setSelectedSyncs] = useState<Set<string>>(new Set());
     const [resyncingSync, setResyncingSync] = useState<{ id: string; name: string } | null>(null);
     const [resyncConfig, setResyncConfig] = useState({
         skipQdrant: false,
@@ -190,6 +192,156 @@ export function SyncsTab() {
 
     const formatNumber = (num: number) => {
         return num.toLocaleString('en-US');
+    };
+
+    // Selection handlers
+    const toggleSelectAll = () => {
+        if (selectedSyncs.size === syncs.length) {
+            setSelectedSyncs(new Set());
+        } else {
+            setSelectedSyncs(new Set(syncs.map(s => s.id)));
+        }
+    };
+
+    const toggleSelectSync = (syncId: string) => {
+        const newSelected = new Set(selectedSyncs);
+        if (newSelected.has(syncId)) {
+            newSelected.delete(syncId);
+        } else {
+            newSelected.add(syncId);
+        }
+        setSelectedSyncs(newSelected);
+    };
+
+    const getSelectedSyncsDetails = () => {
+        return syncs.filter(s => selectedSyncs.has(s.id));
+    };
+
+    // Bulk action handlers
+    const openBulkResyncDialog = () => {
+        setBulkResyncDialogOpen(true);
+    };
+
+    const handleBulkResync = async () => {
+        const selected = getSelectedSyncsDetails();
+
+        toast.info(`Triggering resync for ${selected.length} sync(s)...`);
+        let successful = 0;
+        let failed = 0;
+
+        const executionConfig: Record<string, boolean> = {
+            skip_qdrant: resyncConfig.skipQdrant,
+            skip_vespa: resyncConfig.skipVespa,
+            skip_cursor_load: resyncConfig.skipCursorLoad,
+            skip_cursor_updates: resyncConfig.skipCursorUpdates,
+            skip_hash_comparison: resyncConfig.skipHashComparison,
+            replay_from_arf: resyncConfig.replayFromArf,
+            enable_vector_handlers: resyncConfig.enableVectorHandlers,
+            enable_raw_data_handler: resyncConfig.enableRawDataHandler,
+            enable_postgres_handler: resyncConfig.enablePostgresHandler,
+        };
+
+        for (const sync of selected) {
+            try {
+                const response = await apiClient.post(`/admin/resync/${sync.id}`, executionConfig);
+
+                if (response.ok) {
+                    successful++;
+                } else {
+                    failed++;
+                }
+            } catch (error) {
+                failed++;
+                console.error(`Failed to resync ${sync.name}:`, error);
+            }
+        }
+
+        if (failed > 0) {
+            toast.warning(`Triggered ${successful}/${selected.length} resyncs. ${failed} failed.`);
+        } else {
+            toast.success(`Successfully triggered ${successful} resync(s)`);
+        }
+
+        setBulkResyncDialogOpen(false);
+        setSelectedSyncs(new Set());
+        await loadSyncs();
+    };
+
+    const handleBulkCancel = async () => {
+        const selected = getSelectedSyncsDetails();
+        if (!confirm(`Cancel all active jobs for ${selected.length} sync(s)?`)) {
+            return;
+        }
+
+        toast.info(`Cancelling jobs for ${selected.length} sync(s)...`);
+        let totalCancelled = 0;
+        let totalFailed = 0;
+
+        for (const sync of selected) {
+            try {
+                const response = await apiClient.post(`/admin/syncs/${sync.id}/cancel`);
+                if (response.ok) {
+                    const result = await response.json();
+                    totalCancelled += result.cancelled;
+                    totalFailed += result.failed;
+                }
+            } catch (error) {
+                console.error(`Failed to cancel jobs for ${sync.name}:`, error);
+            }
+        }
+
+        if (totalCancelled > 0) {
+            toast.success(`Cancelled ${totalCancelled} job(s)`);
+        } else {
+            toast.info('No active jobs to cancel');
+        }
+
+        if (totalFailed > 0) {
+            toast.warning(`${totalFailed} job(s) failed to cancel`);
+        }
+
+        setSelectedSyncs(new Set());
+        await loadSyncs();
+    };
+
+    const handleBulkDelete = async () => {
+        const selected = getSelectedSyncsDetails();
+        const confirmMessage = `⚠️ DELETE ${selected.length} SYNC(S)?\n\nThis will permanently delete ALL data including:\n• Qdrant and Vespa data\n• ARF storage\n• All jobs and schedules\n\n⚠️ THIS CANNOT BE UNDONE!\n\nType DELETE to confirm:`;
+
+        const userInput = prompt(confirmMessage);
+        if (userInput !== 'DELETE') {
+            if (userInput !== null) {
+                toast.error('Deletion cancelled.');
+            }
+            return;
+        }
+
+        toast.info(`Deleting ${selected.length} sync(s)...`);
+        let successful = 0;
+        let failed = 0;
+
+        for (const sync of selected) {
+            try {
+                const response = await apiClient.delete(`/admin/syncs/${sync.id}`);
+                if (response.ok) {
+                    successful++;
+                } else {
+                    failed++;
+                }
+            } catch (error) {
+                failed++;
+                console.error(`Failed to delete ${sync.name}:`, error);
+            }
+        }
+
+        if (failed > 0) {
+            toast.warning(`Deleted ${successful}/${selected.length} sync(s). ${failed} failed.`);
+        } else {
+            toast.success(`Successfully deleted ${successful} sync(s)`);
+        }
+
+        setSelectedSyncs(new Set());
+        await loadSyncs();
     };
 
     const handleCancelSync = async (syncId: string, syncName: string) => {
@@ -533,16 +685,59 @@ export function SyncsTab() {
             {syncs.length > 0 && (
                 <Card>
                     <CardHeader>
-                        <CardTitle>Sync Results ({syncs.length})</CardTitle>
-                        <CardDescription>
-                            Showing syncs matching your search criteria
-                        </CardDescription>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <CardTitle>Sync Results ({syncs.length})</CardTitle>
+                                <CardDescription>
+                                    Showing syncs matching your search criteria
+                                    {selectedSyncs.size > 0 && ` • ${selectedSyncs.size} selected`}
+                                </CardDescription>
+                            </div>
+                            {selectedSyncs.size > 0 && (
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={openBulkResyncDialog}
+                                        className="gap-2"
+                                    >
+                                        <RefreshCw className="h-4 w-4" />
+                                        Resync ({selectedSyncs.size})
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={handleBulkCancel}
+                                        className="gap-2"
+                                    >
+                                        <XCircle className="h-4 w-4" />
+                                        Cancel Jobs ({selectedSyncs.size})
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        onClick={handleBulkDelete}
+                                        className="gap-2"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                                        Delete ({selectedSyncs.size})
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
                     </CardHeader>
                     <CardContent>
                         <div className="overflow-x-auto">
                             <Table>
                                 <TableHeader>
                                     <TableRow>
+                                        <TableHead className="w-[50px]">
+                                            <Checkbox
+                                                checked={selectedSyncs.size === syncs.length && syncs.length > 0}
+                                                onCheckedChange={toggleSelectAll}
+                                                aria-label="Select all syncs"
+                                            />
+                                        </TableHead>
                                         <TableHead>Sync Name / ID</TableHead>
                                         <TableHead>Organization</TableHead>
                                         <TableHead>Collection</TableHead>
@@ -557,8 +752,16 @@ export function SyncsTab() {
                                 <TableBody>
                                     {syncs.map((sync) => {
                                         const orgInfo = organizationMap[sync.organization_id];
+                                        const isSelected = selectedSyncs.has(sync.id);
                                         return (
-                                            <TableRow key={sync.id}>
+                                            <TableRow key={sync.id} className={isSelected ? 'bg-blue-500/5' : ''}>
+                                                <TableCell>
+                                                    <Checkbox
+                                                        checked={isSelected}
+                                                        onCheckedChange={() => toggleSelectSync(sync.id)}
+                                                        aria-label={`Select sync ${sync.name}`}
+                                                    />
+                                                </TableCell>
                                                 <TableCell className="font-medium">
                                                     <div className="flex flex-col gap-1">
                                                         <span className="truncate max-w-[200px]">{sync.name}</span>
@@ -891,6 +1094,149 @@ export function SyncsTab() {
                         <Button onClick={handleResync} className="gap-2">
                             <RefreshCw className="h-4 w-4" />
                             Start Resync
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Bulk Resync Dialog */}
+            <Dialog open={bulkResyncDialogOpen} onOpenChange={setBulkResyncDialogOpen}>
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Bulk Resync: {selectedSyncs.size} Sync(s)</DialogTitle>
+                        <DialogDescription>
+                            Configure execution options for these resyncs. The same config will be applied to all selected syncs.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-6 py-4">
+                        {/* Destination Toggles */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Destination Toggles</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-qdrant"
+                                        checked={resyncConfig.skipQdrant}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipQdrant: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-skip-qdrant" className="text-sm cursor-pointer">
+                                        Skip Qdrant
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-vespa"
+                                        checked={resyncConfig.skipVespa}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipVespa: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-skip-vespa" className="text-sm cursor-pointer">
+                                        Skip Vespa
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Handler Toggles */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Handler Toggles</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-enable-vector"
+                                        checked={resyncConfig.enableVectorHandlers}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enableVectorHandlers: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-enable-vector" className="text-sm cursor-pointer">
+                                        Enable Vector Handlers (embeddings)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-enable-arf"
+                                        checked={resyncConfig.enableRawDataHandler}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enableRawDataHandler: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-enable-arf" className="text-sm cursor-pointer">
+                                        Enable ARF Handler (raw data capture)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-enable-postgres"
+                                        checked={resyncConfig.enablePostgresHandler}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enablePostgresHandler: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-enable-postgres" className="text-sm cursor-pointer">
+                                        Enable Postgres Handler (metadata)
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Sync Behavior */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Sync Behavior</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-cursor"
+                                        checked={resyncConfig.skipCursorLoad}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipCursorLoad: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-skip-cursor" className="text-sm cursor-pointer">
+                                        Skip Cursor Load (force full sync - fetch all entities)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-cursor-updates"
+                                        checked={resyncConfig.skipCursorUpdates}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipCursorUpdates: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-skip-cursor-updates" className="text-sm cursor-pointer">
+                                        Skip Cursor Updates (don't save progress)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-hash"
+                                        checked={resyncConfig.skipHashComparison}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipHashComparison: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-skip-hash" className="text-sm cursor-pointer">
+                                        Skip Hash Comparison (force INSERT all entities)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-replay-arf"
+                                        checked={resyncConfig.replayFromArf}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, replayFromArf: checked as boolean })}
+                                    />
+                                    <Label htmlFor="bulk-replay-arf" className="text-sm cursor-pointer">
+                                        Replay from ARF (read from ARF storage instead of source)
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Info Box */}
+                        <div className="bg-amber-950/30 border border-amber-500/30 rounded-md p-3">
+                            <p className="text-xs text-amber-300">
+                                <strong>Warning:</strong> This configuration will be applied to all {selectedSyncs.size} selected sync(s).
+                                Common use case: ARF Replay (enable "Replay from ARF", disable "Enable ARF Handler" and "Enable Postgres Handler").
+                            </p>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBulkResyncDialogOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleBulkResync} className="gap-2">
+                            <RefreshCw className="h-4 w-4" />
+                            Start Bulk Resync ({selectedSyncs.size})
                         </Button>
                     </DialogFooter>
                 </DialogContent>
