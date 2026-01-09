@@ -75,6 +75,7 @@ export function SyncsTab() {
         limit: 100,
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
+    const [cancellingSync, setCancellingSync] = useState<string | null>(null);
 
     const loadSyncs = async () => {
         setIsSyncsLoading(true);
@@ -149,6 +150,42 @@ export function SyncsTab() {
 
     const formatNumber = (num: number) => {
         return num.toLocaleString('en-US');
+    };
+
+    const handleCancelSync = async (syncId: string, syncName: string) => {
+        if (!confirm(`Cancel all active jobs for sync "${syncName}"?\n\nThis will cancel all pending and running jobs for this sync.`)) {
+            return;
+        }
+
+        setCancellingSync(syncId);
+        try {
+            const response = await apiClient.post(`/admin/syncs/${syncId}/cancel`);
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error || 'Failed to cancel sync');
+            }
+
+            const result = await response.json();
+
+            if (result.cancelled === 0 && result.total_jobs === 0) {
+                toast.info('No active jobs to cancel');
+            } else if (result.failed > 0) {
+                toast.warning(`Cancelled ${result.cancelled}/${result.total_jobs} job(s). ${result.failed} failed.`);
+            } else {
+                toast.success(`Successfully cancelled ${result.cancelled} job(s)`);
+            }
+
+            // Optionally refresh the syncs list to show updated job statuses
+            if (syncs.length > 0) {
+                await loadSyncs();
+            }
+        } catch (error) {
+            console.error('Failed to cancel sync:', error);
+            toast.error(error instanceof Error ? error.message : 'Failed to cancel sync');
+        } finally {
+            setCancellingSync(null);
+        }
     };
 
     return (
@@ -463,9 +500,10 @@ export function SyncsTab() {
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
-                                                            disabled
+                                                            onClick={() => handleCancelSync(sync.id, sync.name)}
+                                                            disabled={cancellingSync === sync.id}
                                                             className="h-7 px-2"
-                                                            title="Cancel sync job"
+                                                            title="Cancel active jobs"
                                                         >
                                                             <XCircle className="h-3.5 w-3.5" />
                                                         </Button>
@@ -474,7 +512,7 @@ export function SyncsTab() {
                                                             variant="outline"
                                                             disabled
                                                             className="h-7 px-2"
-                                                            title="Deschedule sync"
+                                                            title="Deschedule sync (coming soon)"
                                                         >
                                                             <CalendarX className="h-3.5 w-3.5" />
                                                         </Button>
@@ -483,7 +521,7 @@ export function SyncsTab() {
                                                             variant="outline"
                                                             disabled
                                                             className="h-7 px-2"
-                                                            title="Delete sync"
+                                                            title="Delete sync (coming soon)"
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5" />
                                                         </Button>
