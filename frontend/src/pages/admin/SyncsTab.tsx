@@ -68,6 +68,7 @@ interface SyncFilters {
     status: string;
     isAuthenticated: string;
     ghostSyncsOnly: boolean;
+    includeDestinationCounts: boolean;
     limit: number;
 }
 
@@ -82,6 +83,7 @@ export function SyncsTab() {
         status: 'all',
         isAuthenticated: 'all',
         ghostSyncsOnly: false,
+        includeDestinationCounts: false,
         limit: 100,
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
@@ -114,6 +116,9 @@ export function SyncsTab() {
             }
             if (syncFilters.ghostSyncsOnly) {
                 params.append('ghost_syncs_last_n', '5');
+            }
+            if (syncFilters.includeDestinationCounts) {
+                params.append('include_destination_counts', 'true');
             }
 
             const response = await apiClient.get(`/admin/syncs?${params.toString()}`);
@@ -339,7 +344,7 @@ export function SyncsTab() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center gap-6 mb-4">
                         <div className="flex items-center space-x-2">
                             <Checkbox
                                 id="ghost-syncs-filter"
@@ -351,6 +356,19 @@ export function SyncsTab() {
                                 className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                             >
                                 Ghost Syncs Only (last 5 jobs failed)
+                            </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="destination-counts-filter"
+                                checked={syncFilters.includeDestinationCounts}
+                                onCheckedChange={(checked) => setSyncFilters({ ...syncFilters, includeDestinationCounts: checked as boolean })}
+                            />
+                            <Label
+                                htmlFor="destination-counts-filter"
+                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                            >
+                                Include Destination Counts (slower)
                             </Label>
                         </div>
                     </div>
