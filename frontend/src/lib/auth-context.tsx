@@ -128,7 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           setUserProfileLoading(true);
           const response = await apiClient.get('/users/');
-          
+
           if (response.ok) {
             const backendUser = await response.json();
             setEnrichedUser({
