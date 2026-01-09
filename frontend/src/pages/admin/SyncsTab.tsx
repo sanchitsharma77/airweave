@@ -371,7 +371,7 @@ export function SyncsTab() {
 
             {/* Stats Cards */}
             {syncs.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
                     <Card>
                         <CardHeader className="pb-2 pt-3">
                             <CardTitle className="text-xs font-medium text-muted-foreground">
@@ -392,6 +392,19 @@ export function SyncsTab() {
                         <CardContent className="pb-3">
                             <div className="text-2xl font-bold text-green-500">
                                 {syncs.filter(s => s.status === 'active').length}
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader className="pb-2 pt-3">
+                            <CardTitle className="text-xs font-medium text-muted-foreground">
+                                Ghost Syncs
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pb-3">
+                            <div className="text-2xl font-bold text-red-500">
+                                {syncs.filter(s => s.last_job_status === 'failed').length}
                             </div>
                         </CardContent>
                     </Card>
