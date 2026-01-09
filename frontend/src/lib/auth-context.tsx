@@ -50,7 +50,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Default to Auth0 values, but override if auth is disabled
   const isAuthenticated = authConfig.authEnabled ? auth0IsAuthenticated : true;
   const isLoading = authConfig.authEnabled ? (auth0IsLoading || !tokenInitialized || userProfileLoading) : false;
-  const user = authConfig.authEnabled ? (enrichedUser || auth0User) : enrichedUser;
+  const user = authConfig.authEnabled ? (enrichedUser || auth0User) : { name: 'Developer', email: 'dev@example.com', is_admin: false };
 
   // Get the token when authenticated
   useEffect(() => {
@@ -123,32 +123,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } finally {
           setUserProfileLoading(false);
         }
-      } else if (!authConfig.authEnabled && !enrichedUser) {
-        // For dev mode, fetch the real user from backend
-        try {
-          setUserProfileLoading(true);
-          const response = await apiClient.get('/users/');
-
-          if (response.ok) {
-            const backendUser = await response.json();
-            setEnrichedUser({
-              name: backendUser.full_name || 'Developer',
-              email: backendUser.email,
-              is_admin: backendUser.is_admin || false,
-              id: backendUser.id,
-            });
-            console.log('Dev mode: User loaded from backend', { is_admin: backendUser.is_admin });
-          } else {
-            // Fallback to mock user
-            console.error('Failed to fetch user from backend in dev mode:', response.status);
-            setEnrichedUser({ name: 'Developer', email: 'dev@example.com', is_admin: false });
-          }
-        } catch (error) {
-          console.error('Error fetching user in dev mode:', error);
-          setEnrichedUser({ name: 'Developer', email: 'dev@example.com', is_admin: false });
-        } finally {
-          setUserProfileLoading(false);
-        }
+      } else if (!authConfig.authEnabled) {
+        // For dev mode, set a mock user with admin rights
+        setEnrichedUser({ name: 'Developer', email: 'dev@example.com', is_admin: true });
       }
     };
 

@@ -1586,14 +1586,14 @@ async def admin_list_all_syncs(
     from airweave.platform.sync.arf.service import ArfService
 
     arf_service = ArfService()
-    
+
     # Parallelize ARF counts for all syncs
     async def get_arf_count_safe(sync_id):
         try:
             return await arf_service.get_entity_count(str(sync_id))
         except Exception:
             return None
-    
+
     arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
     arf_counts = await asyncio.gather(*arf_count_tasks)
     arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
