@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { apiClient } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -20,7 +21,13 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Copy, XCircle, Trash2, CalendarX } from 'lucide-react';
+import { Search, Copy, XCircle, Trash2, CalendarX, AlertCircle } from 'lucide-react';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 
 interface SyncInfo {
@@ -37,6 +44,7 @@ interface SyncInfo {
     total_vespa_entity_count?: number;
     last_job_status?: string;
     last_job_at?: string;
+    last_job_error?: string;
     created_at: string;
 }
 
@@ -59,6 +67,7 @@ interface SyncFilters {
     sourceType: string;
     status: string;
     isAuthenticated: string;
+    ghostSyncsOnly: boolean;
     limit: number;
 }
 
@@ -72,6 +81,7 @@ export function SyncsTab() {
         sourceType: '',
         status: 'all',
         isAuthenticated: 'all',
+        ghostSyncsOnly: false,
         limit: 100,
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
@@ -101,6 +111,9 @@ export function SyncsTab() {
             }
             if (syncFilters.isAuthenticated !== 'all') {
                 params.append('is_authenticated', syncFilters.isAuthenticated);
+            }
+            if (syncFilters.ghostSyncsOnly) {
+                params.append('ghost_syncs_last_n', '5');
             }
 
             const response = await apiClient.get(`/admin/syncs?${params.toString()}`);
@@ -326,6 +339,22 @@ export function SyncsTab() {
                         </div>
                     </div>
 
+                    <div className="flex items-center gap-4 mb-4">
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="ghost-syncs-filter"
+                                checked={syncFilters.ghostSyncsOnly}
+                                onCheckedChange={(checked) => setSyncFilters({ ...syncFilters, ghostSyncsOnly: checked as boolean })}
+                            />
+                            <Label
+                                htmlFor="ghost-syncs-filter"
+                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                            >
+                                Ghost Syncs Only (last 5 jobs failed)
+                            </Label>
+                        </div>
+                    </div>
+
                     <div className="flex gap-2">
                         <Button onClick={loadSyncs} disabled={isSyncsLoading} className="gap-2">
                             <Search className="h-4 w-4" />
@@ -508,20 +537,44 @@ export function SyncsTab() {
                                                 <TableCell>
                                                     {sync.last_job_status && (
                                                         <div className="flex flex-col gap-1">
-                                                            <Badge
-                                                                variant="outline"
-                                                                className={
-                                                                    sync.last_job_status === 'completed'
-                                                                        ? 'bg-green-500/10 text-green-400 border-green-500/30'
-                                                                        : sync.last_job_status === 'failed'
-                                                                            ? 'bg-red-500/10 text-red-400 border-red-500/30'
-                                                                            : sync.last_job_status === 'running'
-                                                                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                                                                                : ''
-                                                                }
-                                                            >
-                                                                {sync.last_job_status}
-                                                            </Badge>
+                                                            <div className="flex items-center gap-1">
+                                                                <Badge
+                                                                    variant="outline"
+                                                                    className={
+                                                                        sync.last_job_status === 'completed'
+                                                                            ? 'bg-green-500/10 text-green-400 border-green-500/30'
+                                                                            : sync.last_job_status === 'failed'
+                                                                                ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                                                                                : sync.last_job_status === 'running'
+                                                                                    ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                                                                    : ''
+                                                                    }
+                                                                >
+                                                                    {sync.last_job_status}
+                                                                </Badge>
+                                                                {sync.last_job_status === 'failed' && sync.last_job_error && (
+                                                                    <TooltipProvider>
+                                                                        <Tooltip delayDuration={100}>
+                                                                            <TooltipTrigger asChild>
+                                                                                <button className="text-red-400 hover:text-red-300 transition-colors">
+                                                                                    <AlertCircle className="h-4 w-4" />
+                                                                                </button>
+                                                                            </TooltipTrigger>
+                                                                            <TooltipContent
+                                                                                className="max-w-md p-3 bg-red-950/90 border-red-500/30"
+                                                                                side="left"
+                                                                            >
+                                                                                <div className="space-y-1">
+                                                                                    <p className="font-semibold text-red-300 text-xs">Last Error:</p>
+                                                                                    <p className="text-xs text-red-200 font-mono whitespace-pre-wrap break-words">
+                                                                                        {sync.last_job_error}
+                                                                                    </p>
+                                                                                </div>
+                                                                            </TooltipContent>
+                                                                        </Tooltip>
+                                                                    </TooltipProvider>
+                                                                )}
+                                                            </div>
                                                             {sync.last_job_at && (
                                                                 <span className="text-xs text-muted-foreground">
                                                                     {new Date(sync.last_job_at).toLocaleString()}
