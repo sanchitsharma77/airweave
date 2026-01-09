@@ -536,9 +536,14 @@ class ArfService:
         return await self.storage.delete(self._sync_path(sync_id))
 
     async def get_entity_count(self, sync_id: str) -> int:
-        """Get count of entities in store (computed on-demand)."""
-        entity_ids = await self.list_entity_ids(sync_id)
-        return len(entity_ids)
+        """Get count of entities in store (fast - just counts files without reading)."""
+        entities_dir = f"{self._sync_path(sync_id)}/entities"
+        try:
+            files = await self.storage.list_files(entities_dir)
+            # Just count .json files, don't read them
+            return len([f for f in files if f.endswith(".json")])
+        except Exception:
+            return 0
 
     # =========================================================================
     # Replay / Resync support

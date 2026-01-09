@@ -1167,6 +1167,7 @@ class AdminSyncInfo(schemas.Sync):
 
     last_job_status: Optional[str] = None
     last_job_at: Optional[datetime] = None
+    last_job_error: Optional[str] = None
     source_short_name: Optional[str] = None
     source_is_authenticated: Optional[bool] = None
     readable_collection_id: Optional[str] = None
@@ -1452,11 +1453,11 @@ async def admin_list_all_syncs(
         None,
         description="Filter by Vespa job existence (false=pending backfill, true=has job)",
     ),
-    exclude_failed_last_n: Optional[int] = Query(
+    ghost_syncs_last_n: Optional[int] = Query(
         None,
         ge=1,
         le=10,
-        description="Exclude syncs where the last N non-running jobs all failed",
+        description="Filter to 'ghost syncs' - syncs where the last N jobs all failed (e.g., 5 for last 5 failures)",
     ),
     include_destination_counts: bool = Query(
         False,
@@ -1579,22 +1580,27 @@ async def admin_list_all_syncs(
     entity_count_result = await db.execute(entity_count_query)
     entity_count_map = {row.sync_id: row.total_count or 0 for row in entity_count_result}
 
-    # Fetch ARF entity counts in bulk
+    # Fetch ARF entity counts in bulk (parallelized for speed)
+    import asyncio
+
     from airweave.platform.sync.arf.service import ArfService
 
     arf_service = ArfService()
-    arf_count_map = {}
-    for sync in syncs:
-        try:
-            count = await arf_service.get_entity_count(str(sync.id))
-            arf_count_map[sync.id] = count
-        except Exception:
-            # ARF storage may not exist or be accessible
-            arf_count_map[sync.id] = None
 
-    # Fetch last N jobs per sync for failure filtering (if requested)
+    # Parallelize ARF counts for all syncs
+    async def get_arf_count_safe(sync_id):
+        try:
+            return await arf_service.get_entity_count(str(sync_id))
+        except Exception:
+            return None
+
+    arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
+    arf_counts = await asyncio.gather(*arf_count_tasks)
+    arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
+
+    # Fetch last N jobs per sync for ghost sync filtering (if requested)
     sync_failure_map = {}
-    if exclude_failed_last_n is not None and exclude_failed_last_n > 0:
+    if ghost_syncs_last_n is not None and ghost_syncs_last_n > 0:
         from airweave.core.shared_models import SyncJobStatus
 
         # Fetch last N jobs per sync (excluding running/pending)
@@ -1613,7 +1619,7 @@ async def admin_list_all_syncs(
             )
             .subquery()
         )
-        jobs_query = sa_select(jobs_subq).where(jobs_subq.c.rn <= exclude_failed_last_n)
+        jobs_query = sa_select(jobs_subq).where(jobs_subq.c.rn <= ghost_syncs_last_n)
         jobs_result = await db.execute(jobs_query)
         jobs_rows = list(jobs_result)
 
@@ -1626,20 +1632,20 @@ async def admin_list_all_syncs(
 
         # Check if all last N jobs failed for each sync
         for sync_id, statuses in jobs_by_sync.items():
-            # If we have exactly N jobs, check if all failed
-            if len(statuses) >= exclude_failed_last_n:
+            if len(statuses) >= ghost_syncs_last_n:
                 all_failed = all(status == SyncJobStatus.FAILED.value for status in statuses)
                 sync_failure_map[sync_id] = all_failed
             else:
-                # Less than N jobs exist, don't exclude
+                # Less than N jobs exist, not a ghost sync
                 sync_failure_map[sync_id] = False
 
-    # Fetch last job info in bulk
+    # Fetch last job info in bulk (including error message)
     last_job_subq = (
         sa_select(
             SyncJob.sync_id,
             SyncJob.status,
             SyncJob.completed_at,
+            SyncJob.error,
             func.row_number()
             .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
             .label("rn"),
@@ -1650,7 +1656,11 @@ async def admin_list_all_syncs(
     last_job_query = sa_select(last_job_subq).where(last_job_subq.c.rn == 1)
     last_job_result = await db.execute(last_job_query)
     last_job_map = {
-        row.sync_id: {"status": row.status, "completed_at": row.completed_at}
+        row.sync_id: {
+            "status": row.status,
+            "completed_at": row.completed_at,
+            "error": row.error,
+        }
         for row in last_job_result
     }
 
@@ -1803,9 +1813,9 @@ async def admin_list_all_syncs(
             # Only syncs without a Vespa job (pending backfill)
             filtered_syncs = [s for s in filtered_syncs if s.last_vespa_job_status is None]
 
-    if exclude_failed_last_n is not None and sync_failure_map:
-        # Exclude syncs where all last N jobs failed
-        filtered_syncs = [s for s in filtered_syncs if not sync_failure_map.get(s.id, False)]
+    if ghost_syncs_last_n is not None and sync_failure_map:
+        # Filter to ghost syncs only (where all last N jobs failed)
+        filtered_syncs = [s for s in filtered_syncs if sync_failure_map.get(s.id, False)]
 
     ctx.logger.info(
         f"Admin listed {len(filtered_syncs)} syncs "
@@ -1817,7 +1827,7 @@ async def admin_list_all_syncs(
         f"is_authenticated={is_authenticated}, "
         f"vespa_status={last_vespa_job_status}, "
         f"has_vespa_job={has_vespa_job}, "
-        f"exclude_failed={exclude_failed_last_n})"
+        f"ghost_syncs_n={ghost_syncs_last_n})"
     )
 
     return filtered_syncs
@@ -1995,6 +2005,7 @@ def _build_admin_sync_info_list(
             else None
         )
         sync_dict["last_job_at"] = last_job.get("completed_at")
+        sync_dict["last_job_error"] = last_job.get("error")
         sync_dict["source_short_name"] = source_info.get("short_name")
         sync_dict["readable_collection_id"] = source_info.get("readable_collection_id")
         sync_dict["source_is_authenticated"] = source_info.get("is_authenticated")
@@ -2108,3 +2119,209 @@ async def admin_cancel_sync_job(
     ctx.logger.info(f"✅ Admin cancelled sync job {job_id}, new status: {sync_job.status}")
 
     return schemas.SyncJob.model_validate(sync_job, from_attributes=True)
+
+
+@router.post("/syncs/{sync_id}/cancel")
+async def admin_cancel_sync_by_id(
+    sync_id: UUID,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> dict:
+    """Admin-only: Cancel all pending/running jobs for a sync.
+    This is a convenience endpoint that finds active jobs for a sync and cancels them.
+    More practical than /sync-jobs/{job_id}/cancel when you know the sync ID.
+    Args:
+        sync_id: The sync ID whose jobs should be cancelled
+        db: Database session
+        ctx: API context
+    Returns:
+        Dict with cancelled job IDs and results
+    Raises:
+        HTTPException: If not admin or sync not found
+    """
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.datetime_utils import utc_now_naive
+    from airweave.core.shared_models import SyncJobStatus
+    from airweave.core.sync_job_service import sync_job_service
+    from airweave.core.temporal_service import temporal_service
+    from airweave.models.sync import Sync
+    from airweave.models.sync_job import SyncJob
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Verify sync exists
+    result = await db.execute(sa_select(Sync).where(Sync.id == sync_id))
+    sync_obj = result.scalar_one_or_none()
+    if not sync_obj:
+        raise NotFoundException(f"Sync {sync_id} not found")
+
+    # Find all pending/running jobs
+    jobs_result = await db.execute(
+        sa_select(SyncJob).where(
+            SyncJob.sync_id == sync_id,
+            SyncJob.status.in_([SyncJobStatus.PENDING, SyncJobStatus.RUNNING]),
+        )
+    )
+    jobs = list(jobs_result.scalars().all())
+
+    if not jobs:
+        return {
+            "sync_id": str(sync_id),
+            "message": "No active jobs to cancel",
+            "cancelled_jobs": [],
+        }
+
+    ctx.logger.info(f"Admin cancelling {len(jobs)} active job(s) for sync {sync_id}")
+
+    cancelled_jobs = []
+    failed_jobs = []
+
+    for job in jobs:
+        job_id = job.id
+        job_status_str = job.status.value if hasattr(job.status, "value") else job.status
+
+        try:
+            # Set to CANCELLING
+            await sync_job_service.update_status(
+                sync_job_id=job_id,
+                status=SyncJobStatus.CANCELLING,
+                ctx=ctx,
+            )
+
+            # Request cancellation from Temporal
+            cancel_result = await temporal_service.cancel_sync_job_workflow(str(job_id), ctx)
+
+            if not cancel_result["success"]:
+                # Temporal error - revert status
+                fallback_status = (
+                    SyncJobStatus.RUNNING
+                    if job.status == SyncJobStatus.RUNNING
+                    else SyncJobStatus.PENDING
+                )
+                await sync_job_service.update_status(
+                    sync_job_id=job_id,
+                    status=fallback_status,
+                    ctx=ctx,
+                )
+                failed_jobs.append(
+                    {
+                        "job_id": str(job_id),
+                        "error": "Failed to request cancellation from Temporal",
+                    }
+                )
+                continue
+
+            # If workflow not found, mark as CANCELLED directly
+            if not cancel_result["workflow_found"]:
+                ctx.logger.info(f"Workflow not found for job {job_id} - marking as CANCELLED")
+                await sync_job_service.update_status(
+                    sync_job_id=job_id,
+                    status=SyncJobStatus.CANCELLED,
+                    ctx=ctx,
+                    completed_at=utc_now_naive(),
+                    error="Workflow not found in Temporal - may have already completed",
+                )
+
+            cancelled_jobs.append(
+                {
+                    "job_id": str(job_id),
+                    "previous_status": job_status_str,
+                    "workflow_found": cancel_result["workflow_found"],
+                }
+            )
+
+        except Exception as e:
+            ctx.logger.error(f"Failed to cancel job {job_id}: {e}")
+            failed_jobs.append({"job_id": str(job_id), "error": str(e)})
+
+    ctx.logger.info(
+        f"✅ Admin cancelled {len(cancelled_jobs)}/{len(jobs)} job(s) for sync {sync_id}"
+    )
+
+    return {
+        "sync_id": str(sync_id),
+        "total_jobs": len(jobs),
+        "cancelled": len(cancelled_jobs),
+        "failed": len(failed_jobs),
+        "cancelled_jobs": cancelled_jobs,
+        "failed_jobs": failed_jobs,
+    }
+
+
+@router.delete("/syncs/{sync_id}")
+async def admin_delete_sync(
+    sync_id: UUID,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> dict:
+    """Admin-only: Delete a sync and all related data.
+
+    This endpoint reuses the existing source connection deletion logic which handles:
+    - Cancelling active jobs
+    - Cleaning up Temporal schedules
+    - Removing data from Qdrant
+    - Removing data from Vespa
+    - Removing ARF storage
+    - Cascading deletes in Postgres (sync, connection, source_connection)
+
+    Args:
+        sync_id: The sync ID to delete
+        db: Database session
+        ctx: API context
+
+    Returns:
+        Success message with deleted sync ID
+
+    Raises:
+        HTTPException: If not admin, sync not found, or deletion fails
+    """
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.source_connection_service import source_connection_service
+    from airweave.models.source_connection import SourceConnection
+    from airweave.models.sync import Sync
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Verify sync exists
+    result = await db.execute(sa_select(Sync).where(Sync.id == sync_id))
+    sync_obj = result.scalar_one_or_none()
+    if not sync_obj:
+        raise NotFoundException(f"Sync {sync_id} not found")
+
+    # Find the source connection for this sync
+    source_conn_result = await db.execute(
+        sa_select(SourceConnection).where(SourceConnection.sync_id == sync_id)
+    )
+    source_conn = source_conn_result.scalar_one_or_none()
+
+    if not source_conn:
+        raise NotFoundException(f"Source connection not found for sync {sync_id}")
+
+    ctx.logger.info(
+        f"Admin deleting sync {sync_id} (org: {sync_obj.organization_id}) "
+        f"via source connection {source_conn.id}"
+    )
+
+    # Build context for the sync's organization
+    sync_org_ctx = await _build_org_context(db, sync_obj.organization_id, ctx)
+
+    # Use the existing source connection delete logic which handles all cleanup
+    try:
+        await source_connection_service.delete(
+            db,
+            id=source_conn.id,
+            ctx=sync_org_ctx,
+        )
+
+        ctx.logger.info(f"✅ Admin successfully deleted sync {sync_id}")
+
+        return {
+            "sync_id": str(sync_id),
+            "message": "Sync deleted successfully",
+            "deleted_source_connection_id": str(source_conn.id),
+        }
+    except Exception as e:
+        ctx.logger.error(f"Failed to delete sync {sync_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete sync: {str(e)}")
