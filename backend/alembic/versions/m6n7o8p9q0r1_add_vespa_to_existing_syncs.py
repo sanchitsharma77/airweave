@@ -22,10 +22,13 @@ VESPA_CONNECTION_ID = "33333333-3333-3333-3333-333333333333"
 def upgrade():
     """Add Vespa destination connection to all syncs that have Qdrant but not Vespa."""
     op.execute(f"""
-        INSERT INTO sync_connection (sync_id, connection_id)
+        INSERT INTO sync_connection (id, sync_id, connection_id, created_at, modified_at)
         SELECT 
+            gen_random_uuid(),
             sc.sync_id,
-            '{VESPA_CONNECTION_ID}'::uuid
+            '{VESPA_CONNECTION_ID}'::uuid,
+            NOW(),
+            NOW()
         FROM sync_connection sc
         WHERE sc.connection_id = '{QDRANT_CONNECTION_ID}'::uuid
           AND NOT EXISTS (
@@ -33,8 +36,7 @@ def upgrade():
             FROM sync_connection sc2 
             WHERE sc2.sync_id = sc.sync_id 
               AND sc2.connection_id = '{VESPA_CONNECTION_ID}'::uuid
-          )
-        ON CONFLICT DO NOTHING;
+          );
     """)
 
 
