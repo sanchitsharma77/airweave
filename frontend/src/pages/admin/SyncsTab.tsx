@@ -21,13 +21,21 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Copy, XCircle, Trash2, CalendarX, AlertCircle } from 'lucide-react';
+import { Search, Copy, XCircle, Trash2, CalendarX, AlertCircle, RefreshCw } from 'lucide-react';
 import {
     Tooltip,
     TooltipContent,
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
 
 interface SyncInfo {
@@ -89,6 +97,19 @@ export function SyncsTab() {
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
     const [cancellingSync, setCancellingSync] = useState<string | null>(null);
     const [deletingSync, setDeletingSync] = useState<string | null>(null);
+    const [resyncDialogOpen, setResyncDialogOpen] = useState(false);
+    const [resyncingSync, setResyncingSync] = useState<{ id: string; name: string } | null>(null);
+    const [resyncConfig, setResyncConfig] = useState({
+        skipQdrant: false,
+        skipVespa: false,
+        skipCursorLoad: false,
+        skipCursorUpdates: false,
+        skipHashComparison: false,
+        replayFromArf: false,
+        enableVectorHandlers: true,
+        enableRawDataHandler: true,
+        enablePostgresHandler: true,
+    });
 
     const loadSyncs = async () => {
         setIsSyncsLoading(true);
@@ -238,6 +259,59 @@ export function SyncsTab() {
             toast.error(error instanceof Error ? error.message : 'Failed to delete sync');
         } finally {
             setDeletingSync(null);
+        }
+    };
+
+    const openResyncDialog = (syncId: string, syncName: string) => {
+        setResyncingSync({ id: syncId, name: syncName });
+        // Reset config to defaults
+        setResyncConfig({
+            skipQdrant: false,
+            skipVespa: false,
+            skipCursorLoad: false,
+            skipCursorUpdates: false,
+            skipHashComparison: false,
+            replayFromArf: false,
+            enableVectorHandlers: true,
+            enableRawDataHandler: true,
+            enablePostgresHandler: true,
+        });
+        setResyncDialogOpen(true);
+    };
+
+    const handleResync = async () => {
+        if (!resyncingSync) return;
+
+        try {
+            const executionConfig: Record<string, boolean> = {
+                skip_qdrant: resyncConfig.skipQdrant,
+                skip_vespa: resyncConfig.skipVespa,
+                skip_cursor_load: resyncConfig.skipCursorLoad,
+                skip_cursor_updates: resyncConfig.skipCursorUpdates,
+                skip_hash_comparison: resyncConfig.skipHashComparison,
+                replay_from_arf: resyncConfig.replayFromArf,
+                enable_vector_handlers: resyncConfig.enableVectorHandlers,
+                enable_raw_data_handler: resyncConfig.enableRawDataHandler,
+                enable_postgres_handler: resyncConfig.enablePostgresHandler,
+            };
+
+            const response = await apiClient.post(
+                `/admin/resync/${resyncingSync.id}`,
+                executionConfig
+            );
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error || 'Failed to trigger resync');
+            }
+
+            const result = await response.json();
+            toast.success(`Resync job created for "${resyncingSync.name}" (Job ID: ${result.id})`);
+            setResyncDialogOpen(false);
+            setResyncingSync(null);
+        } catch (error) {
+            console.error('Failed to trigger resync:', error);
+            toast.error(error instanceof Error ? error.message : 'Failed to trigger resync');
         }
     };
 
@@ -619,6 +693,16 @@ export function SyncsTab() {
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
+                                                            onClick={() => openResyncDialog(sync.id, sync.name)}
+                                                            disabled={cancellingSync === sync.id || deletingSync === sync.id}
+                                                            className="h-7 px-2 hover:bg-blue-500/10 hover:text-blue-500 hover:border-blue-500/30"
+                                                            title="Resync with custom config"
+                                                        >
+                                                            <RefreshCw className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
                                                             onClick={() => handleCancelSync(sync.id, sync.name)}
                                                             disabled={cancellingSync === sync.id || deletingSync === sync.id}
                                                             className="h-7 px-2"
@@ -668,6 +752,149 @@ export function SyncsTab() {
                     </CardContent>
                 </Card>
             )}
+
+            {/* Resync Dialog */}
+            <Dialog open={resyncDialogOpen} onOpenChange={setResyncDialogOpen}>
+                <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Resync: {resyncingSync?.name}</DialogTitle>
+                        <DialogDescription>
+                            Configure execution options for this resync. Default settings will run a normal sync.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-6 py-4">
+                        {/* Destination Toggles */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Destination Toggles</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-qdrant"
+                                        checked={resyncConfig.skipQdrant}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipQdrant: checked as boolean })}
+                                    />
+                                    <Label htmlFor="skip-qdrant" className="text-sm cursor-pointer">
+                                        Skip Qdrant
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-vespa"
+                                        checked={resyncConfig.skipVespa}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipVespa: checked as boolean })}
+                                    />
+                                    <Label htmlFor="skip-vespa" className="text-sm cursor-pointer">
+                                        Skip Vespa
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Handler Toggles */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Handler Toggles</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="enable-vector"
+                                        checked={resyncConfig.enableVectorHandlers}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enableVectorHandlers: checked as boolean })}
+                                    />
+                                    <Label htmlFor="enable-vector" className="text-sm cursor-pointer">
+                                        Enable Vector Handlers (embeddings)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="enable-arf"
+                                        checked={resyncConfig.enableRawDataHandler}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enableRawDataHandler: checked as boolean })}
+                                    />
+                                    <Label htmlFor="enable-arf" className="text-sm cursor-pointer">
+                                        Enable ARF Handler (raw data capture)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="enable-postgres"
+                                        checked={resyncConfig.enablePostgresHandler}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, enablePostgresHandler: checked as boolean })}
+                                    />
+                                    <Label htmlFor="enable-postgres" className="text-sm cursor-pointer">
+                                        Enable Postgres Handler (metadata)
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Sync Behavior */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-semibold">Sync Behavior</h3>
+                            <div className="space-y-2">
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-cursor"
+                                        checked={resyncConfig.skipCursorLoad}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipCursorLoad: checked as boolean })}
+                                    />
+                                    <Label htmlFor="skip-cursor" className="text-sm cursor-pointer">
+                                        Skip Cursor Load (force full sync - fetch all entities)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-cursor-updates"
+                                        checked={resyncConfig.skipCursorUpdates}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipCursorUpdates: checked as boolean })}
+                                    />
+                                    <Label htmlFor="skip-cursor-updates" className="text-sm cursor-pointer">
+                                        Skip Cursor Updates (don't save progress)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-hash"
+                                        checked={resyncConfig.skipHashComparison}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, skipHashComparison: checked as boolean })}
+                                    />
+                                    <Label htmlFor="skip-hash" className="text-sm cursor-pointer">
+                                        Skip Hash Comparison (force INSERT all entities)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="replay-arf"
+                                        checked={resyncConfig.replayFromArf}
+                                        onCheckedChange={(checked) => setResyncConfig({ ...resyncConfig, replayFromArf: checked as boolean })}
+                                    />
+                                    <Label htmlFor="replay-arf" className="text-sm cursor-pointer">
+                                        Replay from ARF (read from ARF storage instead of source)
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Info Box */}
+                        <div className="bg-blue-950/30 border border-blue-500/30 rounded-md p-3">
+                            <p className="text-xs text-blue-300">
+                                <strong>Tip:</strong> Use "Replay from ARF" to re-process existing data without calling the source API.
+                                Combine with handler toggles for specific operations like Vespa-only resyncs.
+                            </p>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setResyncDialogOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleResync} className="gap-2">
+                            <RefreshCw className="h-4 w-4" />
+                            Start Resync
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </>
     );
 }
