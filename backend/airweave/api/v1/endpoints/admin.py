@@ -2236,3 +2236,81 @@ async def admin_cancel_sync_by_id(
         "cancelled_jobs": cancelled_jobs,
         "failed_jobs": failed_jobs,
     }
+
+
+@router.delete("/syncs/{sync_id}")
+async def admin_delete_sync(
+    sync_id: UUID,
+    db: AsyncSession = Depends(deps.get_db),
+    ctx: ApiContext = Depends(deps.get_context),
+) -> dict:
+    """Admin-only: Delete a sync and all related data.
+
+    This endpoint reuses the existing source connection deletion logic which handles:
+    - Cancelling active jobs
+    - Cleaning up Temporal schedules
+    - Removing data from Qdrant
+    - Removing data from Vespa
+    - Removing ARF storage
+    - Cascading deletes in Postgres (sync, connection, source_connection)
+
+    Args:
+        sync_id: The sync ID to delete
+        db: Database session
+        ctx: API context
+
+    Returns:
+        Success message with deleted sync ID
+
+    Raises:
+        HTTPException: If not admin, sync not found, or deletion fails
+    """
+    from sqlalchemy import select as sa_select
+
+    from airweave.core.source_connection_service import source_connection_service
+    from airweave.models.source_connection import SourceConnection
+    from airweave.models.sync import Sync
+
+    _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    # Verify sync exists
+    result = await db.execute(sa_select(Sync).where(Sync.id == sync_id))
+    sync_obj = result.scalar_one_or_none()
+    if not sync_obj:
+        raise NotFoundException(f"Sync {sync_id} not found")
+
+    # Find the source connection for this sync
+    source_conn_result = await db.execute(
+        sa_select(SourceConnection).where(SourceConnection.sync_id == sync_id)
+    )
+    source_conn = source_conn_result.scalar_one_or_none()
+
+    if not source_conn:
+        raise NotFoundException(f"Source connection not found for sync {sync_id}")
+
+    ctx.logger.info(
+        f"Admin deleting sync {sync_id} (org: {sync_obj.organization_id}) "
+        f"via source connection {source_conn.id}"
+    )
+
+    # Build context for the sync's organization
+    sync_org_ctx = await _build_org_context(db, sync_obj.organization_id, ctx)
+
+    # Use the existing source connection delete logic which handles all cleanup
+    try:
+        await source_connection_service.delete(
+            db,
+            id=source_conn.id,
+            ctx=sync_org_ctx,
+        )
+
+        ctx.logger.info(f"✅ Admin successfully deleted sync {sync_id}")
+
+        return {
+            "sync_id": str(sync_id),
+            "message": "Sync deleted successfully",
+            "deleted_source_connection_id": str(source_conn.id),
+        }
+    except Exception as e:
+        ctx.logger.error(f"Failed to delete sync {sync_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete sync: {str(e)}")

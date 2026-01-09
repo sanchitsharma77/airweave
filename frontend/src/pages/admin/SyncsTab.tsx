@@ -76,6 +76,7 @@ export function SyncsTab() {
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
     const [cancellingSync, setCancellingSync] = useState<string | null>(null);
+    const [deletingSync, setDeletingSync] = useState<string | null>(null);
 
     const loadSyncs = async () => {
         setIsSyncsLoading(true);
@@ -185,6 +186,40 @@ export function SyncsTab() {
             toast.error(error instanceof Error ? error.message : 'Failed to cancel sync');
         } finally {
             setCancellingSync(null);
+        }
+    };
+
+    const handleDeleteSync = async (syncId: string, syncName: string) => {
+        const confirmMessage = `⚠️ DELETE SYNC: "${syncName}"?\n\nThis will permanently delete:\n• The sync and all its data\n• All jobs and schedules\n• Data from Qdrant and Vespa\n• ARF storage\n• Postgres records\n\n⚠️ THIS CANNOT BE UNDONE!\n\nType DELETE to confirm:`;
+
+        const userInput = prompt(confirmMessage);
+
+        if (userInput !== 'DELETE') {
+            if (userInput !== null) {
+                toast.error('Deletion cancelled.');
+            }
+            return;
+        }
+
+        setDeletingSync(syncId);
+        try {
+            const response = await apiClient.delete(`/admin/syncs/${syncId}`);
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(error || 'Failed to delete sync');
+            }
+
+            const result = await response.json();
+            toast.success(`Successfully deleted sync "${syncName}"`);
+
+            // Remove the deleted sync from the list
+            setSyncs(syncs.filter(s => s.id !== syncId));
+        } catch (error) {
+            console.error('Failed to delete sync:', error);
+            toast.error(error instanceof Error ? error.message : 'Failed to delete sync');
+        } finally {
+            setDeletingSync(null);
         }
     };
 
@@ -501,7 +536,7 @@ export function SyncsTab() {
                                                             size="sm"
                                                             variant="outline"
                                                             onClick={() => handleCancelSync(sync.id, sync.name)}
-                                                            disabled={cancellingSync === sync.id}
+                                                            disabled={cancellingSync === sync.id || deletingSync === sync.id}
                                                             className="h-7 px-2"
                                                             title="Cancel active jobs"
                                                         >
@@ -519,9 +554,10 @@ export function SyncsTab() {
                                                         <Button
                                                             size="sm"
                                                             variant="outline"
-                                                            disabled
-                                                            className="h-7 px-2"
-                                                            title="Delete sync (coming soon)"
+                                                            onClick={() => handleDeleteSync(sync.id, sync.name)}
+                                                            disabled={deletingSync === sync.id || cancellingSync === sync.id}
+                                                            className="h-7 px-2 hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/30"
+                                                            title="Delete sync permanently"
                                                         >
                                                             <Trash2 className="h-3.5 w-3.5" />
                                                         </Button>
