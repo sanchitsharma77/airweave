@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Shield, Plus, Crown, Building2, ArrowUpCircle, UserPlus, Search, ArrowUpDown, Users, Database, Activity, Flag } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -368,360 +369,393 @@ export function AdminDashboard() {
           <Shield className="h-8 w-8 text-primary" />
           <div>
             <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-            <p className="text-muted-foreground">Manage organizations across the platform</p>
+            <p className="text-muted-foreground">Manage organizations and syncs across the platform</p>
           </div>
         </div>
-
-        <Button
-          onClick={() => {
-            setActionType('create');
-            setNewOrgName('');
-            setNewOrgDescription('');
-            setOwnerEmail('');
-          }}
-          className="gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          Create Enterprise Org
-        </Button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <Card className="border-l-4 border-l-brand-lime/50">
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-              <Building2 className="h-3.5 w-3.5" />
-              Organizations
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-2xl font-bold">{formatNumber(stats.totalOrgs)}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {stats.enterpriseCount} enterprise • {stats.trialCount} trial
-            </p>
-          </CardContent>
-        </Card>
+      <Tabs defaultValue="organizations" className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="organizations" className="gap-2">
+            <Building2 className="h-4 w-4" />
+            Organizations
+          </TabsTrigger>
+          <TabsTrigger value="syncs" className="gap-2">
+            <Activity className="h-4 w-4" />
+            Syncs
+          </TabsTrigger>
+        </TabsList>
 
-        <Card>
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-              <Users className="h-3.5 w-3.5" />
-              Total Users
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-2xl font-bold">{formatNumber(stats.totalUsers)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Across all orgs</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-              <Database className="h-3.5 w-3.5" />
-              Connections
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-2xl font-bold">{formatNumber(stats.totalSourceConnections)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Source connections</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-              <Activity className="h-3.5 w-3.5" />
-              Entities
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-2xl font-bold">{formatNumber(stats.totalEntities)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Total indexed</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Admin User
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-sm font-medium truncate">{user.email}</div>
-            <Badge variant="outline" className="mt-1 text-xs">Admin</Badge>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2 pt-3">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
-              Platform
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pb-3">
-            <div className="text-sm font-medium">Airweave</div>
-            <p className="text-xs text-muted-foreground mt-1">Admin Panel</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Organizations Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>All Organizations</CardTitle>
-              <CardDescription>
-                View and manage all organizations on the platform
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Select value={membershipFilter} onValueChange={(value: MembershipFilter) => setMembershipFilter(value)}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Filter by membership" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Organizations</SelectItem>
-                  <SelectItem value="member">Member ({stats.memberCount})</SelectItem>
-                  <SelectItem value="non-member">Non-member ({stats.totalOrgs - stats.memberCount})</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search organizations..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-8"
-                />
-              </div>
-            </div>
+        <TabsContent value="organizations" className="mt-0">
+          <div className="flex items-center justify-end mb-6">
+            <Button
+              onClick={() => {
+                setActionType('create');
+                setNewOrgName('');
+                setNewOrgDescription('');
+                setOwnerEmail('');
+              }}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Create Enterprise Org
+            </Button>
           </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="text-center py-12 text-muted-foreground">Loading organizations...</div>
-          ) : filteredOrganizations.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              {searchTerm ? 'No organizations match your search' :
-                membershipFilter !== 'all' ? `No ${membershipFilter === 'member' ? 'member' : 'non-member'} organizations found` :
-                  'No organizations found'}
-            </div>
-          ) : (
-            <div className="border-t">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-[220px]">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -ml-3 data-[state=open]:bg-accent"
-                        onClick={() => handleSort('name')}
-                      >
-                        Organization
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[120px]">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -ml-3"
-                        onClick={() => handleSort('billing_plan')}
-                      >
-                        Plan
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[110px]">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -ml-3"
-                        onClick={() => handleSort('is_member')}
-                      >
-                        Membership
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[100px] text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -mr-3"
-                        onClick={() => handleSort('user_count')}
-                      >
-                        Users
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[120px] text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -mr-3"
-                        onClick={() => handleSort('source_connection_count')}
-                      >
-                        Connections
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[110px] text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -mr-3"
-                        onClick={() => handleSort('entity_count')}
-                      >
-                        Entities
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[100px] text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -mr-3"
-                        onClick={() => handleSort('query_count')}
-                      >
-                        Queries
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[130px]">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -ml-3"
-                        onClick={() => handleSort('last_active_at')}
-                      >
-                        Last Active
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="w-[130px]">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 -ml-3"
-                        onClick={() => handleSort('created_at')}
-                      >
-                        Created
-                        <ArrowUpDown className="ml-2 h-3 w-3" />
-                      </Button>
-                    </TableHead>
-                    <TableHead className="text-right w-[200px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredOrganizations.map((org) => (
-                    <TableRow key={org.id} className="hover:bg-muted/30">
-                      <TableCell className="py-2">
-                        <div className="flex items-center gap-2">
-                          <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium truncate">{org.name}</div>
-                            {org.description && (
-                              <div className="text-xs text-muted-foreground truncate">
-                                {org.description}
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+            <Card className="border-l-4 border-l-brand-lime/50">
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Organizations
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-2xl font-bold">{formatNumber(stats.totalOrgs)}</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {stats.enterpriseCount} enterprise • {stats.trialCount} trial
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                  <Users className="h-3.5 w-3.5" />
+                  Total Users
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-2xl font-bold">{formatNumber(stats.totalUsers)}</div>
+                <p className="text-xs text-muted-foreground mt-1">Across all orgs</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                  <Database className="h-3.5 w-3.5" />
+                  Connections
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-2xl font-bold">{formatNumber(stats.totalSourceConnections)}</div>
+                <p className="text-xs text-muted-foreground mt-1">Source connections</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
+                  <Activity className="h-3.5 w-3.5" />
+                  Entities
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-2xl font-bold">{formatNumber(stats.totalEntities)}</div>
+                <p className="text-xs text-muted-foreground mt-1">Total indexed</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground">
+                  Admin User
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-sm font-medium truncate">{user.email}</div>
+                <Badge variant="outline" className="mt-1 text-xs">Admin</Badge>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground">
+                  Platform
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="text-sm font-medium">Airweave</div>
+                <p className="text-xs text-muted-foreground mt-1">Admin Panel</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Organizations Table */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>All Organizations</CardTitle>
+                  <CardDescription>
+                    View and manage all organizations on the platform
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={membershipFilter} onValueChange={(value: MembershipFilter) => setMembershipFilter(value)}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Filter by membership" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Organizations</SelectItem>
+                      <SelectItem value="member">Member ({stats.memberCount})</SelectItem>
+                      <SelectItem value="non-member">Non-member ({stats.totalOrgs - stats.memberCount})</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="relative w-72">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search organizations..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {isLoading ? (
+                <div className="text-center py-12 text-muted-foreground">Loading organizations...</div>
+              ) : filteredOrganizations.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  {searchTerm ? 'No organizations match your search' :
+                    membershipFilter !== 'all' ? `No ${membershipFilter === 'member' ? 'member' : 'non-member'} organizations found` :
+                      'No organizations found'}
+                </div>
+              ) : (
+                <div className="border-t">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-[220px]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -ml-3 data-[state=open]:bg-accent"
+                            onClick={() => handleSort('name')}
+                          >
+                            Organization
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[120px]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -ml-3"
+                            onClick={() => handleSort('billing_plan')}
+                          >
+                            Plan
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[110px]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -ml-3"
+                            onClick={() => handleSort('is_member')}
+                          >
+                            Membership
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[100px] text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -mr-3"
+                            onClick={() => handleSort('user_count')}
+                          >
+                            Users
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[120px] text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -mr-3"
+                            onClick={() => handleSort('source_connection_count')}
+                          >
+                            Connections
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[110px] text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -mr-3"
+                            onClick={() => handleSort('entity_count')}
+                          >
+                            Entities
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[100px] text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -mr-3"
+                            onClick={() => handleSort('query_count')}
+                          >
+                            Queries
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[130px]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -ml-3"
+                            onClick={() => handleSort('last_active_at')}
+                          >
+                            Last Active
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="w-[130px]">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 -ml-3"
+                            onClick={() => handleSort('created_at')}
+                          >
+                            Created
+                            <ArrowUpDown className="ml-2 h-3 w-3" />
+                          </Button>
+                        </TableHead>
+                        <TableHead className="text-right w-[200px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredOrganizations.map((org) => (
+                        <TableRow key={org.id} className="hover:bg-muted/30">
+                          <TableCell className="py-2">
+                            <div className="flex items-center gap-2">
+                              <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium truncate">{org.name}</div>
+                                {org.description && (
+                                  <div className="text-xs text-muted-foreground truncate">
+                                    {org.description}
+                                  </div>
+                                )}
                               </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {getBillingPlanBadge(org.billing_plan)}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            {org.is_member ? (
+                              <Badge variant="outline" className="text-xs px-2 py-0.5 h-5 gap-1">
+                                {org.member_role === 'owner' && <Crown className="h-3 w-3 text-brand-lime/90" />}
+                                {org.member_role === 'admin' && <Shield className="h-3 w-3 text-brand-lime/90" />}
+                                {org.member_role}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
                             )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="py-2">
-                        {getBillingPlanBadge(org.billing_plan)}
-                      </TableCell>
-                      <TableCell className="py-2">
-                        {org.is_member ? (
-                          <Badge variant="outline" className="text-xs px-2 py-0.5 h-5 gap-1">
-                            {org.member_role === 'owner' && <Crown className="h-3 w-3 text-brand-lime/90" />}
-                            {org.member_role === 'admin' && <Shield className="h-3 w-3 text-brand-lime/90" />}
-                            {org.member_role}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatNumber(org.user_count)}
-                      </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatNumber(org.source_connection_count)}
-                      </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatNumber(org.entity_count)}
-                      </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatNumber(org.query_count)}
-                      </TableCell>
-                      <TableCell className="py-2 text-xs text-muted-foreground">
-                        {org.last_active_at ? formatDate(org.last_active_at) : '—'}
-                      </TableCell>
-                      <TableCell className="py-2 text-xs text-muted-foreground">
-                        {formatDate(org.created_at)}
-                      </TableCell>
-                      <TableCell className="text-right py-2">
-                        <div className="flex justify-end gap-1.5">
-                          {org.is_member ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled
-                              className="h-7 gap-1.5 text-xs text-muted-foreground"
-                            >
-                              <UserPlus className="h-3 w-3" />
-                              Member
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedOrg(org);
-                                setActionType('join');
-                                setSelectedRole('owner');
-                              }}
-                              className="h-7 gap-1.5 text-xs"
-                            >
-                              <UserPlus className="h-3 w-3" />
-                              Join
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openFeatureFlagsDialog(org)}
-                            className="h-7 gap-1.5 text-xs"
-                          >
-                            <Flag className="h-3 w-3" />
-                            Features
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedOrg(org);
-                              setActionType('upgrade');
-                            }}
-                            className="h-7 gap-1.5 text-xs"
-                          >
-                            <ArrowUpCircle className="h-3 w-3" />
-                            Upgrade
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                          </TableCell>
+                          <TableCell className="text-right py-2 font-mono text-sm">
+                            {formatNumber(org.user_count)}
+                          </TableCell>
+                          <TableCell className="text-right py-2 font-mono text-sm">
+                            {formatNumber(org.source_connection_count)}
+                          </TableCell>
+                          <TableCell className="text-right py-2 font-mono text-sm">
+                            {formatNumber(org.entity_count)}
+                          </TableCell>
+                          <TableCell className="text-right py-2 font-mono text-sm">
+                            {formatNumber(org.query_count)}
+                          </TableCell>
+                          <TableCell className="py-2 text-xs text-muted-foreground">
+                            {org.last_active_at ? formatDate(org.last_active_at) : '—'}
+                          </TableCell>
+                          <TableCell className="py-2 text-xs text-muted-foreground">
+                            {formatDate(org.created_at)}
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            <div className="flex justify-end gap-1.5">
+                              {org.is_member ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                  className="h-7 gap-1.5 text-xs text-muted-foreground"
+                                >
+                                  <UserPlus className="h-3 w-3" />
+                                  Member
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedOrg(org);
+                                    setActionType('join');
+                                    setSelectedRole('owner');
+                                  }}
+                                  className="h-7 gap-1.5 text-xs"
+                                >
+                                  <UserPlus className="h-3 w-3" />
+                                  Join
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openFeatureFlagsDialog(org)}
+                                className="h-7 gap-1.5 text-xs"
+                              >
+                                <Flag className="h-3 w-3" />
+                                Features
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedOrg(org);
+                                  setActionType('upgrade');
+                                }}
+                                className="h-7 gap-1.5 text-xs"
+                              >
+                                <ArrowUpCircle className="h-3 w-3" />
+                                Upgrade
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="syncs" className="mt-0">
+          <Card>
+            <CardHeader>
+              <CardTitle>Syncs Dashboard</CardTitle>
+              <CardDescription>
+                Monitor and manage all sync jobs across the platform
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground text-center py-12">
+                Syncs dashboard coming soon...
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Join Organization Dialog */}
       <Dialog open={actionType === 'join'} onOpenChange={(open) => !open && setActionType(null)}>

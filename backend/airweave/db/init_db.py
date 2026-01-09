@@ -47,6 +47,7 @@ async def init_db(db: AsyncSession) -> None:
         if db_user:
             db_user.is_superuser = True
             db.add(db_user)
+            db_user.is_admin = True
             await db.commit()
             await db.refresh(db_user)
 
