@@ -1543,7 +1543,7 @@ async def admin_list_all_syncs(
             )
 
     # Build base query for syncs
-    query = sa_select(Sync).order_by(Sync.created_at.desc())
+    query = sa_select(Sync)
 
     # Apply SQL-level filters
     if parsed_sync_ids:
@@ -1561,7 +1561,41 @@ async def admin_list_all_syncs(
             # Invalid status value, return empty result
             return []
 
-    query = query.offset(skip).limit(limit)
+    # Apply ghost sync filter at SQL level if requested
+    if ghost_syncs_last_n is not None and ghost_syncs_last_n > 0:
+        from airweave.core.shared_models import SyncJobStatus
+
+        # Subquery to get last N jobs per sync (excluding running/pending)
+        jobs_subq = (
+            sa_select(
+                SyncJob.sync_id,
+                SyncJob.status,
+                func.row_number()
+                .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
+                .label("rn"),
+            )
+            .where(
+                SyncJob.status.notin_([SyncJobStatus.RUNNING.value, SyncJobStatus.PENDING.value])
+            )
+            .subquery()
+        )
+
+        # Get syncs where all last N jobs failed
+        failed_syncs_subq = (
+            sa_select(jobs_subq.c.sync_id)
+            .where(jobs_subq.c.rn <= ghost_syncs_last_n)
+            .group_by(jobs_subq.c.sync_id)
+            .having(
+                func.count().filter(jobs_subq.c.status == SyncJobStatus.FAILED.value)
+                == func.count()
+            )
+            .having(func.count() >= ghost_syncs_last_n)
+            .subquery()
+        )
+
+        query = query.where(Sync.id.in_(sa_select(failed_syncs_subq.c.sync_id)))
+
+    query = query.order_by(Sync.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(query)
     syncs = list(result.scalars().all())
@@ -1598,46 +1632,7 @@ async def admin_list_all_syncs(
     arf_counts = await asyncio.gather(*arf_count_tasks)
     arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
 
-    # Fetch last N jobs per sync for ghost sync filtering (if requested)
-    sync_failure_map = {}
-    if ghost_syncs_last_n is not None and ghost_syncs_last_n > 0:
-        from airweave.core.shared_models import SyncJobStatus
-
-        # Fetch last N jobs per sync (excluding running/pending)
-        jobs_subq = (
-            sa_select(
-                SyncJob.sync_id,
-                SyncJob.status,
-                SyncJob.created_at,
-                func.row_number()
-                .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
-                .label("rn"),
-            )
-            .where(
-                SyncJob.sync_id.in_(sync_ids),
-                SyncJob.status.notin_([SyncJobStatus.RUNNING.value, SyncJobStatus.PENDING.value]),
-            )
-            .subquery()
-        )
-        jobs_query = sa_select(jobs_subq).where(jobs_subq.c.rn <= ghost_syncs_last_n)
-        jobs_result = await db.execute(jobs_query)
-        jobs_rows = list(jobs_result)
-
-        # Group by sync_id
-        from collections import defaultdict
-
-        jobs_by_sync = defaultdict(list)
-        for row in jobs_rows:
-            jobs_by_sync[row.sync_id].append(row.status)
-
-        # Check if all last N jobs failed for each sync
-        for sync_id, statuses in jobs_by_sync.items():
-            if len(statuses) >= ghost_syncs_last_n:
-                all_failed = all(status == SyncJobStatus.FAILED.value for status in statuses)
-                sync_failure_map[sync_id] = all_failed
-            else:
-                # Less than N jobs exist, not a ghost sync
-                sync_failure_map[sync_id] = False
+    # Note: Ghost sync filtering is now done at SQL level in the initial query
 
     # Fetch last job info in bulk (including error message)
     last_job_subq = (
@@ -1813,13 +1808,9 @@ async def admin_list_all_syncs(
             # Only syncs without a Vespa job (pending backfill)
             filtered_syncs = [s for s in filtered_syncs if s.last_vespa_job_status is None]
 
-    if ghost_syncs_last_n is not None and sync_failure_map:
-        # Filter to ghost syncs only (where all last N jobs failed)
-        filtered_syncs = [s for s in filtered_syncs if sync_failure_map.get(s.id, False)]
-
     ctx.logger.info(
         f"Admin listed {len(filtered_syncs)} syncs "
-        f"(filtered from {len(admin_syncs)}, "
+        f"(filtered from {len(admin_syncs)}, fetched={len(syncs)}, "
         f"sync_ids={len(parsed_sync_ids) if parsed_sync_ids else None}, "
         f"org={organization_id}, collection={collection_id}, "
         f"source={source_type}, status={status}, "
