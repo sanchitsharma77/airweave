@@ -1561,6 +1561,49 @@ async def admin_list_all_syncs(
             # Invalid status value, return empty result
             return []
 
+    # Source connection filters using subqueries to avoid JOIN duplication
+    if has_source_connection:
+        # Only syncs that have a source connection
+        query = query.where(
+            Sync.id.in_(
+                sa_select(SourceConnection.sync_id).where(SourceConnection.sync_id.isnot(None))
+            )
+        )
+    else:
+        # Only orphaned syncs (no source connection)
+        query = query.where(
+            Sync.id.notin_(
+                sa_select(SourceConnection.sync_id).where(SourceConnection.sync_id.isnot(None))
+            )
+        )
+
+    if is_authenticated is not None:
+        query = query.where(
+            Sync.id.in_(
+                sa_select(SourceConnection.sync_id).where(
+                    SourceConnection.is_authenticated == is_authenticated
+                )
+            )
+        )
+
+    if collection_id is not None:
+        query = query.where(
+            Sync.id.in_(
+                sa_select(SourceConnection.sync_id).where(
+                    SourceConnection.readable_collection_id == collection_id
+                )
+            )
+        )
+
+    if source_type is not None:
+        query = query.where(
+            Sync.id.in_(
+                sa_select(SourceConnection.sync_id).where(
+                    SourceConnection.short_name == source_type
+                )
+            )
+        )
+
     # Apply ghost sync filter at SQL level if requested
     if ghost_syncs_last_n is not None and ghost_syncs_last_n > 0:
         from airweave.core.shared_models import SyncJobStatus
@@ -1631,8 +1674,6 @@ async def admin_list_all_syncs(
     arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
     arf_counts = await asyncio.gather(*arf_count_tasks)
     arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
-
-    # Note: Ghost sync filtering is now done at SQL level in the initial query
 
     # Fetch last job info in bulk (including error message)
     last_job_subq = (
@@ -1764,31 +1805,8 @@ async def admin_list_all_syncs(
         vespa_count_map=vespa_count_map,
     )
 
-    # Apply post-fetch filters (requires joined data)
+    # Apply post-fetch filters (only for fields not in SQL query)
     filtered_syncs = admin_syncs
-
-    # Filter by source connection existence
-    # Default behavior: exclude orphaned syncs (has_source_connection=True by default)
-    if has_source_connection:
-        # Only syncs with source connection
-        filtered_syncs = [s for s in filtered_syncs if s.source_short_name is not None]
-    else:
-        # Only orphaned syncs (no source connection)
-        filtered_syncs = [s for s in filtered_syncs if s.source_short_name is None]
-
-    if is_authenticated is not None:
-        # Filter by authentication status (direct boolean check)
-        filtered_syncs = [
-            s for s in filtered_syncs if s.source_is_authenticated == is_authenticated
-        ]
-
-    if collection_id is not None:
-        # Exact match on collection readable ID
-        filtered_syncs = [s for s in filtered_syncs if s.readable_collection_id == collection_id]
-
-    if source_type is not None:
-        # Exact match on source short name
-        filtered_syncs = [s for s in filtered_syncs if s.source_short_name == source_type]
 
     if last_vespa_job_status is not None:
         # Filter by last Vespa job status
