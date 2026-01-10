@@ -44,6 +44,8 @@ Airweave sits between your data sources and AI systems as shared retrieval infra
 
 ### Cloud-hosted: [app.airweave.ai](https://app.airweave.ai)
 
+<a href="https://app.airweave.ai"><img src="https://img.shields.io/badge/Open_Airweave_Cloud-0066FF" alt="Open Airweave Cloud"></a>
+
 ### Self-hosted
 
 ```bash
@@ -90,7 +92,7 @@ cd airweave
 
 <!-- END_APP_GRID -->
 
-<p align="center"><a href="https://docs.airweave.ai/connectors">View all integrations →</a></p>
+<p align="center"><a href="https://docs.airweave.ai/connectors"><img src="https://img.shields.io/badge/View_all_integrations-0066FF" alt="View all integrations"></a></p>
 
 ## SDKs
 
