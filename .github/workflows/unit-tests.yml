@@ -55,7 +55,7 @@ jobs:
         run: poetry install --no-interaction
 
       - name: Run unit tests with coverage
-        run: poetry run pytest tests/unit/ -m "not slow"
+        run: poetry run pytest tests/unit/ -m "not slow" --cov=airweave --cov-report=xml:coverage.xml
 
       - name: Install diff-cover
         if: github.event_name == 'pull_request'
