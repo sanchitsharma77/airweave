@@ -77,6 +77,7 @@ interface SyncFilters {
     collectionId: string;
     sourceType: string;
     status: string;
+    lastJobStatus: string;
     isAuthenticated: string;
     vespaJobStatus: string;
     hasVespaJob: string;
@@ -94,6 +95,7 @@ export function SyncsTab() {
         collectionId: '',
         sourceType: '',
         status: 'all',
+        lastJobStatus: 'all',
         isAuthenticated: 'all',
         vespaJobStatus: 'all',
         hasVespaJob: 'all',
@@ -140,6 +142,9 @@ export function SyncsTab() {
             }
             if (syncFilters.status !== 'all') {
                 params.append('status', syncFilters.status);
+            }
+            if (syncFilters.lastJobStatus !== 'all') {
+                params.append('last_job_status', syncFilters.lastJobStatus);
             }
             if (syncFilters.isAuthenticated !== 'all') {
                 params.append('is_authenticated', syncFilters.isAuthenticated);
@@ -536,7 +541,7 @@ export function SyncsTab() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                         <div>
                             <Label htmlFor="sync-status-filter">Sync Status</Label>
                             <Select
@@ -551,6 +556,25 @@ export function SyncsTab() {
                                     <SelectItem value="active">Active</SelectItem>
                                     <SelectItem value="inactive">Inactive</SelectItem>
                                     <SelectItem value="error">Error</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label htmlFor="last-job-status-filter">Last Job Status</Label>
+                            <Select
+                                value={syncFilters.lastJobStatus}
+                                onValueChange={(value) => setSyncFilters({ ...syncFilters, lastJobStatus: value })}
+                            >
+                                <SelectTrigger id="last-job-status-filter">
+                                    <SelectValue placeholder="All" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All</SelectItem>
+                                    <SelectItem value="completed">Completed</SelectItem>
+                                    <SelectItem value="failed">Failed</SelectItem>
+                                    <SelectItem value="running">Running</SelectItem>
+                                    <SelectItem value="pending">Pending</SelectItem>
+                                    <SelectItem value="cancelled">Cancelled</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
