@@ -111,15 +111,16 @@ results = client.collections.search(
 )
 ```
 
-📚 [Full SDK documentation →](https://docs.airweave.ai) · [Example notebooks →](https://github.com/airweave-ai/airweave/tree/main/examples)
+<a href="https://docs.airweave.ai"><img src="https://img.shields.io/badge/SDK_Documentation-0066FF" alt="SDK Documentation"></a>
+<a href="https://github.com/airweave-ai/airweave/tree/main/examples"><img src="https://img.shields.io/badge/Example_Notebooks-0066FF" alt="Example Notebooks"></a>
 
 ## Tech Stack
 
 - **Frontend**: [React/TypeScript](https://react.dev/) with [ShadCN](https://ui.shadcn.com/)
 - **Backend**: [FastAPI](https://fastapi.tiangolo.com/) (Python)
-- **Databases**: PostgreSQL (metadata), [Qdrant](https://qdrant.tech/) (vectors)
-- **Workers**: [Temporal](https://temporal.io/) (orchestration), Redis (pub/sub)
-- **Deployment**: Docker Compose (dev), Kubernetes (prod)
+- **Databases**: [PostgreSQL](https://www.postgresql.org/) (metadata), [Qdrant](https://qdrant.tech/) (vectors)
+- **Workers**: [Temporal](https://temporal.io/) (orchestration), [Redis](https://redis.io/) (pub/sub)
+- **Deployment**: [Docker Compose](https://docs.docker.com/compose/) (dev), [Kubernetes](https://kubernetes.io/) (prod)
 
 ## Contributing
 
