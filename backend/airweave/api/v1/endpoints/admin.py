@@ -1541,7 +1541,12 @@ async def admin_list_all_syncs(
     from airweave.models.sync_connection import SyncConnection
     from airweave.models.sync_job import SyncJob
 
+    import time
+
     _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
+
+    request_start = time.monotonic()
+    timings = {}
 
     # Parse sync_ids if provided
     parsed_sync_ids: Optional[List[UUID]] = None
@@ -1735,15 +1740,19 @@ async def admin_list_all_syncs(
 
     query = query.order_by(Sync.created_at.desc()).offset(skip).limit(limit)
 
+    query_start = time.monotonic()
     result = await db.execute(query)
     syncs = list(result.scalars().all())
+    timings["main_query"] = (time.monotonic() - query_start) * 1000
 
     if not syncs:
+        ctx.logger.info("Admin syncs query returned 0 results")
         return []
 
     sync_ids = [s.id for s in syncs]
 
     # Fetch entity counts in bulk
+    entity_start = time.monotonic()
     entity_count_query = (
         sa_select(EntityCount.sync_id, func.sum(EntityCount.count).label("total_count"))
         .where(EntityCount.sync_id.in_(sync_ids))
@@ -1751,6 +1760,7 @@ async def admin_list_all_syncs(
     )
     entity_count_result = await db.execute(entity_count_query)
     entity_count_map = {row.sync_id: row.total_count or 0 for row in entity_count_result}
+    timings["entity_counts"] = (time.monotonic() - entity_start) * 1000
 
     # Fetch ARF entity counts if requested (slower, queries ARF storage)
     if include_arf_counts:
@@ -1758,6 +1768,7 @@ async def admin_list_all_syncs(
 
         from airweave.platform.sync.arf.service import ArfService
 
+        arf_start = time.monotonic()
         arf_service = ArfService()
 
         # Parallelize ARF counts for all syncs
@@ -1770,10 +1781,13 @@ async def admin_list_all_syncs(
         arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
         arf_counts = await asyncio.gather(*arf_count_tasks)
         arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
+        timings["arf_counts"] = (time.monotonic() - arf_start) * 1000
     else:
         arf_count_map = {s.id: None for s in syncs}
+        timings["arf_counts"] = 0
 
     # Fetch last job info in bulk (including error message)
+    last_job_start = time.monotonic()
     last_job_subq = (
         sa_select(
             SyncJob.sync_id,
@@ -1797,10 +1811,12 @@ async def admin_list_all_syncs(
         }
         for row in last_job_result
     }
+    timings["last_job_info"] = (time.monotonic() - last_job_start) * 1000
 
     # Fetch source connections info in bulk with collection IDs
     from airweave.models.collection import Collection
 
+    source_conn_start = time.monotonic()
     source_conn_query = (
         sa_select(
             SourceConnection.sync_id,
@@ -1822,17 +1838,22 @@ async def admin_list_all_syncs(
         }
         for row in source_conn_result
     }
+    timings["source_connections"] = (time.monotonic() - source_conn_start) * 1000
 
     # Fetch Qdrant and Vespa counts if requested (slower, queries destinations)
     if include_destination_counts:
+        dest_start = time.monotonic()
         qdrant_count_map, vespa_count_map = await _fetch_destination_counts(
             syncs, source_conn_map, ctx
         )
+        timings["destination_counts"] = (time.monotonic() - dest_start) * 1000
     else:
         qdrant_count_map = {s.id: None for s in syncs}
         vespa_count_map = {s.id: None for s in syncs}
+        timings["destination_counts"] = 0
 
     # Fetch sync connections to enrich with connection IDs
+    sync_conn_start = time.monotonic()
     sync_conn_query = (
         sa_select(SyncConnection, Connection)
         .join(Connection, SyncConnection.connection_id == Connection.id)
@@ -1848,11 +1869,13 @@ async def admin_list_all_syncs(
             sync_connections[sync_id]["source"] = connection.id
         elif connection.integration_type.value == "destination":
             sync_connections[sync_id]["destinations"].append(connection.id)
+    timings["sync_connections"] = (time.monotonic() - sync_conn_start) * 1000
 
     # Fetch last ARF -> Vespa replay job info in bulk
     # An ARF -> Vespa replay job has:
     #   - replay_from_arf=true (read from ARF storage)
     #   - skip_vespa is NOT true (writes to Vespa)
+    vespa_job_start = time.monotonic()
     arf_to_vespa_job_query = (
         sa_select(
             SyncJob.id,
@@ -1887,8 +1910,10 @@ async def admin_list_all_syncs(
                 "completed_at": row.completed_at,
                 "config": row.execution_config_json,
             }
+    timings["vespa_job_info"] = (time.monotonic() - vespa_job_start) * 1000
 
     # Build response using helper function
+    build_start = time.monotonic()
     admin_syncs = _build_admin_sync_info_list(
         syncs=syncs,
         sync_connections=sync_connections,
@@ -1900,10 +1925,21 @@ async def admin_list_all_syncs(
         qdrant_count_map=qdrant_count_map,
         vespa_count_map=vespa_count_map,
     )
+    timings["build_response"] = (time.monotonic() - build_start) * 1000
+    timings["total"] = (time.monotonic() - request_start) * 1000
 
     ctx.logger.info(
-        f"Admin listed {len(admin_syncs)} syncs "
-        f"(sync_ids={len(parsed_sync_ids) if parsed_sync_ids else None}, "
+        f"Admin listed {len(admin_syncs)} syncs in {timings['total']:.1f}ms "
+        f"(query={timings['main_query']:.1f}ms, "
+        f"entity_counts={timings['entity_counts']:.1f}ms, "
+        f"arf_counts={timings['arf_counts']:.1f}ms, "
+        f"last_job={timings['last_job_info']:.1f}ms, "
+        f"source_conn={timings['source_connections']:.1f}ms, "
+        f"dest_counts={timings['destination_counts']:.1f}ms, "
+        f"sync_conn={timings['sync_connections']:.1f}ms, "
+        f"vespa_job={timings['vespa_job_info']:.1f}ms, "
+        f"build={timings['build_response']:.1f}ms) | "
+        f"filters: sync_ids={len(parsed_sync_ids) if parsed_sync_ids else 0}, "
         f"org={organization_id}, collection={collection_id}, "
         f"source={source_type}, status={status}, "
         f"last_job_status={last_job_status}, "
@@ -1913,7 +1949,7 @@ async def admin_list_all_syncs(
         f"has_vespa_job={has_vespa_job}, "
         f"ghost_syncs_n={ghost_syncs_last_n}, "
         f"include_arf_counts={include_arf_counts}, "
-        f"include_destination_counts={include_destination_counts})"
+        f"include_destination_counts={include_destination_counts}"
     )
 
     return admin_syncs
