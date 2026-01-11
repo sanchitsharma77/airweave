@@ -590,3 +590,4 @@ async def test_zero_active_syncs_scenario(mock_worker_metrics, mock_settings):
                         assert call_kwargs["active_sync_jobs_count"] == 0
                         assert call_kwargs["worker_pool_active_and_pending_count"] == 0
                         assert call_kwargs["connector_metrics"] == {}
+

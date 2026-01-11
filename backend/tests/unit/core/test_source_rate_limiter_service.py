@@ -111,3 +111,4 @@ async def test_config_cache_key_format(org_id):
 
     expected = f"source_rate_limit_config:{org_id}:google_drive"
     assert key == expected
+
