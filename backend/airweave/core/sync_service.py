@@ -219,7 +219,7 @@ class SyncService:
         sync_job_in = schemas.SyncJobCreate(
             sync_id=sync_id,
             status=SyncJobStatus.PENDING,
-            execution_config_json=execution_config,
+            sync_config=execution_config.model_dump() if execution_config else None,
         )
 
         return await crud.sync_job.create(db, obj_in=sync_job_in, ctx=ctx, uow=uow)

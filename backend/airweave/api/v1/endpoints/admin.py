@@ -1094,7 +1094,7 @@ async def resync_with_execution_config(
             sync_id=sync_id,
             organization_id=sync_obj.organization_id,
             status=SyncJobStatus.PENDING,
-            execution_config_json=execution_config.model_dump() if execution_config else None,
+            sync_config=execution_config.model_dump() if execution_config else None,
         )
         uow.session.add(sync_job_obj)
         await uow.commit()
@@ -1696,11 +1696,11 @@ async def admin_list_all_syncs(
                 .label("rn"),
             )
             .where(
-                SyncJob.execution_config_json.isnot(None),
-                SyncJob.execution_config_json["replay_from_arf"].astext == "true",
+                SyncJob.sync_config.isnot(None),
+                SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
                 or_(
-                    SyncJob.execution_config_json["skip_vespa"].astext != "true",
-                    SyncJob.execution_config_json["skip_vespa"].is_(None),
+                    SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
+                    SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
                 ),
             )
             .subquery()
@@ -1882,17 +1882,17 @@ async def admin_list_all_syncs(
             SyncJob.sync_id,
             SyncJob.status,
             SyncJob.completed_at,
-            SyncJob.execution_config_json,
+            SyncJob.sync_config,
         )
         .where(
             SyncJob.sync_id.in_(sync_ids),
-            SyncJob.execution_config_json.isnot(None),
+            SyncJob.sync_config.isnot(None),
             # Must be replay from ARF
-            SyncJob.execution_config_json["replay_from_arf"].astext == "true",
+            SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
             # Must NOT skip Vespa (skip_vespa is absent or false)
             or_(
-                SyncJob.execution_config_json["skip_vespa"].astext != "true",
-                SyncJob.execution_config_json["skip_vespa"].is_(None),
+                SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
+                SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
             ),
         )
         .order_by(SyncJob.sync_id, SyncJob.created_at.desc())
@@ -1908,7 +1908,7 @@ async def admin_list_all_syncs(
                 "id": row.id,
                 "status": row.status,
                 "completed_at": row.completed_at,
-                "config": row.execution_config_json,
+                "config": row.sync_config,
             }
     timings["vespa_job_info"] = (time.monotonic() - vespa_job_start) * 1000
 
