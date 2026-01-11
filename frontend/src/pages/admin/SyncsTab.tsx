@@ -83,6 +83,7 @@ interface SyncFilters {
     hasVespaJob: string;
     ghostSyncsOnly: boolean;
     includeDestinationCounts: boolean;
+    includeArfCounts: boolean;
     limit: number;
 }
 
@@ -101,6 +102,7 @@ export function SyncsTab() {
         hasVespaJob: 'all',
         ghostSyncsOnly: false,
         includeDestinationCounts: false,
+        includeArfCounts: false,
         limit: 100,
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
@@ -160,6 +162,9 @@ export function SyncsTab() {
             }
             if (syncFilters.includeDestinationCounts) {
                 params.append('include_destination_counts', 'true');
+            }
+            if (syncFilters.includeArfCounts) {
+                params.append('include_arf_counts', 'true');
             }
 
             const response = await apiClient.get(`/admin/syncs?${params.toString()}`);
@@ -669,7 +674,20 @@ export function SyncsTab() {
                                 htmlFor="destination-counts-filter"
                                 className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
                             >
-                                Include Destination Counts (slower)
+                                Include Destination Counts (Qdrant/Vespa - slower)
+                            </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Checkbox
+                                id="arf-counts-filter"
+                                checked={syncFilters.includeArfCounts}
+                                onCheckedChange={(checked) => setSyncFilters({ ...syncFilters, includeArfCounts: checked as boolean })}
+                            />
+                            <Label
+                                htmlFor="arf-counts-filter"
+                                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                            >
+                                Include ARF Counts (slower)
                             </Label>
                         </div>
                     </div>

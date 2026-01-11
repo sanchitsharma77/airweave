@@ -1467,6 +1467,10 @@ async def admin_list_all_syncs(
         False,
         description="Include Qdrant and Vespa document counts (slower, queries destinations)",
     ),
+    include_arf_counts: bool = Query(
+        False,
+        description="Include ARF entity counts (slower, queries ARF storage for each sync)",
+    ),
 ) -> List[AdminSyncInfo]:
     """Admin-only: List all syncs across organizations with entity counts.
 
@@ -1478,10 +1482,10 @@ async def admin_list_all_syncs(
     **All filters are optional** except `has_source_connection` which defaults to true.
 
     **Entity Counts**:
-        - total_entity_count: Count from Postgres (EntityCount table)
-        - total_arf_entity_count: Count from ARF storage (may be None if ARF unavailable)
-        - total_qdrant_entity_count: Reserved for future (currently None)
-        - total_vespa_entity_count: Reserved for future (currently None)
+        - total_entity_count: Count from Postgres (EntityCount table) - always included
+        - total_arf_entity_count: Count from ARF storage (None unless include_arf_counts=true)
+        - total_qdrant_entity_count: Count from Qdrant (None unless include_destination_counts=true)
+        - total_vespa_entity_count: Count from Vespa (None unless include_destination_counts=true)
 
     Filters:
         - sync_ids: Comma-separated list of sync UUIDs (e.g., 'uuid1,uuid2,uuid3')
@@ -1497,8 +1501,9 @@ async def admin_list_all_syncs(
         - exclude_failed_last_n: Exclude syncs where last N non-running jobs all failed
         - include_destination_counts: Include Qdrant/Vespa counts (slower, queries destinations)
 
-    **Performance Note**: Setting `include_destination_counts=true` queries Qdrant and Vespa
-    for each sync, which is significantly slower. Recommended for small result sets (<20 syncs).
+    **Performance Note**: Setting `include_destination_counts=true` or `include_arf_counts=true`
+    queries external storage for each sync, which is significantly slower. Both default to false.
+    Recommended only for small result sets (<20 syncs).
 
     Args:
         db: Database session
@@ -1517,6 +1522,7 @@ async def admin_list_all_syncs(
         has_vespa_job: Optional filter by Vespa job existence
         exclude_failed_last_n: Optional exclude syncs with N consecutive failures
         include_destination_counts: Whether to fetch Qdrant/Vespa counts (slower)
+        include_arf_counts: Whether to fetch ARF entity counts (slower)
 
     Returns:
         List of syncs with extended information including entity counts
@@ -1746,23 +1752,26 @@ async def admin_list_all_syncs(
     entity_count_result = await db.execute(entity_count_query)
     entity_count_map = {row.sync_id: row.total_count or 0 for row in entity_count_result}
 
-    # Fetch ARF entity counts in bulk (parallelized for speed)
-    import asyncio
+    # Fetch ARF entity counts if requested (slower, queries ARF storage)
+    if include_arf_counts:
+        import asyncio
 
-    from airweave.platform.sync.arf.service import ArfService
+        from airweave.platform.sync.arf.service import ArfService
 
-    arf_service = ArfService()
+        arf_service = ArfService()
 
-    # Parallelize ARF counts for all syncs
-    async def get_arf_count_safe(sync_id):
-        try:
-            return await arf_service.get_entity_count(str(sync_id))
-        except Exception:
-            return None
+        # Parallelize ARF counts for all syncs
+        async def get_arf_count_safe(sync_id):
+            try:
+                return await arf_service.get_entity_count(str(sync_id))
+            except Exception:
+                return None
 
-    arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
-    arf_counts = await asyncio.gather(*arf_count_tasks)
-    arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
+        arf_count_tasks = [get_arf_count_safe(sync.id) for sync in syncs]
+        arf_counts = await asyncio.gather(*arf_count_tasks)
+        arf_count_map = {sync.id: count for sync, count in zip(syncs, arf_counts)}
+    else:
+        arf_count_map = {s.id: None for s in syncs}
 
     # Fetch last job info in bulk (including error message)
     last_job_subq = (
@@ -1902,7 +1911,9 @@ async def admin_list_all_syncs(
         f"is_authenticated={is_authenticated}, "
         f"vespa_status={last_vespa_job_status}, "
         f"has_vespa_job={has_vespa_job}, "
-        f"ghost_syncs_n={ghost_syncs_last_n})"
+        f"ghost_syncs_n={ghost_syncs_last_n}, "
+        f"include_arf_counts={include_arf_counts}, "
+        f"include_destination_counts={include_destination_counts})"
     )
 
     return admin_syncs
