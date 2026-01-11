@@ -1980,6 +1980,9 @@ async def _fetch_destination_counts(
     qdrant_count_map = {}
     vespa_count_map = {}
 
+    # Limit concurrent queries per destination to avoid overwhelming them
+    MAX_CONCURRENT_COUNTS = 20
+
     # Group syncs by collection_id for efficiency
     syncs_by_collection = {}
     for sync in syncs:
@@ -1995,97 +1998,142 @@ async def _fetch_destination_counts(
             syncs_by_collection[coll_id] = []
         syncs_by_collection[coll_id].append(sync)
 
-    # Query each destination per collection
-    for collection_id, collection_syncs in syncs_by_collection.items():
-        # Qdrant counts
-        try:
-            qdrant = await QdrantDestination.create(
-                collection_id=collection_id,
-                organization_id=collection_syncs[0].organization_id,
-                logger=ctx.logger,
-            )
+    # Process all collections in parallel
+    async def process_collection(collection_id, collection_syncs):
+        """Process Qdrant and Vespa counts for a collection in parallel."""
+        qdrant_results = {}
+        vespa_results = {}
 
-            for sync in collection_syncs:
-                try:
-                    # Scroll through points with sync_id filter
-                    from qdrant_client.models import FieldCondition, Filter, MatchValue
+        # Define Qdrant counting function
+        async def count_qdrant():
+            try:
+                qdrant = await QdrantDestination.create(
+                    collection_id=collection_id,
+                    organization_id=collection_syncs[0].organization_id,
+                    logger=ctx.logger,
+                )
 
-                    scroll_filter = Filter(
-                        must=[
-                            FieldCondition(
-                                key="airweave_system_metadata.sync_id",
-                                match=MatchValue(value=str(sync.id)),
+                # Semaphore to limit concurrent queries
+                semaphore = asyncio.Semaphore(MAX_CONCURRENT_COUNTS)
+
+                # Parallelize all sync counts for this collection (with limit)
+                async def count_qdrant_sync(sync):
+                    async with semaphore:
+                        try:
+                            from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+                            scroll_filter = Filter(
+                                must=[
+                                    FieldCondition(
+                                        key="airweave_system_metadata.sync_id",
+                                        match=MatchValue(value=str(sync.id)),
+                                    )
+                                ]
                             )
-                        ]
-                    )
 
-                    # Use scroll with limit=1 just to get the count
-                    result = await qdrant.client.scroll(
-                        collection_name=qdrant.collection_name,
-                        scroll_filter=scroll_filter,
-                        limit=1,
-                        with_payload=False,
-                        with_vectors=False,
-                    )
+                            count_result = await qdrant.client.count(
+                                collection_name=qdrant.collection_name,
+                                count_filter=scroll_filter,
+                                exact=True,
+                            )
+                            return sync.id, count_result.count
+                        except Exception as e:
+                            ctx.logger.warning(
+                                f"Failed to count Qdrant docs for sync {sync.id}: {e}"
+                            )
+                            return sync.id, None
 
-                    # Get accurate count using count API
-                    count_result = await qdrant.client.count(
-                        collection_name=qdrant.collection_name,
-                        count_filter=scroll_filter,
-                        exact=True,
-                    )
-                    qdrant_count_map[sync.id] = count_result.count
-                except Exception as e:
-                    ctx.logger.warning(f"Failed to count Qdrant docs for sync {sync.id}: {e}")
-                    qdrant_count_map[sync.id] = None
-        except Exception as e:
-            ctx.logger.warning(
-                f"Failed to create Qdrant destination for collection {collection_id}: {e}"
-            )
-            for sync in collection_syncs:
-                qdrant_count_map[sync.id] = None
+                # Run all Qdrant counts in parallel (limited to MAX_CONCURRENT_COUNTS)
+                results = await asyncio.gather(
+                    *[count_qdrant_sync(sync) for sync in collection_syncs]
+                )
+                return {sync_id: count for sync_id, count in results}
 
-        # Vespa counts
-        try:
-            vespa = await VespaDestination.create(
-                collection_id=collection_id,
-                organization_id=collection_syncs[0].organization_id,
-                logger=ctx.logger,
-            )
+            except Exception as e:
+                ctx.logger.warning(
+                    f"Failed to create Qdrant destination for collection {collection_id}: {e}"
+                )
+                return {sync.id: None for sync in collection_syncs}
 
-            for sync in collection_syncs:
-                try:
-                    # Query Vespa to count documents with this sync_id
-                    # Use YQL with limit 0 to get totalCount
-                    yql = (
-                        f"select * from base_entity "
-                        f"where airweave_system_metadata_sync_id contains '{sync.id}' "
-                        f"and airweave_system_metadata_collection_id contains '{collection_id}' "
-                        f"limit 0"
-                    )
+        # Define Vespa counting function
+        async def count_vespa():
+            try:
+                vespa = await VespaDestination.create(
+                    collection_id=collection_id,
+                    organization_id=collection_syncs[0].organization_id,
+                    logger=ctx.logger,
+                )
 
-                    query_params = {"yql": yql}
+                # Semaphore to limit concurrent queries
+                semaphore = asyncio.Semaphore(MAX_CONCURRENT_COUNTS)
 
-                    # Execute query in thread pool (pyvespa is synchronous)
-                    response = await asyncio.to_thread(vespa.app.query, body=query_params)
+                # Parallelize all sync counts for this collection (with limit)
+                async def count_vespa_sync(sync):
+                    async with semaphore:
+                        try:
+                            yql = (
+                                f"select * from base_entity "
+                                f"where airweave_system_metadata_sync_id contains '{sync.id}' "
+                                f"and airweave_system_metadata_collection_id contains '{collection_id}' "
+                                f"limit 0"
+                            )
 
-                    if response.is_successful():
-                        vespa_count_map[sync.id] = (
-                            response.json.get("root", {}).get("fields", {}).get("totalCount", 0)
-                        )
-                    else:
-                        error_msg = response.json.get("root", {}).get("errors", [])
-                        ctx.logger.warning(f"Vespa query failed for sync {sync.id}: {error_msg}")
-                        vespa_count_map[sync.id] = None
-                except Exception as e:
-                    ctx.logger.warning(f"Failed to count Vespa docs for sync {sync.id}: {e}")
-                    vespa_count_map[sync.id] = None
-        except Exception as e:
-            ctx.logger.warning(
-                f"Failed to create Vespa destination for collection {collection_id}: {e}"
-            )
-            for sync in collection_syncs:
-                vespa_count_map[sync.id] = None
+                            query_params = {"yql": yql}
+                            response = await asyncio.to_thread(vespa.app.query, body=query_params)
+
+                            if response.is_successful():
+                                count = (
+                                    response.json.get("root", {})
+                                    .get("fields", {})
+                                    .get("totalCount", 0)
+                                )
+                                return sync.id, count
+                            else:
+                                error_msg = response.json.get("root", {}).get("errors", [])
+                                ctx.logger.warning(
+                                    f"Vespa query failed for sync {sync.id}: {error_msg}"
+                                )
+                                return sync.id, None
+                        except Exception as e:
+                            ctx.logger.warning(
+                                f"Failed to count Vespa docs for sync {sync.id}: {e}"
+                            )
+                            return sync.id, None
+
+                # Run all Vespa counts in parallel (limited to MAX_CONCURRENT_COUNTS)
+                results = await asyncio.gather(
+                    *[count_vespa_sync(sync) for sync in collection_syncs]
+                )
+                return {sync_id: count for sync_id, count in results}
+
+            except Exception as e:
+                ctx.logger.warning(
+                    f"Failed to create Vespa destination for collection {collection_id}: {e}"
+                )
+                return {sync.id: None for sync in collection_syncs}
+
+        # Run Qdrant and Vespa in parallel for this collection
+        qdrant_results, vespa_results = await asyncio.gather(
+            count_qdrant(), count_vespa(), return_exceptions=False
+        )
+
+        return qdrant_results, vespa_results
+
+    # Process all collections in parallel
+    collection_tasks = [
+        process_collection(coll_id, coll_syncs)
+        for coll_id, coll_syncs in syncs_by_collection.items()
+    ]
+    collection_results = await asyncio.gather(*collection_tasks, return_exceptions=True)
+
+    # Merge results from all collections
+    for result in collection_results:
+        if isinstance(result, Exception):
+            ctx.logger.error(f"Collection processing failed: {result}")
+            continue
+        qdrant_results, vespa_results = result
+        qdrant_count_map.update(qdrant_results)
+        vespa_count_map.update(vespa_results)
 
     return qdrant_count_map, vespa_count_map
 
