@@ -963,14 +963,36 @@ async def resync_with_execution_config(
     ctx: ApiContext = Depends(deps.get_context),
     execution_config: Optional[SyncConfig] = Body(
         None,
-        description="Optional execution config for sync behavior (handler toggles, etc.)",
+        description="Optional nested SyncConfig for sync behavior (destinations, handlers, cursor, behavior)",
         examples=[
             {
-                "enable_vector_handlers": False,
-                "enable_postgres_handler": False,
-                "skip_cursor_load": True,
-                "skip_cursor_updates": True,
-            }
+                "summary": "ARF Capture Only",
+                "value": {
+                    "handlers": {
+                        "enable_vector_handlers": False,
+                        "enable_postgres_handler": False,
+                        "enable_raw_data_handler": True,
+                    },
+                    "cursor": {"skip_load": True, "skip_updates": True},
+                    "behavior": {"skip_hash_comparison": True},
+                },
+            },
+            {
+                "summary": "ARF Replay to Vector DBs",
+                "value": {
+                    "handlers": {
+                        "enable_vector_handlers": True,
+                        "enable_postgres_handler": False,
+                        "enable_raw_data_handler": False,
+                    },
+                    "cursor": {"skip_load": True, "skip_updates": True},
+                    "behavior": {"skip_hash_comparison": True, "replay_from_arf": True},
+                },
+            },
+            {
+                "summary": "Skip Vespa",
+                "value": {"destinations": {"skip_vespa": True}},
+            },
         ],
     ),
 ) -> schemas.SyncJob:
@@ -984,11 +1006,17 @@ async def resync_with_execution_config(
     **API Key Access**: Organizations with the `api_key_admin_sync` feature flag enabled
     can use API keys to access this endpoint programmatically.
 
+    **Config Structure**: Nested config with 4 sub-objects:
+        - destinations: skip_qdrant, skip_vespa, target_destinations, exclude_destinations
+        - handlers: enable_vector_handlers, enable_raw_data_handler, enable_postgres_handler
+        - cursor: skip_load, skip_updates
+        - behavior: skip_hash_comparison, replay_from_arf
+
     Args:
         db: Database session
         sync_id: ID of the sync to trigger
         ctx: API context
-        execution_config: Optional dict with execution config parameters
+        execution_config: Optional nested SyncConfig
 
     Returns:
         The created sync job
@@ -996,11 +1024,12 @@ async def resync_with_execution_config(
     Raises:
         HTTPException: If user is not admin or sync not found
 
-    Example execution configs:
-        - ARF capture only: {"enable_vector_handlers": false, "enable_postgres_handler": false}
-        - Dry run: {"enable_vector_handlers": false, "enable_raw_data_handler": false,
-          "enable_postgres_handler": false}
-        - Target specific destination: {"target_destinations": ["<uuid>"]}
+    **Preset Examples** (use SyncConfig factory methods):
+        - Normal sync: SyncConfig.default()
+        - ARF capture only: SyncConfig.arf_capture_only()
+        - ARF replay to vector DBs: SyncConfig.replay_from_arf_to_vector_dbs()
+        - Qdrant only: SyncConfig.qdrant_only()
+        - Vespa only: SyncConfig.vespa_only()
     """
     _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
 
@@ -1881,6 +1910,7 @@ async def admin_list_all_syncs(
             SyncJob.id,
             SyncJob.sync_id,
             SyncJob.status,
+            SyncJob.created_at,
             SyncJob.completed_at,
             SyncJob.sync_config,
         )
@@ -1907,6 +1937,7 @@ async def admin_list_all_syncs(
             vespa_job_map[row.sync_id] = {
                 "id": row.id,
                 "status": row.status,
+                "created_at": row.created_at,
                 "completed_at": row.completed_at,
                 "config": row.sync_config,
             }
@@ -2188,7 +2219,11 @@ def _build_admin_sync_info_list(
             if vespa_status
             else None
         )
-        sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
+        # Use completed_at if job is completed, otherwise use created_at for running/pending jobs
+        if vespa_job.get("completed_at"):
+            sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
+        else:
+            sync_dict["last_vespa_job_at"] = vespa_job.get("created_at")
         sync_dict["last_vespa_job_config"] = vespa_job.get("config")
 
         admin_syncs.append(AdminSyncInfo.model_validate(sync_dict))
