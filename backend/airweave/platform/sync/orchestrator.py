@@ -521,7 +521,7 @@ class SyncOrchestrator:
         # Check if cursor updates are disabled
         if (
             self.sync_context.execution_config
-            and self.sync_context.execution_config.skip_cursor_updates
+            and self.sync_context.execution_config.cursor.skip_updates
         ):
             self.sync_context.logger.info("⏭️ Skipping cursor update (disabled by execution_config)")
             return

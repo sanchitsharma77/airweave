@@ -25,7 +25,7 @@ async def _run_sync_task(
     from airweave.core.exceptions import NotFoundException
     from airweave.core.sync_service import sync_service
     from airweave.db.session import get_db_context
-    from airweave.platform.sync.config import SyncExecutionConfig
+    from airweave.platform.sync.config import SyncConfig
 
     # Refetch sync_job from DB to get execution_config_json
     execution_config = None
@@ -33,7 +33,7 @@ async def _run_sync_task(
         async with get_db_context() as db:
             sync_job_model = await crud.sync_job.get(db, id=sync_job.id, ctx=ctx)
             if sync_job_model and sync_job_model.execution_config_json:
-                execution_config = SyncExecutionConfig(**sync_job_model.execution_config_json)
+                execution_config = SyncConfig(**sync_job_model.execution_config_json)
                 ctx.logger.info(
                     f"Loaded execution config from DB: {sync_job_model.execution_config_json}"
                 )

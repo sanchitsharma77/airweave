@@ -32,7 +32,7 @@ from airweave.integrations.stripe_client import stripe_client
 from airweave.models.organization import Organization
 from airweave.models.organization_billing import OrganizationBilling
 from airweave.models.user_organization import UserOrganization
-from airweave.platform.sync.config import SyncExecutionConfig
+from airweave.platform.sync.config import SyncConfig
 from airweave.schemas.organization_billing import BillingPlan, BillingStatus
 
 router = TrailingSlashRouter()
@@ -961,7 +961,7 @@ async def resync_with_execution_config(
     db: AsyncSession = Depends(deps.get_db),
     sync_id: UUID,
     ctx: ApiContext = Depends(deps.get_context),
-    execution_config: Optional[SyncExecutionConfig] = Body(
+    execution_config: Optional[SyncConfig] = Body(
         None,
         description="Optional execution config for sync behavior (handler toggles, etc.)",
         examples=[
