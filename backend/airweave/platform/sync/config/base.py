@@ -47,6 +47,7 @@ class BehaviorConfig(BaseModel):
     replay_from_arf: bool = Field(
         False, description="Replay from ARF storage instead of calling source"
     )
+    skip_guardrails: bool = Field(False, description="Skip usage guardrails (entity count checks)")
 
 
 class SyncConfig(BaseSettings):

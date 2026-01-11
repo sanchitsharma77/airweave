@@ -1260,6 +1260,22 @@ export function SyncsTab() {
                                         Replay from ARF (read from ARF storage instead of source)
                                     </Label>
                                 </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="skip-guardrails"
+                                        checked={resyncConfig.behavior?.skip_guardrails || false}
+                                        onCheckedChange={(checked) => {
+                                            setSelectedPreset('custom');
+                                            setResyncConfig({
+                                                ...resyncConfig,
+                                                behavior: { ...resyncConfig.behavior, skip_guardrails: checked as boolean },
+                                            });
+                                        }}
+                                    />
+                                    <Label htmlFor="skip-guardrails" className="text-sm cursor-pointer">
+                                        Skip Guardrails (bypass entity count limits for admin resyncs)
+                                    </Label>
+                                </div>
                             </div>
                         </div>
 
@@ -1484,6 +1500,22 @@ export function SyncsTab() {
                                     />
                                     <Label htmlFor="bulk-replay-arf" className="text-sm cursor-pointer">
                                         Replay from ARF (read from ARF storage instead of source)
+                                    </Label>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <Checkbox
+                                        id="bulk-skip-guardrails"
+                                        checked={resyncConfig.behavior?.skip_guardrails || false}
+                                        onCheckedChange={(checked) => {
+                                            setSelectedPreset('custom');
+                                            setResyncConfig({
+                                                ...resyncConfig,
+                                                behavior: { ...resyncConfig.behavior, skip_guardrails: checked as boolean },
+                                            });
+                                        }}
+                                    />
+                                    <Label htmlFor="bulk-skip-guardrails" className="text-sm cursor-pointer">
+                                        Skip Guardrails (bypass entity count limits for admin resyncs)
                                     </Label>
                                 </div>
                             </div>

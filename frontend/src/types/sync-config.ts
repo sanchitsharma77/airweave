@@ -24,6 +24,7 @@ export interface CursorConfig {
 export interface BehaviorConfig {
     skip_hash_comparison?: boolean;
     replay_from_arf?: boolean;
+    skip_guardrails?: boolean;
 }
 
 export interface SyncConfig {
