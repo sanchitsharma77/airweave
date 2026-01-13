@@ -39,7 +39,7 @@
             "command": "npm run dev",
             "type": "shell",
             "options": {
-                "cwd": "${workspaceFolder}/frontend-v2"
+                "cwd": "${workspaceFolder}/frontend"
             },
             "presentation": {
                 "reveal": "always",
