@@ -39,7 +39,7 @@ class S3Destination(BaseDestination):
     S3 buckets without requiring long-lived access keys.
 
     Data Organization (ARF-compatible):
-        {bucket}/{prefix}/raw/{sync_id}/
+        {bucket}/{prefix}/raw/{collection_readable_id}/{sync_id}/
         ├── manifest.json                    # Sync metadata
         ├── entities/
         │   └── {safe_entity_id}.json        # Entity with class metadata
@@ -287,7 +287,7 @@ class S3Destination(BaseDestination):
 
     def _sync_path(self) -> str:
         """Get base path for sync's ARF data."""
-        return f"{self.bucket_prefix}raw/{self.sync_id}"
+        return f"{self.bucket_prefix}raw/{self.collection_readable_id}/{self.sync_id}"
 
     def _manifest_path(self) -> str:
         """Get manifest path."""
