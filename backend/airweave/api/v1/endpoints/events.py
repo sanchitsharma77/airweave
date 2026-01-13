@@ -1,3 +1,9 @@
+"""Events API endpoints for webhook subscriptions and event messages.
+
+This module provides endpoints for managing webhook subscriptions and
+retrieving event messages sent to those webhooks.
+"""
+
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,16 +25,22 @@ class SubscriptionWithAttemptsOut(BaseModel):
     message_attempts: List[MessageAttemptOut]
 
     class Config:
+        """Pydantic config for arbitrary types."""
+
         arbitrary_types_allowed = True
 
 
 class CreateSubscriptionRequest(BaseModel):
+    """Request model for creating a new webhook subscription."""
+
     url: HttpUrl
     event_types: List[EventType]
     secret: str | None = None
 
 
 class PatchSubscriptionRequest(BaseModel):
+    """Request model for updating an existing webhook subscription."""
+
     url: HttpUrl | None = None
     event_types: List[EventType] | None = None
 
@@ -38,6 +50,15 @@ async def get_messages(
     ctx: ApiContext = Depends(deps.get_context),
     event_types: List[str] | None = Query(default=None),
 ) -> List[MessageOut]:
+    """Get event messages for the current organization.
+
+    Args:
+        ctx: The API context containing organization info.
+        event_types: Optional list of event types to filter by.
+
+    Returns:
+        List of event messages.
+    """
     messages, error = await service.get_messages(ctx.organization, event_types=event_types)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
@@ -48,6 +69,14 @@ async def get_messages(
 async def get_subscriptions(
     ctx: ApiContext = Depends(deps.get_context),
 ) -> List[EndpointOut]:
+    """Get all webhook subscriptions for the current organization.
+
+    Args:
+        ctx: The API context containing organization info.
+
+    Returns:
+        List of webhook subscriptions.
+    """
     endpoints, error = await service.get_endpoints(ctx.organization)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
@@ -59,6 +88,15 @@ async def get_subscription(
     subscription_id: str,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> SubscriptionWithAttemptsOut:
+    """Get a specific webhook subscription with its delivery attempts.
+
+    Args:
+        subscription_id: The ID of the subscription to retrieve.
+        ctx: The API context containing organization info.
+
+    Returns:
+        The subscription details with message delivery attempts.
+    """
     endpoint, error = await service.get_endpoint(ctx.organization, subscription_id)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
@@ -77,6 +115,15 @@ async def create_subscription(
     request: CreateSubscriptionRequest,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> EndpointOut:
+    """Create a new webhook subscription.
+
+    Args:
+        request: The subscription creation request.
+        ctx: The API context containing organization info.
+
+    Returns:
+        The created subscription.
+    """
     endpoint, error = await service.create_endpoint(
         ctx.organization, str(request.url), request.event_types, request.secret
     )
@@ -90,6 +137,12 @@ async def delete_subscription(
     subscription_id: str,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> None:
+    """Delete a webhook subscription.
+
+    Args:
+        subscription_id: The ID of the subscription to delete.
+        ctx: The API context containing organization info.
+    """
     error = await service.delete_endpoint(ctx.organization, subscription_id)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
@@ -101,6 +154,16 @@ async def patch_subscription(
     request: PatchSubscriptionRequest,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> EndpointOut:
+    """Update a webhook subscription.
+
+    Args:
+        subscription_id: The ID of the subscription to update.
+        request: The subscription update request.
+        ctx: The API context containing organization info.
+
+    Returns:
+        The updated subscription.
+    """
     url = str(request.url) if request.url else None
     endpoint, error = await service.patch_endpoint(
         ctx.organization, subscription_id, url, request.event_types
@@ -115,6 +178,15 @@ async def get_subscription_secret(
     subscription_id: str,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> EndpointSecretOut:
+    """Get the signing secret for a webhook subscription.
+
+    Args:
+        subscription_id: The ID of the subscription.
+        ctx: The API context containing organization info.
+
+    Returns:
+        The subscription's signing secret.
+    """
     secret, error = await service.get_endpoint_secret(ctx.organization, subscription_id)
     if error:
         raise HTTPException(status_code=500, detail=error.message)

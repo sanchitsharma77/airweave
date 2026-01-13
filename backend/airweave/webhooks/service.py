@@ -1,3 +1,10 @@
+"""Webhooks service for managing Svix-based webhook subscriptions.
+
+This module provides a service class for interacting with the Svix webhook
+platform, including creating subscriptions, publishing events, and managing
+message delivery.
+"""
+
 import time
 import uuid
 from functools import wraps
@@ -32,7 +39,12 @@ T = TypeVar("T")
 class WebhooksError:
     """Error class for webhook operations."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str) -> None:
+        """Initialize the error with a message.
+
+        Args:
+            message: The error message.
+        """
         self.message = message
 
 
@@ -41,6 +53,14 @@ TOKEN_DURATION_SECONDS = 24 * 365 * 10 * 60 * 60
 
 
 def generate_org_token(signing_secret: str) -> str:
+    """Generate a JWT token for Svix API authentication.
+
+    Args:
+        signing_secret: The secret used to sign the JWT.
+
+    Returns:
+        A signed JWT token string.
+    """
     now = int(time.time())
     exp = now + TOKEN_DURATION_SECONDS
 
@@ -57,10 +77,16 @@ def generate_org_token(signing_secret: str) -> str:
 
 
 def auto_create_org_on_not_found(method: Callable[..., T]) -> Callable[..., T]:
-    """Decorator that auto-creates the Svix organization if a 'not_found' error occurs.
+    """Decorate methods to auto-create Svix organization if not found.
 
     The decorated method must have 'organisation' as its first argument after self.
     On 'not_found' error, creates the organization in Svix and retries the operation once.
+
+    Args:
+        method: The method to decorate.
+
+    Returns:
+        The decorated method.
     """
 
     @wraps(method)
@@ -83,24 +109,34 @@ def auto_create_org_on_not_found(method: Callable[..., T]) -> Callable[..., T]:
 
 
 class WebhooksService:
-    """Webhooks service."""
+    """Service for managing webhooks via Svix."""
 
-    def __init__(self, logger: Optional[ContextualLogger] = None):
+    def __init__(self, logger: Optional[ContextualLogger] = None) -> None:
         """Initialize the webhooks service.
 
         Args:
-            logger: Optional contextual logger for structured logging
+            logger: Optional contextual logger for structured logging.
         """
         token = generate_org_token(settings.SVIX_JWT_SECRET)
-        self.logger = logger or default_logger.with_context(component="context_cache")
+        self.logger = logger or default_logger.with_context(component="webhooks")
         self.svix = SvixAsync(token, SvixOptions(server_url=settings.SVIX_URL))
 
     async def create_organization(self, organisation: schemas.Organization) -> None:
+        """Create an organization in Svix.
+
+        Args:
+            organisation: The organization to create.
+        """
         await self.svix.application.create(
             ApplicationIn(name=organisation.name, uid=str(organisation.id))
         )
 
     async def delete_organization(self, organisation: schemas.Organization) -> None:
+        """Delete an organization from Svix.
+
+        Args:
+            organisation: The organization to delete.
+        """
         try:
             await self.svix.application.delete(organisation.id)
         except Exception as e:
@@ -115,6 +151,17 @@ class WebhooksService:
         event_types: List[EventType] | None = None,
         secret: str | None = None,
     ) -> Tuple[EndpointOut | None, WebhooksError | None]:
+        """Create a webhook endpoint (subscription).
+
+        Args:
+            organisation: The organization to create the endpoint for.
+            url: The webhook URL to receive events.
+            event_types: Optional list of event types to subscribe to.
+            secret: Optional signing secret for the webhook.
+
+        Returns:
+            Tuple of (endpoint, error).
+        """
         try:
             endpoint = await self._create_endpoint_internal(organisation, url, event_types, secret)
             return endpoint, None
@@ -142,6 +189,15 @@ class WebhooksService:
     async def delete_endpoint(
         self, organisation: schemas.Organization, endpoint_id: str
     ) -> WebhooksError | None:
+        """Delete a webhook endpoint.
+
+        Args:
+            organisation: The organization owning the endpoint.
+            endpoint_id: The ID of the endpoint to delete.
+
+        Returns:
+            Error if the operation failed, None otherwise.
+        """
         try:
             await self.svix.endpoint.delete(organisation.id, endpoint_id)
             return None
@@ -156,6 +212,17 @@ class WebhooksService:
         url: str | None = None,
         event_types: List[EventType] | None = None,
     ) -> Tuple[EndpointOut | None, WebhooksError | None]:
+        """Update a webhook endpoint.
+
+        Args:
+            organisation: The organization owning the endpoint.
+            endpoint_id: The ID of the endpoint to update.
+            url: Optional new URL for the webhook.
+            event_types: Optional new list of event types.
+
+        Returns:
+            Tuple of (endpoint, error).
+        """
         try:
             endpoint = await self.svix.endpoint.patch(
                 organisation.id,
@@ -173,6 +240,14 @@ class WebhooksService:
     async def get_endpoints(
         self, organisation: schemas.Organization
     ) -> Tuple[List[EndpointOut] | None, WebhooksError | None]:
+        """Get all webhook endpoints for an organization.
+
+        Args:
+            organisation: The organization to get endpoints for.
+
+        Returns:
+            Tuple of (endpoints, error).
+        """
         try:
             endpoints = await self._get_endpoints_internal(organisation)
             return endpoints, None
@@ -189,6 +264,15 @@ class WebhooksService:
     async def get_endpoint(
         self, organisation: schemas.Organization, endpoint_id: str
     ) -> Tuple[EndpointOut | None, WebhooksError | None]:
+        """Get a specific webhook endpoint.
+
+        Args:
+            organisation: The organization owning the endpoint.
+            endpoint_id: The ID of the endpoint to get.
+
+        Returns:
+            Tuple of (endpoint, error).
+        """
         try:
             endpoint = await self._get_endpoint_internal(organisation, endpoint_id)
             return endpoint, None
@@ -205,6 +289,15 @@ class WebhooksService:
     async def get_endpoint_secret(
         self, organisation: schemas.Organization, endpoint_id: str
     ) -> Tuple[EndpointSecretOut | None, WebhooksError | None]:
+        """Get the signing secret for a webhook endpoint.
+
+        Args:
+            organisation: The organization owning the endpoint.
+            endpoint_id: The ID of the endpoint.
+
+        Returns:
+            Tuple of (secret, error).
+        """
         try:
             secret = await self._get_endpoint_secret_internal(organisation, endpoint_id)
             return secret, None
@@ -226,6 +319,13 @@ class WebhooksService:
         connection: schemas.Connection,
         sync_job_status: SyncJobStatus,
     ) -> None:
+        """Publish a sync event to all subscribed webhooks.
+
+        Args:
+            organisation: The organization to publish the event for.
+            connection: The connection related to the sync event.
+            sync_job_status: The status of the sync job.
+        """
         event_type = event_type_from_sync_job_status(sync_job_status)
         try:
             await self._publish_event_sync_internal(organisation, connection, event_type)
@@ -252,6 +352,15 @@ class WebhooksService:
     async def get_messages(
         self, organisation: schemas.Organization, event_types: List[str] | None = None
     ) -> Tuple[List[MessageOut] | None, WebhooksError | None]:
+        """Get event messages for an organization.
+
+        Args:
+            organisation: The organization to get messages for.
+            event_types: Optional list of event types to filter by.
+
+        Returns:
+            Tuple of (messages, error).
+        """
         try:
             messages = await self._get_messages_internal(organisation, event_types)
             return messages, None
@@ -275,6 +384,16 @@ class WebhooksService:
     async def get_message_attempts_by_endpoint(
         self, organisation: schemas.Organization, endpoint_id: str, limit: int = 100
     ) -> Tuple[List[MessageAttemptOut] | None, WebhooksError | None]:
+        """Get message delivery attempts for a webhook endpoint.
+
+        Args:
+            organisation: The organization owning the endpoint.
+            endpoint_id: The ID of the endpoint.
+            limit: Maximum number of attempts to return.
+
+        Returns:
+            Tuple of (attempts, error).
+        """
         try:
             message_attempts = (
                 await self.svix.message_attempt.list_by_endpoint(
@@ -288,7 +407,7 @@ class WebhooksService:
             return message_attempts, None
         except Exception as e:
             self.logger.error(
-                f"Failed to get message attempts by endpoint {endpoint_id}: {getattr(e, 'detail', e)}"
+                f"Failed to get message attempts for {endpoint_id}: {getattr(e, 'detail', e)}"
             )
             return None, WebhooksError(
                 f"Failed to get message attempts by endpoint: {getattr(e, 'detail', e)}"

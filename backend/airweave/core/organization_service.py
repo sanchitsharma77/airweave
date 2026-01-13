@@ -755,8 +755,8 @@ class OrganizationService:
             if affected_user_emails:
                 logger.debug(f"Invalidated user cache for {len(affected_user_emails)} users")
 
-                # Create organization for webhooks
-                await webhooks_service.create_organization(org)
+            # Delete organization from webhooks service
+            await webhooks_service.delete_organization(org)
 
             logger.info(f"Successfully deleted organization: {org.name}")
             return True
