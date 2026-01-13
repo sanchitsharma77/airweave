@@ -19,6 +19,7 @@ from airweave.models.connection import Connection
 from airweave.models.integration_credential import IntegrationCredential
 from airweave.platform.configs.auth import S3AuthConfig
 from airweave.platform.destinations.s3 import S3Destination
+from airweave.schemas.source_connection import AuthenticationMethod
 
 router = TrailingSlashRouter()
 
@@ -127,7 +128,7 @@ async def configure_s3_destination(
         integration_short_name="s3",
         description="S3 destination using IAM role assumption",
         integration_type="DESTINATION",
-        authentication_method="iam_role",
+        authentication_method=AuthenticationMethod.DIRECT,
         encrypted_credentials=encrypted_creds,
         auth_config_class="S3AuthConfig",
         created_by_email=ctx.user.email if ctx.user else None,
