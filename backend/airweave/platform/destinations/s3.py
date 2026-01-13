@@ -119,7 +119,9 @@ class S3Destination(BaseDestination):
 
         # Store configuration
         instance.bucket_name = credentials.bucket_name
-        instance.bucket_prefix = credentials.bucket_prefix
+        # Normalize bucket_prefix to ensure trailing slash
+        prefix = credentials.bucket_prefix or ""
+        instance.bucket_prefix = f"{prefix.rstrip('/')}/" if prefix else ""
         instance._region = credentials.aws_region
         instance._role_arn = credentials.role_arn
         instance._external_id = credentials.external_id
@@ -145,6 +147,7 @@ class S3Destination(BaseDestination):
                 raise ImportError("Azure Key Vault secret client not available")
 
             # Load credentials from Key Vault
+            # TODO: Move this to DestinationFactory
             access_key_id = await secret_client.get_secret("aws-s3-destination-access-key-id")
             secret_access_key = await secret_client.get_secret(
                 "aws-s3-destination-secret-access-key"
