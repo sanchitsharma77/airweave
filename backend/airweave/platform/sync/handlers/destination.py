@@ -187,6 +187,7 @@ class DestinationHandler(EntityActionHandler):
             await self._execute_with_retry(
                 operation=lambda d=dest, p=processed: d.bulk_insert(p),
                 operation_name=f"insert_{dest.__class__.__name__}",
+                destination=dest,
                 sync_context=sync_context,
             )
 
@@ -203,6 +204,7 @@ class DestinationHandler(EntityActionHandler):
                     ids, sync_context.sync.id
                 ),
                 operation_name=f"{operation}_{dest.__class__.__name__}",
+                destination=dest,
                 sync_context=sync_context,
             )
 
@@ -224,10 +226,19 @@ class DestinationHandler(EntityActionHandler):
         self,
         operation: Callable[[], Awaitable],
         operation_name: str,
+        destination: BaseDestination,
         sync_context: "SyncContext",
         max_retries: int = 4,
     ) -> None:
-        """Execute operation with exponential backoff retry for network issues."""
+        """Execute operation with exponential backoff retry for network issues.
+
+        Args:
+            operation: The operation to execute
+            operation_name: Name for logging
+            destination: The destination instance (for soft_fail check)
+            sync_context: Sync context
+            max_retries: Max retry attempts for network errors
+        """
         for attempt in range(max_retries + 1):
             try:
                 return await operation()
@@ -240,10 +251,27 @@ class DestinationHandler(EntityActionHandler):
                     )
                     await asyncio.sleep(wait)
                 else:
+                    # Soft-fail: log error but don't crash sync
+                    if destination.soft_fail:
+                        sync_context.logger.error(
+                            f"🔴 [{self.name}] {operation_name} SOFT-FAIL after {max_retries + 1} attempts: "
+                            f"{type(e).__name__}: {e}. Sync continues (soft_fail=True)",
+                            exc_info=True,
+                        )
+                        return  # Continue sync
                     raise SyncFailureError(
                         f"Destination unavailable: {type(e).__name__}: {e}"
                     ) from e
             except Exception as e:
+                # Soft-fail: log error but don't crash sync
+                if destination.soft_fail:
+                    sync_context.logger.error(
+                        f"🔴 [{self.name}] {operation_name} SOFT-FAIL: "
+                        f"{type(e).__name__}: {e}. Sync continues (soft_fail=True)",
+                        exc_info=True,
+                    )
+                    return  # Continue sync
+
                 sync_context.logger.error(
                     f"[{self.name}] {operation_name} failed: {type(e).__name__}: {e}"
                 )

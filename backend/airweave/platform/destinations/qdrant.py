@@ -87,9 +87,13 @@ class QdrantDestination(VectorDBDestination):
     # Default write concurrency (simple, code-local tuning)
     DEFAULT_WRITE_CONCURRENCY: int = 16
 
-    def __init__(self):
-        """Initialize defaults and placeholders for connection and collection state."""
-        super().__init__()
+    def __init__(self, soft_fail: bool = False):
+        """Initialize defaults and placeholders for connection and collection state.
+
+        Args:
+            soft_fail: If True, errors won't fail the sync (default False)
+        """
+        super().__init__(soft_fail=soft_fail)
         # Logical identifiers (from SQL)
         self.collection_id: UUID | None = None
         self.organization_id: UUID | None = None
@@ -123,6 +127,7 @@ class QdrantDestination(VectorDBDestination):
         credentials: Optional[QdrantAuthConfig] = None,
         config: Optional[dict] = None,
         logger: Optional[ContextualLogger] = None,
+        soft_fail: bool = False,
     ) -> "QdrantDestination":
         """Create and return a connected destination (matches source pattern).
 
@@ -135,6 +140,7 @@ class QdrantDestination(VectorDBDestination):
             credentials: Optional QdrantAuthConfig with url and api_key (None for native)
             config: Unused (kept for interface consistency with sources)
             logger: Logger instance
+            soft_fail: If True, errors won't fail the sync (default False)
 
         Returns:
             Configured QdrantDestination instance with multi-tenant shared collection
@@ -143,7 +149,7 @@ class QdrantDestination(VectorDBDestination):
             Tenant isolation is achieved via airweave_collection_id filtering in Qdrant.
             Each collection belongs to exactly one organization, so collection_id is sufficient.
         """
-        instance = cls()
+        instance = cls(soft_fail=soft_fail)
         instance.set_logger(logger or default_logger)
         instance.collection_id = collection_id
         instance.organization_id = organization_id
