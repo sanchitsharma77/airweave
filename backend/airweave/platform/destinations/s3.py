@@ -139,15 +139,14 @@ class S3Destination(BaseDestination):
     # =========================================================================
 
     async def _load_iam_credentials(self) -> None:
-        """Load IAM user credentials from Azure Key Vault or environment variables.
+        """Load IAM user credentials from Azure Key Vault or settings.
 
-        For local testing, set these environment variables:
+        For local testing, set in .env or environment:
         - AWS_S3_DESTINATION_ACCESS_KEY_ID
         - AWS_S3_DESTINATION_SECRET_ACCESS_KEY
         """
         try:
-            import os
-
+            from airweave.core.config import settings
             from airweave.core.secrets import secret_client
 
             # Try Key Vault first (for deployed environments)
@@ -168,21 +167,21 @@ class S3Destination(BaseDestination):
                 self._iam_secret_access_key = secret_access_key.value
                 self.logger.debug("Loaded IAM user credentials from Key Vault")
 
-            # Fallback to environment variables (for local testing)
+            # Fallback to settings/environment (for local testing)
             else:
-                access_key_id = os.getenv("AWS_S3_DESTINATION_ACCESS_KEY_ID")
-                secret_access_key = os.getenv("AWS_S3_DESTINATION_SECRET_ACCESS_KEY")
+                access_key_id = settings.AWS_S3_DESTINATION_ACCESS_KEY_ID
+                secret_access_key = settings.AWS_S3_DESTINATION_SECRET_ACCESS_KEY
 
                 if not access_key_id or not secret_access_key:
                     raise ValueError(
                         "AWS S3 destination credentials not found. For local testing, set:\n"
-                        "  AWS_S3_DESTINATION_ACCESS_KEY_ID\n"
-                        "  AWS_S3_DESTINATION_SECRET_ACCESS_KEY"
+                        "  AWS_S3_DESTINATION_ACCESS_KEY_ID=...\n"
+                        "  AWS_S3_DESTINATION_SECRET_ACCESS_KEY=..."
                     )
 
                 self._iam_access_key_id = access_key_id
                 self._iam_secret_access_key = secret_access_key
-                self.logger.debug("Loaded IAM user credentials from environment variables")
+                self.logger.debug("Loaded IAM user credentials from settings")
 
         except Exception as e:
             raise ConnectionError(f"Failed to load AWS credentials: {e}") from e
