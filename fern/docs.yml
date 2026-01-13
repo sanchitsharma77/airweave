@@ -27,6 +27,8 @@ navigation:
     path: docs/pages/concepts.mdx
   - page: Search
     path: docs/pages/search.mdx
+  - page: Webhooks
+    path: docs/pages/webhooks.mdx
   - page: MCP Server
     path: docs/pages/mcp-server.mdx
   - page: Add New Connector
@@ -166,6 +168,15 @@ navigation:
     contents:
     - GET /sources
     - GET /sources/{short_name}
+  - section: Webhooks
+    contents:
+    - GET /events/messages
+    - GET /events/subscriptions
+    - GET /events/subscriptions/{subscription_id}
+    - POST /events/subscriptions
+    - PATCH /events/subscriptions/{subscription_id}
+    - DELETE /events/subscriptions/{subscription_id}
+    - GET /events/subscriptions/{subscription_id}/secret
   snippets:
     python: airweave-sdk
     typescript: '@airweave/sdk'
