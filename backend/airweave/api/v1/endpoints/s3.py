@@ -287,7 +287,9 @@ async def get_s3_status(
     bucket_name = None
     role_arn = None
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id)
+        cred = await crud.integration_credential.get(
+            db, connection.integration_credential_id, ctx=ctx
+        )
         if cred:
             from airweave.core.credentials import decrypt
 
