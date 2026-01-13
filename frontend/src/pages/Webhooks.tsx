@@ -886,7 +886,7 @@ const WebhooksPage = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-3xl font-bold">Webhooks</h1>
+            <h1 className="text-3xl font-bold">Events</h1>
             {subscriptions.length > 0 && (
               <span className="px-2.5 py-1 text-xs font-medium bg-muted text-muted-foreground rounded-full">
                 {subscriptions.length}
@@ -913,17 +913,17 @@ const WebhooksPage = () => {
         <EmptyState onCreateClick={() => setCreateModalOpen(true)} />
       ) : (
         <div className="space-y-10">
-          {/* Subscriptions Section */}
+          {/* Webhooks Section */}
           <section>
             <div className="flex items-center gap-3 mb-4">
-              <h2 className="text-lg font-semibold">Subscriptions</h2>
+              <h2 className="text-lg font-semibold">Webhooks</h2>
               <span className="px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground rounded-full">
                 {subscriptions.length}
               </span>
             </div>
             {subscriptions.length === 0 ? (
               <div className="text-muted-foreground text-sm py-8 text-center border rounded-xl bg-muted/20">
-                No subscriptions configured yet.
+                No webhooks configured yet.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

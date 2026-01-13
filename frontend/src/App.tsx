@@ -56,7 +56,7 @@ function App() {
           <Route path={protectedPaths.collectionDetail} element={<CollectionDetailView />} />
           <Route path={protectedPaths.apiKeys} />
           <Route path={protectedPaths.authProviders} element={<AuthProviders />} />
-          <Route path={protectedPaths.webhooks} element={<WebhooksPage />} />
+          <Route path={protectedPaths.events} element={<WebhooksPage />} />
 
           {/* Organization routes */}
           <Route path="/organization/settings" element={<OrganizationSettingsUnified />} />

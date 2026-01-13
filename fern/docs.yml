@@ -27,8 +27,8 @@ navigation:
     path: docs/pages/concepts.mdx
   - page: Search
     path: docs/pages/search.mdx
-  - page: Webhooks
-    path: docs/pages/webhooks.mdx
+  - page: Events
+    path: docs/pages/events.mdx
   - page: MCP Server
     path: docs/pages/mcp-server.mdx
   - page: Add New Connector
@@ -168,7 +168,7 @@ navigation:
     contents:
     - GET /sources
     - GET /sources/{short_name}
-  - section: Webhooks
+  - section: Events
     contents:
     - GET /events/messages
     - GET /events/subscriptions
