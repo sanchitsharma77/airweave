@@ -166,13 +166,13 @@ async def configure_s3_destination(
 
 
 @router.post("/test", response_model=dict)
-async def test_s3_connection(
+async def validate_s3_connection(
     config: S3ConfigRequest,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> dict:
-    """Test S3 connection without saving configuration.
+    """Validate S3 connection without saving configuration.
 
-    Validates IAM role assumption and bucket access.
+    Tests IAM role assumption and bucket access.
     """
     # Check feature flag
     if not ctx.has_feature(FeatureFlag.S3_DESTINATION):

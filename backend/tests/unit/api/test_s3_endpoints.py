@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from airweave.api.v1.endpoints.s3 import (
     S3ConfigRequest,
     configure_s3_destination,
-    test_s3_connection,
+    validate_s3_connection,
     delete_s3_configuration,
     get_s3_status,
 )
@@ -130,25 +130,25 @@ class TestConfigureS3Destination:
                     assert call_args.kwargs.get("ctx") == mock_ctx
 
 
-class TestS3ConnectionTest:
+class TestValidateS3Connection:
     """Test suite for POST /s3/test endpoint."""
 
     @pytest.mark.asyncio
     async def test_feature_flag_disabled(self, mock_ctx, valid_s3_config):
-        """Test that test endpoint rejects requests when feature flag is disabled."""
+        """Test that validate endpoint rejects requests when feature flag is disabled."""
         mock_ctx.has_feature.return_value = False
 
         with pytest.raises(HTTPException) as exc_info:
-            await test_s3_connection(valid_s3_config, mock_ctx)
+            await validate_s3_connection(valid_s3_config, mock_ctx)
 
         assert exc_info.value.status_code == 403
         assert "S3_DESTINATION feature not enabled" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_successful_connection(self, mock_ctx, valid_s3_config):
-        """Test successful S3 connection test."""
+        """Test successful S3 connection validation."""
         with patch("airweave.api.v1.endpoints.s3.S3Destination.create"):
-            response = await test_s3_connection(valid_s3_config, mock_ctx)
+            response = await validate_s3_connection(valid_s3_config, mock_ctx)
 
             assert response["status"] == "success"
             assert valid_s3_config.bucket_name in response["message"]
@@ -156,14 +156,14 @@ class TestS3ConnectionTest:
 
     @pytest.mark.asyncio
     async def test_connection_failure(self, mock_ctx, valid_s3_config):
-        """Test failed S3 connection test."""
+        """Test failed S3 connection validation."""
         error_msg = "Access Denied: Invalid external ID"
         with patch(
             "airweave.api.v1.endpoints.s3.S3Destination.create",
             side_effect=Exception(error_msg),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await test_s3_connection(valid_s3_config, mock_ctx)
+                await validate_s3_connection(valid_s3_config, mock_ctx)
 
             assert exc_info.value.status_code == 400
             assert "Connection test failed" in exc_info.value.detail
