@@ -8,7 +8,6 @@
     "python.analysis.extraPaths": [
         "${workspaceFolder}/backend"
     ],
-    "python.defaultInterpreterPath": "/Users/soupizet/Library/Caches/pypoetry/virtualenvs/airweave-D8bEO2Zr-py3.12/bin/python",
     "terminal.integrated.env.osx": {
         "PYTHONPATH": "${workspaceFolder}/backend:${env:PYTHONPATH}"
     },
