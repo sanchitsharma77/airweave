@@ -67,7 +67,7 @@ class Organization(Base):
         "FeatureFlag",
         back_populates="organization",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="noload",
     )
 
     # Relationship with source rate limits
