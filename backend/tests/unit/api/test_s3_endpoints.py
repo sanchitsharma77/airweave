@@ -111,10 +111,10 @@ class TestConfigureS3Destination:
             mock_result.scalar_one_or_none.return_value = existing_conn
             mock_db.execute.return_value = mock_result
 
-            # Mock credential retrieval
+            # Mock credential retrieval (must be AsyncMock for async function)
             mock_cred = MagicMock()
             with patch("airweave.api.v1.endpoints.s3.crud") as mock_crud:
-                mock_crud.integration_credential.get.return_value = mock_cred
+                mock_crud.integration_credential.get = AsyncMock(return_value=mock_cred)
 
                 with patch("airweave.api.v1.endpoints.s3.encrypt", return_value=b"encrypted"):
                     response = await configure_s3_destination(
@@ -197,10 +197,10 @@ class TestDeleteS3Configuration:
         mock_result.scalar_one_or_none.return_value = connection
         mock_db.execute.return_value = mock_result
 
-        # Mock credential retrieval
+        # Mock credential retrieval (must be AsyncMock for async function)
         mock_cred = MagicMock()
         with patch("airweave.api.v1.endpoints.s3.crud") as mock_crud:
-            mock_crud.integration_credential.get.return_value = mock_cred
+            mock_crud.integration_credential.get = AsyncMock(return_value=mock_cred)
 
             response = await delete_s3_configuration(mock_db, mock_ctx)
 
@@ -278,10 +278,10 @@ class TestGetS3Status:
         mock_cred.encrypted_data = b"encrypted"
 
         with patch("airweave.api.v1.endpoints.s3.crud") as mock_crud:
-            mock_crud.integration_credential.get.return_value = mock_cred
+            mock_crud.integration_credential.get = AsyncMock(return_value=mock_cred)
 
             with patch(
-                "airweave.api.v1.endpoints.s3.decrypt",
+                "airweave.core.credentials.decrypt",
                 return_value={
                     "bucket_name": "test-bucket",
                     "role_arn": "arn:aws:iam::123456789012:role/airweave-writer",
@@ -317,10 +317,10 @@ class TestGetS3Status:
         # Mock credential with decryption error
         mock_cred = MagicMock()
         with patch("airweave.api.v1.endpoints.s3.crud") as mock_crud:
-            mock_crud.integration_credential.get.return_value = mock_cred
+            mock_crud.integration_credential.get = AsyncMock(return_value=mock_cred)
 
             with patch(
-                "airweave.api.v1.endpoints.s3.decrypt", side_effect=Exception("Decryption failed")
+                "airweave.core.credentials.decrypt", side_effect=Exception("Decryption failed")
             ):
                 response = await get_s3_status(mock_db, mock_ctx)
 
