@@ -14,7 +14,7 @@ from airweave.api import deps
 from airweave.api.context import ApiContext
 from airweave.api.router import TrailingSlashRouter
 from airweave.core.credentials import encrypt
-from airweave.core.shared_models import ConnectionStatus, FeatureFlag
+from airweave.core.shared_models import AuthenticationMethod, ConnectionStatus, FeatureFlag
 from airweave.models.connection import Connection
 from airweave.models.integration_credential import IntegrationCredential
 from airweave.platform.configs.auth import S3AuthConfig
@@ -106,7 +106,7 @@ async def configure_s3_destination(
         # Update existing connection credentials
         if existing_connection.integration_credential_id:
             cred = await crud.integration_credential.get(
-                db, existing_connection.integration_credential_id
+                db, existing_connection.integration_credential_id, ctx=ctx
             )
             if cred:
                 cred.encrypted_data = encrypt(auth_config.model_dump())
@@ -127,7 +127,7 @@ async def configure_s3_destination(
         integration_short_name="s3",
         description="S3 destination using IAM role assumption",
         integration_type="DESTINATION",
-        authentication_method="iam_role",
+        authentication_method=AuthenticationMethod.DIRECT,
         encrypted_credentials=encrypted_creds,
         auth_config_class="S3AuthConfig",
         created_by_email=ctx.user.email if ctx.user else None,
@@ -233,7 +233,9 @@ async def delete_s3_configuration(
 
     # Delete credentials if they exist
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id)
+        cred = await crud.integration_credential.get(
+            db, connection.integration_credential_id, ctx=ctx
+        )
         if cred:
             await db.delete(cred)
 
@@ -286,7 +288,9 @@ async def get_s3_status(
     bucket_name = None
     role_arn = None
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id)
+        cred = await crud.integration_credential.get(
+            db, connection.integration_credential_id, ctx=ctx
+        )
         if cred:
             from airweave.core.credentials import decrypt
 
