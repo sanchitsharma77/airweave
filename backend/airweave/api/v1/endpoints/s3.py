@@ -19,6 +19,7 @@ from airweave.models.connection import Connection
 from airweave.models.integration_credential import IntegrationCredential
 from airweave.platform.configs.auth import S3AuthConfig
 from airweave.platform.destinations.s3 import S3Destination
+from airweave.schemas.source_connection import AuthenticationMethod
 
 router = TrailingSlashRouter()
 
@@ -106,7 +107,7 @@ async def configure_s3_destination(
         # Update existing connection credentials
         if existing_connection.integration_credential_id:
             cred = await crud.integration_credential.get(
-                db, existing_connection.integration_credential_id, ctx
+                db, existing_connection.integration_credential_id, ctx=ctx
             )
             if cred:
                 cred.encrypted_data = encrypt(auth_config.model_dump())
@@ -127,7 +128,7 @@ async def configure_s3_destination(
         integration_short_name="s3",
         description="S3 destination using IAM role assumption",
         integration_type="DESTINATION",
-        authentication_method="iam_role",
+        authentication_method=AuthenticationMethod.DIRECT,
         encrypted_credentials=encrypted_creds,
         auth_config_class="S3AuthConfig",
         created_by_email=ctx.user.email if ctx.user else None,
@@ -165,13 +166,13 @@ async def configure_s3_destination(
 
 
 @router.post("/test", response_model=dict)
-async def test_s3_connection(
+async def validate_s3_connection(
     config: S3ConfigRequest,
     ctx: ApiContext = Depends(deps.get_context),
 ) -> dict:
-    """Test S3 connection without saving configuration.
+    """Validate S3 connection without saving configuration.
 
-    Validates IAM role assumption and bucket access.
+    Tests IAM role assumption and bucket access.
     """
     # Check feature flag
     if not ctx.has_feature(FeatureFlag.S3_DESTINATION):
@@ -233,7 +234,9 @@ async def delete_s3_configuration(
 
     # Delete credentials if they exist
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id, ctx)
+        cred = await crud.integration_credential.get(
+            db, connection.integration_credential_id, ctx=ctx
+        )
         if cred:
             await db.delete(cred)
 
@@ -286,7 +289,9 @@ async def get_s3_status(
     bucket_name = None
     role_arn = None
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id, ctx)
+        cred = await crud.integration_credential.get(
+            db, connection.integration_credential_id, ctx=ctx
+        )
         if cred:
             from airweave.core.credentials import decrypt
 
