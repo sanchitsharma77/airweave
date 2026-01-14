@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, HttpUrl
 from svix.api import EndpointOut, EndpointSecretOut, MessageAttemptOut, MessageOut
 
+from airweave.analytics import business_events
 from airweave.api import deps
 from airweave.api.context import ApiContext
 from airweave.webhooks.constants.event_types import EventType
@@ -63,6 +64,68 @@ async def get_messages(
     if error:
         raise HTTPException(status_code=500, detail=error.message)
     return messages
+
+
+@router.get("/messages/{message_id}", response_model=MessageOut)
+async def get_message(
+    message_id: str,
+    ctx: ApiContext = Depends(deps.get_context),
+) -> MessageOut:
+    """Get a specific event message by ID.
+
+    Args:
+        message_id: The ID of the message to retrieve.
+        ctx: The API context containing organization info.
+
+    Returns:
+        The event message with its payload.
+    """
+    message, error = await service.get_message(ctx.organization, message_id)
+    if error:
+        raise HTTPException(status_code=500, detail=error.message)
+    return message
+
+
+@router.get("/messages/{message_id}/attempts", response_model=List[MessageAttemptOut])
+async def get_message_attempts(
+    message_id: str,
+    ctx: ApiContext = Depends(deps.get_context),
+) -> List[MessageAttemptOut]:
+    """Get delivery attempts for a specific message.
+
+    Args:
+        message_id: The ID of the message.
+        ctx: The API context containing organization info.
+
+    Returns:
+        List of delivery attempts for this message.
+    """
+    attempts, error = await service.get_message_attempts_by_message(ctx.organization, message_id)
+    if error:
+        raise HTTPException(status_code=500, detail=error.message)
+    return attempts or []
+
+
+@router.get("/logs", response_model=List[MessageAttemptOut])
+async def get_logs(
+    ctx: ApiContext = Depends(deps.get_context),
+    status: str | None = Query(
+        default=None, description="Filter by status: 'succeeded' or 'failed'"
+    ),
+) -> List[MessageAttemptOut]:
+    """Get all webhook delivery attempts for the current organization.
+
+    Args:
+        ctx: The API context containing organization info.
+        status: Optional status filter ('succeeded' or 'failed').
+
+    Returns:
+        List of message delivery attempts.
+    """
+    attempts, error = await service.get_all_message_attempts(ctx.organization, status=status)
+    if error:
+        raise HTTPException(status_code=500, detail=error.message)
+    return attempts or []
 
 
 @router.get("/subscriptions", response_model=List[EndpointOut])
@@ -129,6 +192,15 @@ async def create_subscription(
     )
     if error:
         raise HTTPException(status_code=500, detail=error.message)
+
+    # Track webhook subscription creation
+    business_events.track_webhook_subscription_created(
+        ctx=ctx,
+        endpoint_id=endpoint.id,
+        url=str(request.url),
+        event_types=[e.value for e in request.event_types],
+    )
+
     return endpoint
 
 
@@ -146,6 +218,9 @@ async def delete_subscription(
     error = await service.delete_endpoint(ctx.organization, subscription_id)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
+
+    # Track webhook subscription deletion
+    business_events.track_webhook_subscription_deleted(ctx=ctx, endpoint_id=subscription_id)
 
 
 @router.patch("/subscriptions/{subscription_id}", response_model=EndpointOut)
@@ -170,6 +245,16 @@ async def patch_subscription(
     )
     if error:
         raise HTTPException(status_code=500, detail=error.message)
+
+    # Track webhook subscription update
+    business_events.track_webhook_subscription_updated(
+        ctx=ctx,
+        endpoint_id=subscription_id,
+        url_changed=request.url is not None,
+        event_types_changed=request.event_types is not None,
+        new_event_types=[e.value for e in request.event_types] if request.event_types else None,
+    )
+
     return endpoint
 
 
@@ -190,4 +275,8 @@ async def get_subscription_secret(
     secret, error = await service.get_endpoint_secret(ctx.organization, subscription_id)
     if error:
         raise HTTPException(status_code=500, detail=error.message)
+
+    # Track webhook secret viewing (security audit trail)
+    business_events.track_webhook_secret_viewed(ctx=ctx, endpoint_id=subscription_id)
+
     return secret

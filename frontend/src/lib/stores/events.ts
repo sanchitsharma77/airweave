@@ -79,17 +79,21 @@ export interface SubscriptionSecret {
 interface EventsState {
   subscriptions: Subscription[];
   messages: EventMessage[];
+  logs: MessageAttempt[];
   isLoadingSubscriptions: boolean;
   isLoadingMessages: boolean;
+  isLoadingLogs: boolean;
   error: string | null;
 
   // Actions
   fetchSubscriptions: () => Promise<void>;
   fetchMessages: (eventTypes?: string[]) => Promise<void>;
+  fetchLogs: (status?: 'succeeded' | 'failed') => Promise<void>;
   fetchSubscription: (subscriptionId: string) => Promise<SubscriptionWithAttempts>;
   createSubscription: (request: CreateSubscriptionRequest) => Promise<Subscription>;
   updateSubscription: (subscriptionId: string, request: UpdateSubscriptionRequest) => Promise<Subscription>;
   deleteSubscription: (subscriptionId: string) => Promise<void>;
+  deleteSubscriptions: (subscriptionIds: string[]) => Promise<void>;
   fetchSubscriptionSecret: (subscriptionId: string) => Promise<SubscriptionSecret>;
   clearEvents: () => void;
 }
@@ -97,8 +101,10 @@ interface EventsState {
 export const useEventsStore = create<EventsState>((set, get) => ({
   subscriptions: [],
   messages: [],
+  logs: [],
   isLoadingSubscriptions: false,
   isLoadingMessages: false,
+  isLoadingLogs: false,
   error: null,
 
   fetchSubscriptions: async () => {
@@ -137,6 +143,27 @@ export const useEventsStore = create<EventsState>((set, get) => ({
       set({
         error: error instanceof Error ? error.message : 'Failed to fetch messages',
         isLoadingMessages: false
+      });
+    }
+  },
+
+  fetchLogs: async (status?: 'succeeded' | 'failed') => {
+    set({ isLoadingLogs: true, error: null });
+    try {
+      let endpoint = '/events/logs';
+      if (status) {
+        endpoint += `?status=${status}`;
+      }
+      const response = await apiClient.get(endpoint);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch logs: ${response.status}`);
+      }
+      const logs = await response.json();
+      set({ logs, isLoadingLogs: false });
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch logs',
+        isLoadingLogs: false
       });
     }
   },
@@ -180,6 +207,24 @@ export const useEventsStore = create<EventsState>((set, get) => ({
     get().fetchSubscriptions();
   },
 
+  deleteSubscriptions: async (subscriptionIds: string[]) => {
+    // Delete all subscriptions in parallel
+    const results = await Promise.allSettled(
+      subscriptionIds.map(id =>
+        apiClient.delete(`/events/subscriptions/${id}`)
+      )
+    );
+
+    // Check if any failed
+    const failed = results.filter(r => r.status === 'rejected');
+    if (failed.length > 0) {
+      console.error(`Failed to delete ${failed.length} subscription(s)`);
+    }
+
+    // Refresh subscriptions list
+    get().fetchSubscriptions();
+  },
+
   fetchSubscriptionSecret: async (subscriptionId: string) => {
     const response = await apiClient.get(`/events/subscriptions/${subscriptionId}/secret`);
     if (!response.ok) {
@@ -189,6 +234,6 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   },
 
   clearEvents: () => {
-    set({ subscriptions: [], messages: [], error: null });
+    set({ subscriptions: [], messages: [], logs: [], error: null });
   },
 }));

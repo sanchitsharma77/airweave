@@ -356,6 +356,7 @@ const DashboardLayout = () => {
               icon={<Webhook className="mr-2 h-4 w-4 opacity-70 group-hover:opacity-100 transition-opacity" />}
             >
               Events
+              <span className="ml-1.5 text-[9px] font-medium text-muted-foreground/60 uppercase tracking-wide">beta</span>
             </NavItem>
           </div>
 

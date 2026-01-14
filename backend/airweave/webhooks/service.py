@@ -22,16 +22,18 @@ from svix.api import (
     MessageIn,
     MessageListOptions,
     MessageOut,
+    MessageStatus,
     SvixAsync,
     SvixOptions,
 )
 
 from airweave import schemas
 from airweave.core.config import settings
+from airweave.core.datetime_utils import utc_now_naive
 from airweave.core.logging import ContextualLogger
 from airweave.core.logging import logger as default_logger
-from airweave.core.shared_models import SyncJobStatus
 from airweave.webhooks.constants.event_types import EventType, event_type_from_sync_job_status
+from airweave.webhooks.schemas import SyncEventPayload
 
 T = TypeVar("T")
 
@@ -315,26 +317,52 @@ class WebhooksService:
 
     async def publish_event_sync(
         self,
+        source_connection_id: uuid.UUID,
         organisation: schemas.Organization,
-        connection: schemas.Connection,
-        sync_job_status: SyncJobStatus,
+        sync_job: schemas.SyncJob,
+        collection: schemas.Collection,
+        source_type: str,
+        error: Optional[str] = None,
     ) -> None:
         """Publish a sync event to all subscribed webhooks.
 
         Args:
+            source_connection_id: The source connection ID.
             organisation: The organization to publish the event for.
-            connection: The connection related to the sync event.
-            sync_job_status: The status of the sync job.
+            sync_job: The sync job (contains status, id, metrics).
+            collection: The collection being synced to.
+            source_type: Short name of the source (e.g., 'slack', 'notion').
+            error: Optional error message for failed syncs.
         """
-        event_type = event_type_from_sync_job_status(sync_job_status)
+        event_type = event_type_from_sync_job_status(sync_job.status)
+        if event_type is None:
+            # No webhook for this status (e.g., CREATED, CANCELLING)
+            return
+
+        # Build the event payload
+        payload = SyncEventPayload(
+            event_type=event_type,
+            job_id=sync_job.id,
+            collection_readable_id=collection.readable_id,
+            collection_name=collection.name,
+            source_connection_id=source_connection_id,
+            source_type=source_type,
+            status=sync_job.status,
+            timestamp=utc_now_naive(),
+            error=error or sync_job.error,
+        )
+
         try:
-            await self._publish_event_sync_internal(organisation, connection, event_type)
+            await self._publish_event_sync_internal(organisation, event_type, payload)
         except Exception as e:
             self.logger.error(f"Failed to publish event: {getattr(e, 'detail', e)}")
 
     @auto_create_org_on_not_found
     async def _publish_event_sync_internal(
-        self, organisation: schemas.Organization, connection: schemas.Connection, event_type: str
+        self,
+        organisation: schemas.Organization,
+        event_type: str,
+        payload: SyncEventPayload,
     ) -> None:
         await self.svix.message.create(
             organisation.id,
@@ -342,10 +370,7 @@ class WebhooksService:
                 event_type=event_type,
                 channels=[event_type],
                 event_id=str(uuid.uuid4()),
-                payload={
-                    "type": event_type,
-                    "collection": connection.id,
-                },
+                payload=payload.model_dump(mode="json"),
             ),
         )
 
@@ -368,6 +393,31 @@ class WebhooksService:
             self.logger.error(f"Failed to get messages: {getattr(e, 'detail', e)}")
             return None, WebhooksError(f"Failed to get messages: {getattr(e, 'detail', e)}")
 
+    async def get_message(
+        self, organisation: schemas.Organization, message_id: str
+    ) -> Tuple[MessageOut | None, WebhooksError | None]:
+        """Get a specific message by ID.
+
+        Args:
+            organisation: The organization owning the message.
+            message_id: The ID of the message to retrieve.
+
+        Returns:
+            Tuple of (message, error).
+        """
+        try:
+            message = await self._get_message_internal(organisation, message_id)
+            return message, None
+        except Exception as e:
+            self.logger.error(f"Failed to get message {message_id}: {getattr(e, 'detail', e)}")
+            return None, WebhooksError(f"Failed to get message: {getattr(e, 'detail', e)}")
+
+    @auto_create_org_on_not_found
+    async def _get_message_internal(
+        self, organisation: schemas.Organization, message_id: str
+    ) -> MessageOut:
+        return await self.svix.message.get(str(organisation.id), message_id)
+
     @auto_create_org_on_not_found
     async def _get_messages_internal(
         self, organisation: schemas.Organization, event_types: List[str] | None = None
@@ -381,8 +431,35 @@ class WebhooksService:
             )
         ).data
 
+    async def get_message_attempts_by_message(
+        self, organisation: schemas.Organization, message_id: str
+    ) -> Tuple[List[MessageAttemptOut] | None, WebhooksError | None]:
+        """Get delivery attempts for a specific message.
+
+        Args:
+            organisation: The organization owning the message.
+            message_id: The ID of the message.
+
+        Returns:
+            Tuple of (attempts, error).
+        """
+        try:
+            attempts = (
+                await self.svix.message_attempt.list_by_msg(str(organisation.id), message_id)
+            ).data
+            return attempts, None
+        except Exception as e:
+            self.logger.error(
+                f"Failed to get message attempts for {message_id}: {getattr(e, 'detail', e)}"
+            )
+            return None, WebhooksError(f"Failed to get message attempts: {getattr(e, 'detail', e)}")
+
     async def get_message_attempts_by_endpoint(
-        self, organisation: schemas.Organization, endpoint_id: str, limit: int = 100
+        self,
+        organisation: schemas.Organization,
+        endpoint_id: str,
+        limit: int = 100,
+        status: MessageStatus | None = None,
     ) -> Tuple[List[MessageAttemptOut] | None, WebhooksError | None]:
         """Get message delivery attempts for a webhook endpoint.
 
@@ -390,6 +467,7 @@ class WebhooksService:
             organisation: The organization owning the endpoint.
             endpoint_id: The ID of the endpoint.
             limit: Maximum number of attempts to return.
+            status: Optional status filter (MessageStatus.Success, MessageStatus.Fail, etc.).
 
         Returns:
             Tuple of (attempts, error).
@@ -401,6 +479,7 @@ class WebhooksService:
                     endpoint_id,
                     MessageAttemptListByEndpointOptions(
                         limit=limit,
+                        status=status,
                     ),
                 )
             ).data
@@ -411,6 +490,57 @@ class WebhooksService:
             )
             return None, WebhooksError(
                 f"Failed to get message attempts by endpoint: {getattr(e, 'detail', e)}"
+            )
+
+    async def get_all_message_attempts(
+        self,
+        organisation: schemas.Organization,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> Tuple[List[MessageAttemptOut] | None, WebhooksError | None]:
+        """Get all message delivery attempts across all endpoints for an organization.
+
+        Args:
+            organisation: The organization to get attempts for.
+            status: Optional status filter ("succeeded" or "failed").
+            limit: Maximum number of attempts to return per endpoint.
+
+        Returns:
+            Tuple of (attempts, error).
+        """
+        try:
+            # First get all endpoints
+            endpoints, error = await self.get_endpoints(organisation)
+            if error:
+                return None, error
+
+            if not endpoints:
+                return [], None
+
+            # Convert string status to Svix MessageStatus enum for API-level filtering
+            svix_status: MessageStatus | None = None
+            if status == "succeeded":
+                svix_status = MessageStatus.SUCCESS
+            elif status == "failed":
+                svix_status = MessageStatus.FAIL
+
+            # Aggregate attempts from all endpoints (filtered at Svix API level)
+            all_attempts: List[MessageAttemptOut] = []
+            for endpoint in endpoints:
+                attempts, err = await self.get_message_attempts_by_endpoint(
+                    organisation, endpoint.id, limit=limit, status=svix_status
+                )
+                if attempts:
+                    all_attempts.extend(attempts)
+
+            # Sort by timestamp descending
+            all_attempts.sort(key=lambda a: a.timestamp, reverse=True)
+
+            return all_attempts, None
+        except Exception as e:
+            self.logger.error(f"Failed to get all message attempts: {getattr(e, 'detail', e)}")
+            return None, WebhooksError(
+                f"Failed to get all message attempts: {getattr(e, 'detail', e)}"
             )
 
 

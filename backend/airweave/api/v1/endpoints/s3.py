@@ -106,7 +106,7 @@ async def configure_s3_destination(
         # Update existing connection credentials
         if existing_connection.integration_credential_id:
             cred = await crud.integration_credential.get(
-                db, existing_connection.integration_credential_id
+                db, existing_connection.integration_credential_id, ctx
             )
             if cred:
                 cred.encrypted_data = encrypt(auth_config.model_dump())
@@ -233,7 +233,7 @@ async def delete_s3_configuration(
 
     # Delete credentials if they exist
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id)
+        cred = await crud.integration_credential.get(db, connection.integration_credential_id, ctx)
         if cred:
             await db.delete(cred)
 
@@ -286,7 +286,7 @@ async def get_s3_status(
     bucket_name = None
     role_arn = None
     if connection.integration_credential_id:
-        cred = await crud.integration_credential.get(db, connection.integration_credential_id)
+        cred = await crud.integration_credential.get(db, connection.integration_credential_id, ctx)
         if cred:
             from airweave.core.credentials import decrypt
 
