@@ -27,8 +27,6 @@ navigation:
     path: docs/pages/concepts.mdx
   - page: Search
     path: docs/pages/search.mdx
-  - page: Events
-    path: docs/pages/events.mdx
   - page: MCP Server
     path: docs/pages/mcp-server.mdx
   - page: Add New Connector
@@ -171,12 +169,13 @@ navigation:
   - section: Events
     contents:
     - GET /events/messages
+    - GET /events/messages/{message_id}
+    - GET /events/messages/{message_id}/attempts
     - GET /events/subscriptions
     - GET /events/subscriptions/{subscription_id}
     - POST /events/subscriptions
     - PATCH /events/subscriptions/{subscription_id}
     - DELETE /events/subscriptions/{subscription_id}
-    - GET /events/subscriptions/{subscription_id}/secret
   snippets:
     python: airweave-sdk
     typescript: '@airweave/sdk'

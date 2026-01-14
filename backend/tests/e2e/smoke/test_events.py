@@ -1,8 +1,8 @@
 """E2E tests for Events API and Webhook functionality.
 
 These tests cover two distinct concepts:
-- **Events**: Messages/logs representing what happened in the system (sync.pending, sync.completed, etc.)
-- **Webhooks**: Subscriptions that receive event notifications at configured URLs
+- **Events (Messages)**: Records of what happened in the system (sync.pending, sync.completed, etc.)
+- **Webhooks (Subscriptions)**: Endpoints that receive event notifications at configured URLs
 
 Tests use the stub connector for fast execution while testing the full flow including Svix integration.
 
@@ -229,7 +229,7 @@ async def webhook_subscription_all_events(
 
 
 # =============================================================================
-# EVENTS TESTS - Testing the Events API (messages, logs)
+# EVENTS TESTS - Testing the Events API (messages)
 # =============================================================================
 
 
@@ -295,77 +295,6 @@ class TestEventsMessages:
         assert "id" in latest_message
         assert "eventType" in latest_message
         assert "payload" in latest_message
-
-
-@pytest.mark.asyncio
-class TestEventsLogs:
-    """Tests for event delivery logs - tracking webhook delivery attempts."""
-
-    async def test_get_logs_returns_list(self, api_client: httpx.AsyncClient):
-        """Test that GET /events/logs returns a list."""
-        response = await api_client.get("/events/logs")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-
-    async def test_get_logs_filter_by_succeeded(self, api_client: httpx.AsyncClient):
-        """Test filtering logs by succeeded status."""
-        response = await api_client.get("/events/logs", params={"status": "succeeded"})
-        assert response.status_code == 200
-        logs = response.json()
-
-        # All returned logs should have 2xx status codes
-        for log in logs:
-            status_code = log.get("responseStatusCode")
-            if status_code:
-                assert 200 <= status_code < 300
-
-    async def test_get_logs_filter_by_failed(self, api_client: httpx.AsyncClient):
-        """Test filtering logs by failed status."""
-        response = await api_client.get("/events/logs", params={"status": "failed"})
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-
-    async def test_logs_created_after_delivery(
-        self,
-        api_client: httpx.AsyncClient,
-        webhook_subscription: Dict,
-        collection: Dict,
-        webhook_receiver: tuple[WebhookReceiver, int],
-    ):
-        """Test that delivery logs are created after webhook delivery."""
-        receiver, port = webhook_receiver
-
-        # Trigger a sync
-        await api_client.post(
-            "/source-connections",
-            json={
-                "name": "Stub Logs Test",
-                "description": "Testing logs creation",
-                "short_name": "stub",
-                "readable_collection_id": collection["readable_id"],
-                "authentication": {"credentials": {"stub_key": "key"}},
-                "config": {"entity_count": "1"},
-                "sync_immediately": True,
-            },
-        )
-
-        # Wait for webhook delivery
-        await receiver.wait_for_webhook(timeout=WEBHOOK_TIMEOUT)
-
-        # Small delay for logs to be recorded
-        await asyncio.sleep(1)
-
-        # Check logs API
-        response = await api_client.get("/events/logs")
-        assert response.status_code == 200
-        logs = response.json()
-        assert len(logs) > 0
-
-        # Verify log structure
-        latest_log = logs[0]
-        assert "id" in latest_log
-        assert "responseStatusCode" in latest_log
-        assert "timestamp" in latest_log
 
 
 @pytest.mark.asyncio

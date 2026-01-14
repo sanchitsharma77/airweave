@@ -86,7 +86,7 @@ Airweave emits events when things happen in your organization—like when a sync
 
         match event["eventType"]:
             case "sync.completed":
-                print(f"Sync completed: {event['payload']['sync_job_id']}")
+                print(f"Sync completed: {event['payload']['job_id']}")
             case "sync.failed":
                 print(f"Sync failed: {event['payload']['error']}")
 
@@ -104,7 +104,7 @@ Airweave emits events when things happen in your organization—like when a sync
 
       switch (event.eventType) {
         case "sync.completed":
-          console.log(`Sync completed: ${event.payload.sync_job_id}`);
+          console.log(`Sync completed: ${event.payload.job_id}`);
           break;
         case "sync.failed":
           console.log(`Sync failed: ${event.payload.error}`);
@@ -124,12 +124,10 @@ All events are related to sync job lifecycle:
 
 | Event | Description |
 |-------|-------------|
-| `sync.created` | Sync job created |
 | `sync.pending` | Sync job queued |
 | `sync.running` | Sync job started |
 | `sync.completed` | Sync job finished successfully |
 | `sync.failed` | Sync job failed |
-| `sync.cancelling` | Cancellation requested |
 | `sync.cancelled` | Sync job cancelled |
 
 ### Payload Structure
@@ -140,12 +138,35 @@ All events are related to sync job lifecycle:
   "eventType": "sync.completed",
   "timestamp": "2025-01-13T14:30:00Z",
   "payload": {
-    "sync_job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "event_type": "sync.completed",
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "collection_readable_id": "finance-data-ab123",
+    "collection_name": "Finance Data",
     "source_connection_id": "660e8400-e29b-41d4-a716-446655440001",
-    "collection_id": "770e8400-e29b-41d4-a716-446655440002",
+    "source_type": "slack",
     "status": "completed",
-    "entities_processed": 1250,
-    "duration_seconds": 45
+    "timestamp": "2025-01-13T14:30:00Z"
+  }
+}
+```
+
+For failed events, the payload includes an additional `error` field:
+
+```json
+{
+  "id": "msg_3yLwC9MPrN5oStu",
+  "eventType": "sync.failed",
+  "timestamp": "2025-01-13T14:35:00Z",
+  "payload": {
+    "event_type": "sync.failed",
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "collection_readable_id": "finance-data-ab123",
+    "collection_name": "Finance Data",
+    "source_connection_id": "660e8400-e29b-41d4-a716-446655440001",
+    "source_type": "notion",
+    "status": "failed",
+    "timestamp": "2025-01-13T14:35:00Z",
+    "error": "Authentication token expired"
   }
 }
 ```

@@ -1,5 +1,5 @@
 /**
- * TanStack Query hooks for webhook subscriptions and delivery logs
+ * TanStack Query hooks for webhook subscriptions and event messages
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -82,7 +82,6 @@ export const webhookKeys = {
   subscriptions: () => [...webhookKeys.all, "subscriptions"] as const,
   subscription: (id: string) => [...webhookKeys.subscriptions(), id] as const,
   subscriptionSecret: (id: string) => [...webhookKeys.subscription(id), "secret"] as const,
-  logs: (status?: string) => [...webhookKeys.all, "logs", { status }] as const,
   messages: () => [...webhookKeys.all, "messages"] as const,
   message: (id: string) => [...webhookKeys.messages(), id] as const,
   messageAttempts: (id: string) => [...webhookKeys.message(id), "attempts"] as const,
@@ -117,21 +116,6 @@ async function fetchSubscriptionSecret(id: string): Promise<SubscriptionSecret> 
   const response = await apiClient.get(`/events/subscriptions/${id}/secret`);
   if (!response.ok) {
     throw new Error(`Failed to fetch subscription secret: ${response.status}`);
-  }
-  return response.json();
-}
-
-/**
- * Fetch delivery logs with optional status filter
- */
-async function fetchLogs(status?: "succeeded" | "failed"): Promise<MessageAttempt[]> {
-  let endpoint = "/events/logs";
-  if (status) {
-    endpoint += `?status=${status}`;
-  }
-  const response = await apiClient.get(endpoint);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch logs: ${response.status}`);
   }
   return response.json();
 }
@@ -240,16 +224,6 @@ export function useSubscriptionSecret(id: string | null, enabled = false) {
 }
 
 /**
- * Hook to fetch delivery logs
- */
-export function useLogs(status?: "succeeded" | "failed") {
-  return useQuery({
-    queryKey: webhookKeys.logs(status),
-    queryFn: () => fetchLogs(status),
-  });
-}
-
-/**
  * Hook to fetch a specific message (includes payload)
  */
 export function useMessage(id: string | null) {
@@ -322,7 +296,6 @@ export function useDeleteSubscription() {
     mutationFn: deleteSubscription,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.subscriptions() });
-      queryClient.invalidateQueries({ queryKey: webhookKeys.logs() });
     },
   });
 }
@@ -339,7 +312,6 @@ export function useDeleteSubscriptions() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.subscriptions() });
-      queryClient.invalidateQueries({ queryKey: webhookKeys.logs() });
     },
   });
 }

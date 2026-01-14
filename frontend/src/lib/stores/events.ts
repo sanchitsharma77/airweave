@@ -79,16 +79,13 @@ export interface SubscriptionSecret {
 interface EventsState {
   subscriptions: Subscription[];
   messages: EventMessage[];
-  logs: MessageAttempt[];
   isLoadingSubscriptions: boolean;
   isLoadingMessages: boolean;
-  isLoadingLogs: boolean;
   error: string | null;
 
   // Actions
   fetchSubscriptions: () => Promise<void>;
   fetchMessages: (eventTypes?: string[]) => Promise<void>;
-  fetchLogs: (status?: 'succeeded' | 'failed') => Promise<void>;
   fetchSubscription: (subscriptionId: string) => Promise<SubscriptionWithAttempts>;
   createSubscription: (request: CreateSubscriptionRequest) => Promise<Subscription>;
   updateSubscription: (subscriptionId: string, request: UpdateSubscriptionRequest) => Promise<Subscription>;
@@ -101,10 +98,8 @@ interface EventsState {
 export const useEventsStore = create<EventsState>((set, get) => ({
   subscriptions: [],
   messages: [],
-  logs: [],
   isLoadingSubscriptions: false,
   isLoadingMessages: false,
-  isLoadingLogs: false,
   error: null,
 
   fetchSubscriptions: async () => {
@@ -143,27 +138,6 @@ export const useEventsStore = create<EventsState>((set, get) => ({
       set({
         error: error instanceof Error ? error.message : 'Failed to fetch messages',
         isLoadingMessages: false
-      });
-    }
-  },
-
-  fetchLogs: async (status?: 'succeeded' | 'failed') => {
-    set({ isLoadingLogs: true, error: null });
-    try {
-      let endpoint = '/events/logs';
-      if (status) {
-        endpoint += `?status=${status}`;
-      }
-      const response = await apiClient.get(endpoint);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch logs: ${response.status}`);
-      }
-      const logs = await response.json();
-      set({ logs, isLoadingLogs: false });
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : 'Failed to fetch logs',
-        isLoadingLogs: false
       });
     }
   },
@@ -234,6 +208,6 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   },
 
   clearEvents: () => {
-    set({ subscriptions: [], messages: [], logs: [], error: null });
+    set({ subscriptions: [], messages: [], error: null });
   },
 }));
