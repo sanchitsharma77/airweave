@@ -106,28 +106,6 @@ async def get_message_attempts(
     return attempts or []
 
 
-@router.get("/logs", response_model=List[MessageAttemptOut])
-async def get_logs(
-    ctx: ApiContext = Depends(deps.get_context),
-    status: str | None = Query(
-        default=None, description="Filter by status: 'succeeded' or 'failed'"
-    ),
-) -> List[MessageAttemptOut]:
-    """Get all webhook delivery attempts for the current organization.
-
-    Args:
-        ctx: The API context containing organization info.
-        status: Optional status filter ('succeeded' or 'failed').
-
-    Returns:
-        List of message delivery attempts.
-    """
-    attempts, error = await service.get_all_message_attempts(ctx.organization, status=status)
-    if error:
-        raise HTTPException(status_code=500, detail=error.message)
-    return attempts or []
-
-
 @router.get("/subscriptions", response_model=List[EndpointOut])
 async def get_subscriptions(
     ctx: ApiContext = Depends(deps.get_context),
