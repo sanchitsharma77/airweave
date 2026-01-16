@@ -257,6 +257,7 @@ class TestEventsMessages:
         for msg in messages:
             assert msg["eventType"] == "sync.completed"
 
+    @pytest.mark.svix
     async def test_messages_created_after_sync(
         self,
         api_client: httpx.AsyncClient,
@@ -298,6 +299,7 @@ class TestEventsMessages:
 
 
 @pytest.mark.asyncio
+@pytest.mark.svix
 class TestEventTypes:
     """Tests for different event types (sync.pending, sync.running, sync.completed, etc.)."""
 
@@ -520,6 +522,7 @@ class TestWebhookSubscriptions:
 
 
 @pytest.mark.asyncio
+@pytest.mark.svix
 class TestWebhookDelivery:
     """Tests for webhook delivery - events being sent to subscribed URLs."""
 
