@@ -306,6 +306,9 @@ class VespaClient:
                 result = json.loads(line)
                 if "documentCount" in result:
                     count += result["documentCount"]
+                elif "sessionStats" in result:
+                    stats = result["sessionStats"]
+                    count += stats.get("documentCount", 0)
                 elif result.get("id"):
                     count += 1
             except json.JSONDecodeError:

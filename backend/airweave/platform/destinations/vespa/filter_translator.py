@@ -315,30 +315,36 @@ class FilterTranslator:
         array_key = nested["key"]  # e.g., "breadcrumbs"
         inner_filter = nested.get("filter", {})
 
-        inner_conditions = []
+        clauses = []
 
-        # Process must conditions within the nested filter
+        # Process must conditions within the nested filter (AND)
+        must_conditions = []
         for must_cond in inner_filter.get("must", []):
             if "key" in must_cond and "match" in must_cond:
                 inner_key = must_cond["key"]
                 # Build full key path: array.field (e.g., breadcrumbs.entity_id)
                 full_key = f"{array_key}.{inner_key}"
                 # Translate the inner match condition with the full path
-                inner_conditions.append(
+                must_conditions.append(
                     self._translate_match_condition({"key": full_key, "match": must_cond["match"]})
                 )
+        if must_conditions:
+            clauses.append(f"({' AND '.join(must_conditions)})")
 
-        # Process should conditions
+        # Process should conditions (OR)
+        should_conditions = []
         for should_cond in inner_filter.get("should", []):
             if "key" in should_cond and "match" in should_cond:
                 inner_key = should_cond["key"]
                 full_key = f"{array_key}.{inner_key}"
-                inner_conditions.append(
+                should_conditions.append(
                     self._translate_match_condition(
                         {"key": full_key, "match": should_cond["match"]}
                     )
                 )
+        if should_conditions:
+            clauses.append(f"({' OR '.join(should_conditions)})")
 
-        if inner_conditions:
-            return f"({' AND '.join(inner_conditions)})"
+        if clauses:
+            return f"({' AND '.join(clauses)})"
         return ""
