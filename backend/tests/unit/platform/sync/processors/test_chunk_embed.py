@@ -378,3 +378,44 @@ class TestChunkEmbedProcessor:
             # Parent entity's textual_representation should be None
             assert mock_entity.textual_representation is None
 
+    @pytest.mark.asyncio
+    async def test_skips_entities_without_text(
+        self, processor, mock_sync_context
+    ):
+        """Test entities with no textual_representation are skipped."""
+        mock_entity = MagicMock()
+        mock_entity.entity_id = "test-123"
+        mock_entity.textual_representation = None  # No text
+        mock_entity.airweave_system_metadata = MagicMock()
+        
+        with patch('airweave.platform.sync.processors.chunk_embed.text_builder') as mock_builder:
+            mock_builder.build_for_batch = AsyncMock(return_value=[mock_entity])
+            
+            result = await processor.process([mock_entity], mock_sync_context)
+            
+            # Should return empty list (skipped)
+            assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_handles_empty_chunks_from_chunker(
+        self, processor, mock_sync_context
+    ):
+        """Test handling when chunker returns empty list."""
+        mock_entity = MagicMock()
+        mock_entity.entity_id = "test-123"
+        mock_entity.textual_representation = "Test"
+        mock_entity.airweave_system_metadata = MagicMock()
+        
+        with patch('airweave.platform.sync.processors.chunk_embed.text_builder') as mock_builder, \
+             patch('airweave.platform.chunkers.semantic.SemanticChunker') as MockChunker:
+            
+            mock_builder.build_for_batch = AsyncMock(return_value=[mock_entity])
+            
+            mock_chunker = MockChunker.return_value
+            mock_chunker.chunk_batch = AsyncMock(return_value=[[]])  # Empty chunks
+            
+            result = await processor.process([mock_entity], mock_sync_context)
+            
+            # Should skip entity with no chunks
+            assert len(result) == 0
+

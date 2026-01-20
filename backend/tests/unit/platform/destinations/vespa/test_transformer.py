@@ -296,3 +296,149 @@ class TestEntityTransformer:
         assert isinstance(result, dict)
         assert len(result) == 0
 
+    def test_transform_web_entity_type(self, transformer):
+        """Test transform with WebEntity type."""
+        from airweave.platform.entities._base import WebEntity
+        
+        entity = MagicMock()
+        entity.entity_id = "web-123"
+        entity.name = "Web Page"
+        entity.textual_representation = "Content"
+        entity.created_at = datetime(2024, 1, 1)
+        entity.updated_at = datetime(2024, 1, 1)
+        entity.entity_type = "web_page"
+        entity.url = "https://example.com"
+        entity.breadcrumbs = []
+        entity.access = MagicMock()
+        entity.access.is_public = True
+        entity.access.viewers = []
+        entity.access.editors = []
+        entity.access.owners = []
+        entity.airweave_system_metadata = MagicMock()
+        entity.airweave_system_metadata.entity_type = "web_page"
+        entity.airweave_system_metadata.source_name = "Web"
+        entity.airweave_system_metadata.sync_id = "sync-1"
+        entity.airweave_system_metadata.sync_job_id = None
+        entity.airweave_system_metadata.hash = "hash-1"
+        entity.airweave_system_metadata.collection_id = UUID("12345678-1234-1234-1234-123456789abc")
+        entity.airweave_system_metadata.chunk_index = None
+        entity.airweave_system_metadata.original_entity_id = "orig-1"
+        entity.airweave_system_metadata.dense_embedding = None
+        entity.airweave_system_metadata.sparse_embedding = None
+        entity.to_dict.return_value = {"entity_id": "web-123", "url": "https://example.com"}
+        
+        result = transformer.transform(entity)
+        
+        assert result.fields["entity_id"] == "web-123"
+        assert "web-123" in result.id
+
+    def test_transform_file_entity_type(self, transformer):
+        """Test transform with FileEntity type."""
+        from airweave.platform.entities._base import FileEntity
+        
+        entity = MagicMock()
+        entity.entity_id = "file-123"
+        entity.name = "document.pdf"
+        entity.textual_representation = "File content"
+        entity.created_at = datetime(2024, 1, 1)
+        entity.updated_at = datetime(2024, 1, 1)
+        entity.entity_type = "file"
+        entity.file_path = "/path/to/document.pdf"
+        entity.breadcrumbs = []
+        entity.access = MagicMock()
+        entity.access.is_public = True
+        entity.access.viewers = []
+        entity.access.editors = []
+        entity.access.owners = []
+        entity.airweave_system_metadata = MagicMock()
+        entity.airweave_system_metadata.entity_type = "file"
+        entity.airweave_system_metadata.source_name = "FileSystem"
+        entity.airweave_system_metadata.sync_id = "sync-1"
+        entity.airweave_system_metadata.sync_job_id = None
+        entity.airweave_system_metadata.hash = "hash-1"
+        entity.airweave_system_metadata.collection_id = UUID("12345678-1234-1234-1234-123456789abc")
+        entity.airweave_system_metadata.chunk_index = None
+        entity.airweave_system_metadata.original_entity_id = "orig-1"
+        entity.airweave_system_metadata.dense_embedding = None
+        entity.airweave_system_metadata.sparse_embedding = None
+        entity.to_dict.return_value = {"entity_id": "file-123", "file_path": "/path/to/document.pdf"}
+        
+        result = transformer.transform(entity)
+        
+        assert result.fields["entity_id"] == "file-123"
+        assert "file-123" in result.id
+
+    def test_transform_code_file_entity_type(self, transformer):
+        """Test transform with CodeFileEntity type."""
+        from airweave.platform.entities._base import CodeFileEntity
+        
+        entity = MagicMock()
+        entity.entity_id = "code-123"
+        entity.name = "main.py"
+        entity.textual_representation = "def main(): pass"
+        entity.created_at = datetime(2024, 1, 1)
+        entity.updated_at = datetime(2024, 1, 1)
+        entity.entity_type = "code_file"
+        entity.file_path = "/src/main.py"
+        entity.language = "python"
+        entity.breadcrumbs = []
+        entity.access = MagicMock()
+        entity.access.is_public = True
+        entity.access.viewers = []
+        entity.access.editors = []
+        entity.access.owners = []
+        entity.airweave_system_metadata = MagicMock()
+        entity.airweave_system_metadata.entity_type = "code_file"
+        entity.airweave_system_metadata.source_name = "GitHub"
+        entity.airweave_system_metadata.sync_id = "sync-1"
+        entity.airweave_system_metadata.sync_job_id = None
+        entity.airweave_system_metadata.hash = "hash-1"
+        entity.airweave_system_metadata.collection_id = UUID("12345678-1234-1234-1234-123456789abc")
+        entity.airweave_system_metadata.chunk_index = None
+        entity.airweave_system_metadata.original_entity_id = "orig-1"
+        entity.airweave_system_metadata.dense_embedding = None
+        entity.airweave_system_metadata.sparse_embedding = None
+        entity.to_dict.return_value = {"entity_id": "code-123", "language": "python"}
+        
+        result = transformer.transform(entity)
+        
+        assert result.fields["entity_id"] == "code-123"
+        assert "code-123" in result.id
+
+    def test_transform_email_entity_type(self, transformer):
+        """Test transform with EmailEntity type."""
+        from airweave.platform.entities._base import EmailEntity
+        
+        entity = MagicMock()
+        entity.entity_id = "email-123"
+        entity.name = "Important Email"
+        entity.textual_representation = "Email body"
+        entity.created_at = datetime(2024, 1, 1)
+        entity.updated_at = datetime(2024, 1, 1)
+        entity.entity_type = "email"
+        entity.subject = "Important Email"
+        entity.breadcrumbs = []
+        entity.access = MagicMock()
+        entity.access.is_public = False
+        entity.access.viewers = ["user@example.com"]
+        entity.access.editors = []
+        entity.access.owners = []
+        entity.airweave_system_metadata = MagicMock()
+        entity.airweave_system_metadata.entity_type = "email"
+        entity.airweave_system_metadata.source_name = "Gmail"
+        entity.airweave_system_metadata.sync_id = "sync-1"
+        entity.airweave_system_metadata.sync_job_id = None
+        entity.airweave_system_metadata.hash = "hash-1"
+        entity.airweave_system_metadata.collection_id = UUID("12345678-1234-1234-1234-123456789abc")
+        entity.airweave_system_metadata.chunk_index = None
+        entity.airweave_system_metadata.original_entity_id = "orig-1"
+        entity.airweave_system_metadata.dense_embedding = None
+        entity.airweave_system_metadata.sparse_embedding = None
+        entity.to_dict.return_value = {"entity_id": "email-123", "subject": "Important Email"}
+        
+        result = transformer.transform(entity)
+        
+        assert result.fields["entity_id"] == "email-123"
+        assert result.fields["access_is_public"] is False
+        assert "user@example.com" in result.fields["access_viewers"]
+
