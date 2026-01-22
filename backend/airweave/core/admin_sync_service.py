@@ -670,29 +670,21 @@ class AdminSyncService:
             async def count_sync(sync: Sync) -> Tuple[UUID, Optional[int]]:
                 async with semaphore:
                     try:
-                        all_schemas = ", ".join(VespaDestination._get_all_vespa_schemas())
+                        # Query all Vespa schemas (base, file, code_file, email, web)
+                        schemas = (
+                            "base_entity, file_entity, code_file_entity, email_entity, web_entity"
+                        )
                         yql = (
-                            f"select * from sources {all_schemas} "
+                            f"select * from sources {schemas} "
                             f"where airweave_system_metadata_sync_id contains '{sync.id}' "
                             f"and airweave_system_metadata_collection_id contains '{collection_id}' "
                             f"limit 0"
                         )
 
                         query_params = {"yql": yql}
-                        # Run in thread pool to avoid blocking event loop
-                        response = await asyncio.to_thread(vespa.app.query, body=query_params)
-
-                        if response.is_successful():
-                            count = (
-                                response.json.get("root", {}).get("fields", {}).get("totalCount", 0)
-                            )
-                            return sync.id, count
-                        else:
-                            error_msg = response.json.get("root", {}).get("errors", [])
-                            ctx.logger.warning(
-                                f"Vespa query failed for sync {sync.id}: {error_msg}"
-                            )
-                            return sync.id, None
+                        # Use the refactored VespaClient for queries
+                        response = await vespa._client.execute_query(query_params)
+                        return sync.id, response.total_count
                     except Exception as e:
                         ctx.logger.warning(f"Failed to count Vespa for sync {sync.id}: {e}")
                         return sync.id, None
