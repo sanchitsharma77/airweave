@@ -971,10 +971,9 @@ class VerifyRawDataStep(TestStep):
         if storage_path:
             base_path = Path(storage_path)
         else:
-            # Try common local development paths
+            # Try common local development paths (local_storage lives at repo root)
             candidates = [
                 Path("local_storage"),
-                Path("backend/local_storage"),
                 Path("/app/local_storage"),
             ]
             base_path = None
