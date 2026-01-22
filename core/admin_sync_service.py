@@ -57,7 +57,9 @@ class AdminSyncQueryBuilder:
                 self.query = self.query.where(Sync.id == None)  # noqa: E711
         return self
 
-    def with_source_connection_filter(self, has_source_connection: bool) -> "AdminSyncQueryBuilder":
+    def with_source_connection_filter(
+        self, has_source_connection: bool
+    ) -> "AdminSyncQueryBuilder":
         """Filter by presence of source connection."""
         if has_source_connection:
             # Only syncs with source connection
@@ -300,13 +302,15 @@ class AdminSyncService:
 
         sync_ids_list = [s.id for s in syncs]
 
-        # Phase 1: Fetch metadata that doesn't depend on source_conn_map
+        # Fetch all metadata in parallel
         (
             entity_count_map,
             arf_count_map,
             last_job_map,
             all_tags_map,
             source_conn_map,
+            qdrant_count_map,
+            vespa_count_map,
             sync_connections,
         ) = await asyncio.gather(
             self._fetch_entity_counts(db, sync_ids_list, timings),
@@ -314,29 +318,18 @@ class AdminSyncService:
             self._fetch_last_job_info(db, sync_ids_list, timings),
             self._fetch_all_tags(db, sync_ids_list, timings),
             self._fetch_source_connections(db, sync_ids_list, timings),
+            self._fetch_destination_counts(
+                syncs, source_conn_map, include_destination_counts, ctx, timings, is_qdrant=True
+            )
+            if include_destination_counts
+            else self._return_none_map(syncs, "destination_counts_qdrant", timings),
+            self._fetch_destination_counts(
+                syncs, source_conn_map, include_destination_counts, ctx, timings, is_qdrant=False
+            )
+            if include_destination_counts
+            else self._return_none_map(syncs, "destination_counts_vespa", timings),
             self._fetch_sync_connections(db, sync_ids_list, timings),
         )
-
-        # Phase 2: Fetch destination counts that depend on source_conn_map
-        if include_destination_counts:
-            qdrant_count_map, vespa_count_map = await asyncio.gather(
-                self._fetch_destination_counts(
-                    syncs, source_conn_map, include_destination_counts, ctx, timings, is_qdrant=True
-                ),
-                self._fetch_destination_counts(
-                    syncs,
-                    source_conn_map,
-                    include_destination_counts,
-                    ctx,
-                    timings,
-                    is_qdrant=False,
-                ),
-            )
-        else:
-            qdrant_count_map = {s.id: None for s in syncs}
-            vespa_count_map = {s.id: None for s in syncs}
-            timings["destination_counts_qdrant"] = 0
-            timings["destination_counts_vespa"] = 0
 
         # Build response data
         build_start = time.monotonic()
@@ -372,11 +365,7 @@ class AdminSyncService:
         return entity_count_map
 
     async def _fetch_arf_counts(
-        self,
-        syncs: List[Sync],
-        include_arf_counts: bool,
-        ctx: ApiContext,
-        timings: Dict[str, float],
+        self, syncs: List[Sync], include_arf_counts: bool, ctx: ApiContext, timings: Dict[str, float]
     ) -> Dict[UUID, Optional[int]]:
         """Fetch ARF entity counts if requested."""
         if not include_arf_counts:
@@ -463,7 +452,9 @@ class AdminSyncService:
                     all_tags_map[row.sync_id].update(tags)
 
         # Convert to sorted lists
-        all_tags_map = {sync_id: sorted(list(tag_set)) for sync_id, tag_set in all_tags_map.items()}
+        all_tags_map = {
+            sync_id: sorted(list(tag_set)) for sync_id, tag_set in all_tags_map.items()
+        }
         timings["all_tags"] = (time.monotonic() - start) * 1000
         return all_tags_map
 
@@ -480,9 +471,7 @@ class AdminSyncService:
                 SourceConnection.is_authenticated,
                 Collection.id.label("collection_id"),
             )
-            .outerjoin(
-                Collection, SourceConnection.readable_collection_id == Collection.readable_id
-            )
+            .outerjoin(Collection, SourceConnection.readable_collection_id == Collection.readable_id)
             .where(SourceConnection.sync_id.in_(sync_ids))
         )
         result = await db.execute(query)
@@ -684,14 +673,14 @@ class AdminSyncService:
 
                         if response.is_successful():
                             count = (
-                                response.json.get("root", {}).get("fields", {}).get("totalCount", 0)
+                                response.json.get("root", {})
+                                .get("fields", {})
+                                .get("totalCount", 0)
                             )
                             return sync.id, count
                         else:
                             error_msg = response.json.get("root", {}).get("errors", [])
-                            ctx.logger.warning(
-                                f"Vespa query failed for sync {sync.id}: {error_msg}"
-                            )
+                            ctx.logger.warning(f"Vespa query failed for sync {sync.id}: {error_msg}")
                             return sync.id, None
                     except Exception as e:
                         ctx.logger.warning(f"Failed to count Vespa for sync {sync.id}: {e}")
@@ -757,3 +746,4 @@ class AdminSyncService:
 
 # Singleton instance
 admin_sync_service = AdminSyncService()
+
