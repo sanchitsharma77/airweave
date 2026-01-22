@@ -1222,11 +1222,6 @@ class AdminSyncInfo(schemas.Sync):
     source_is_authenticated: Optional[bool] = None
     readable_collection_id: Optional[str] = None
 
-    # Last job that wrote to Vespa (skip_vespa != true)
-    last_vespa_job_id: Optional[UUID] = None
-    last_vespa_job_status: Optional[str] = None
-    last_vespa_job_at: Optional[datetime] = None
-
     class Config:
         """Pydantic config."""
 
@@ -1500,13 +1495,6 @@ async def admin_list_all_syncs(
         None,
         description="Filter by last job status (completed, failed, running, pending, cancelled)",
     ),
-    last_vespa_job_status: Optional[str] = Query(
-        None, description="Filter by last Vespa job status (completed, failed, running, pending)"
-    ),
-    has_vespa_job: Optional[bool] = Query(
-        None,
-        description="Filter by Vespa job existence (false=pending backfill, true=has job)",
-    ),
     ghost_syncs_last_n: Optional[int] = Query(
         None,
         ge=1,
@@ -1554,8 +1542,6 @@ async def admin_list_all_syncs(
         - is_authenticated: Filter by authentication status (true=active, false=needs reauth)
         - status: Filter by sync status (active, inactive, error)
         - last_job_status: Filter by last job status (any job type)
-        - last_vespa_job_status: Filter by last Vespa job status for migration tracking
-        - has_vespa_job: Filter by Vespa job existence (false=pending backfill)
         - exclude_failed_last_n: Exclude syncs where last N non-running jobs all failed
         - tags: Comma-separated list of tags (matches syncs with jobs having ANY of the tags)
         - exclude_tags: Comma-separated list of tags to exclude (hides syncs with ANY of these tags)
@@ -1578,8 +1564,6 @@ async def admin_list_all_syncs(
         is_authenticated: Optional filter by authentication status
         status: Optional filter by sync status
         last_job_status: Optional filter by last job status
-        last_vespa_job_status: Optional filter by Vespa job status
-        has_vespa_job: Optional filter by Vespa job existence
         exclude_failed_last_n: Optional exclude syncs with N consecutive failures
         tags: Optional comma-separated list of tags to filter by
         exclude_tags: Optional comma-separated list of tags to exclude
@@ -1745,60 +1729,6 @@ async def admin_list_all_syncs(
         )
 
         query = query.where(Sync.id.in_(sa_select(failed_syncs_subq.c.sync_id)))
-
-    # Apply Vespa job filters at SQL level (must happen before limit/offset)
-    if last_vespa_job_status is not None or has_vespa_job is not None:
-        # Build subquery for Vespa jobs (ARF -> Vespa replays)
-        vespa_jobs_subq = (
-            sa_select(
-                SyncJob.sync_id,
-                SyncJob.status,
-                func.row_number()
-                .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
-                .label("rn"),
-            )
-            .where(
-                SyncJob.sync_config.isnot(None),
-                SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
-                or_(
-                    SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
-                    SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
-                ),
-            )
-            .subquery()
-        )
-
-        # Get most recent Vespa job per sync
-        latest_vespa_jobs = (
-            sa_select(vespa_jobs_subq.c.sync_id, vespa_jobs_subq.c.status)
-            .where(vespa_jobs_subq.c.rn == 1)
-            .subquery()
-        )
-
-        if has_vespa_job is not None:
-            if has_vespa_job:
-                # Only syncs with a Vespa job
-                query = query.where(Sync.id.in_(sa_select(latest_vespa_jobs.c.sync_id)))
-            else:
-                # Only syncs without a Vespa job (pending backfill)
-                query = query.where(Sync.id.notin_(sa_select(latest_vespa_jobs.c.sync_id)))
-
-        if last_vespa_job_status is not None:
-            # Filter by specific Vespa job status
-            from airweave.core.shared_models import SyncJobStatus
-
-            try:
-                status_enum = SyncJobStatus(last_vespa_job_status.lower())
-                query = query.where(
-                    Sync.id.in_(
-                        sa_select(latest_vespa_jobs.c.sync_id).where(
-                            latest_vespa_jobs.c.status == status_enum
-                        )
-                    )
-                )
-            except ValueError:
-                # Invalid status value, return empty result
-                return []
 
     # Apply tags filter using JSONB operators
     if tags is not None:
@@ -1970,49 +1900,6 @@ async def admin_list_all_syncs(
             sync_connections[sync_id]["destinations"].append(connection.id)
     timings["sync_connections"] = (time.monotonic() - sync_conn_start) * 1000
 
-    # Fetch last ARF -> Vespa replay job info in bulk
-    # An ARF -> Vespa replay job has:
-    #   - replay_from_arf=true (read from ARF storage)
-    #   - skip_vespa is NOT true (writes to Vespa)
-    vespa_job_start = time.monotonic()
-    arf_to_vespa_job_query = (
-        sa_select(
-            SyncJob.id,
-            SyncJob.sync_id,
-            SyncJob.status,
-            SyncJob.created_at,
-            SyncJob.completed_at,
-            SyncJob.sync_config,
-        )
-        .where(
-            SyncJob.sync_id.in_(sync_ids),
-            SyncJob.sync_config.isnot(None),
-            # Must be replay from ARF
-            SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
-            # Must NOT skip Vespa (skip_vespa is absent or false)
-            or_(
-                SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
-                SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
-            ),
-        )
-        .order_by(SyncJob.sync_id, SyncJob.created_at.desc())
-    )
-    vespa_job_result = await db.execute(arf_to_vespa_job_query)
-    vespa_job_rows = list(vespa_job_result)
-
-    # Build map of sync_id -> most recent Vespa job (first per sync_id due to ordering)
-    vespa_job_map = {}
-    for row in vespa_job_rows:
-        if row.sync_id not in vespa_job_map:
-            vespa_job_map[row.sync_id] = {
-                "id": row.id,
-                "status": row.status,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-                "config": row.sync_config,
-            }
-    timings["vespa_job_info"] = (time.monotonic() - vespa_job_start) * 1000
-
     # Build response using helper function
     build_start = time.monotonic()
     admin_syncs = _build_admin_sync_info_list(
@@ -2020,7 +1907,6 @@ async def admin_list_all_syncs(
         sync_connections=sync_connections,
         source_conn_map=source_conn_map,
         last_job_map=last_job_map,
-        vespa_job_map=vespa_job_map,
         entity_count_map=entity_count_map,
         arf_count_map=arf_count_map,
         qdrant_count_map=qdrant_count_map,
@@ -2038,7 +1924,6 @@ async def admin_list_all_syncs(
         f"source_conn={timings['source_connections']:.1f}ms, "
         f"dest_counts={timings['destination_counts']:.1f}ms, "
         f"sync_conn={timings['sync_connections']:.1f}ms, "
-        f"vespa_job={timings['vespa_job_info']:.1f}ms, "
         f"build={timings['build_response']:.1f}ms) | "
         f"filters: sync_ids={len(parsed_sync_ids) if parsed_sync_ids else 0}, "
         f"org={organization_id}, collection={collection_id}, "
@@ -2046,8 +1931,8 @@ async def admin_list_all_syncs(
         f"last_job_status={last_job_status}, "
         f"has_source={has_source_connection}, "
         f"is_authenticated={is_authenticated}, "
-        f"vespa_status={last_vespa_job_status}, "
-        f"has_vespa_job={has_vespa_job}, "
+        f"tags={tags}, "
+        f"exclude_tags={exclude_tags}, "
         f"ghost_syncs_n={ghost_syncs_last_n}, "
         f"include_arf_counts={include_arf_counts}, "
         f"include_destination_counts={include_destination_counts}"
@@ -2246,7 +2131,6 @@ def _build_admin_sync_info_list(
     sync_connections: dict,
     source_conn_map: dict,
     last_job_map: dict,
-    vespa_job_map: dict,
     entity_count_map: dict,
     arf_count_map: dict,
     qdrant_count_map: dict,
@@ -2258,7 +2142,6 @@ def _build_admin_sync_info_list(
         conn_info = sync_connections.get(sync.id, {"source": None, "destinations": []})
         source_info = source_conn_map.get(sync.id, {})
         last_job = last_job_map.get(sync.id, {})
-        vespa_job = vespa_job_map.get(sync.id, {})
 
         sync_dict = {**sync.__dict__}
         if "_sa_instance_state" in sync_dict:
@@ -2282,21 +2165,6 @@ def _build_admin_sync_info_list(
         sync_dict["source_short_name"] = source_info.get("short_name")
         sync_dict["readable_collection_id"] = source_info.get("readable_collection_id")
         sync_dict["source_is_authenticated"] = source_info.get("is_authenticated")
-
-        # Vespa migration tracking
-        sync_dict["last_vespa_job_id"] = vespa_job.get("id")
-        vespa_status = vespa_job.get("status")
-        sync_dict["last_vespa_job_status"] = (
-            (vespa_status.value if hasattr(vespa_status, "value") else vespa_status)
-            if vespa_status
-            else None
-        )
-        # Use completed_at if job is completed, otherwise use created_at for running/pending jobs
-        if vespa_job.get("completed_at"):
-            sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
-        else:
-            sync_dict["last_vespa_job_at"] = vespa_job.get("created_at")
-        sync_dict["last_vespa_job_config"] = vespa_job.get("config")
 
         admin_syncs.append(AdminSyncInfo.model_validate(sync_dict))
 
