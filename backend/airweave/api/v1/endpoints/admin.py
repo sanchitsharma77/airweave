@@ -995,8 +995,16 @@ async def resync_with_execution_config(
             },
         ],
     ),
+    tags: Optional[List[str]] = Body(
+        None,
+        description="Optional tags for filtering and organizing sync jobs (e.g., ['vespa-backfill-01-22-2026', 'manual'])",
+        examples=[
+            ["vespa-backfill-01-22-2026", "manual"],
+            ["production"],
+        ],
+    ),
 ) -> schemas.SyncJob:
-    """Admin-only: Trigger a sync with custom execution config via Temporal.
+    """Admin-only: Trigger a sync with custom execution config and optional tags via Temporal.
 
     This endpoint allows admins to trigger syncs with custom execution configurations
     for advanced use cases like ARF-only capture, destination-specific replays, or dry runs.
@@ -1012,11 +1020,16 @@ async def resync_with_execution_config(
         - cursor: skip_load, skip_updates
         - behavior: skip_hash_comparison, replay_from_arf
 
+    **Tags**: Optional list of strings for filtering/organizing jobs:
+        - Example: ["vespa-backfill-01-22-2026", "manual"]
+        - Stored in sync_metadata.tags for filtering in admin dashboard
+
     Args:
         db: Database session
         sync_id: ID of the sync to trigger
         ctx: API context
         execution_config: Optional nested SyncConfig
+        tags: Optional list of tags for filtering
 
     Returns:
         The created sync job
@@ -1118,12 +1131,20 @@ async def resync_with_execution_config(
         "destination_connection_ids": destination_connection_ids,
     }
     sync_schema = schemas.Sync.model_validate(sync_dict)
+
+    # Build sync_metadata with tags if provided
+    sync_metadata = None
+    if tags:
+        sync_metadata = {"tags": tags}
+        ctx.logger.info(f"Admin resync job will be tagged with: {tags}")
+
     async with UnitOfWork(db) as uow:
         sync_job_obj = SyncJob(
             sync_id=sync_id,
             organization_id=sync_obj.organization_id,
             status=SyncJobStatus.PENDING,
             sync_config=execution_config.model_dump() if execution_config else None,
+            sync_metadata=sync_metadata,
         )
         uow.session.add(sync_job_obj)
         await uow.commit()
@@ -1197,14 +1218,10 @@ class AdminSyncInfo(schemas.Sync):
     last_job_status: Optional[str] = None
     last_job_at: Optional[datetime] = None
     last_job_error: Optional[str] = None
+    all_tags: Optional[List[str]] = None
     source_short_name: Optional[str] = None
     source_is_authenticated: Optional[bool] = None
     readable_collection_id: Optional[str] = None
-
-    # Last job that wrote to Vespa (skip_vespa != true)
-    last_vespa_job_id: Optional[UUID] = None
-    last_vespa_job_status: Optional[str] = None
-    last_vespa_job_at: Optional[datetime] = None
 
     class Config:
         """Pydantic config."""
@@ -1479,13 +1496,6 @@ async def admin_list_all_syncs(
         None,
         description="Filter by last job status (completed, failed, running, pending, cancelled)",
     ),
-    last_vespa_job_status: Optional[str] = Query(
-        None, description="Filter by last Vespa job status (completed, failed, running, pending)"
-    ),
-    has_vespa_job: Optional[bool] = Query(
-        None,
-        description="Filter by Vespa job existence (false=pending backfill, true=has job)",
-    ),
     ghost_syncs_last_n: Optional[int] = Query(
         None,
         ge=1,
@@ -1499,6 +1509,14 @@ async def admin_list_all_syncs(
     include_arf_counts: bool = Query(
         False,
         description="Include ARF entity counts (slower, queries ARF storage for each sync)",
+    ),
+    tags: Optional[str] = Query(
+        None,
+        description="Comma-separated list of tags to filter by (matches jobs with ANY of the tags)",
+    ),
+    exclude_tags: Optional[str] = Query(
+        None,
+        description="Comma-separated list of tags to exclude (hides syncs with jobs having ANY of these tags)",
     ),
 ) -> List[AdminSyncInfo]:
     """Admin-only: List all syncs across organizations with entity counts.
@@ -1525,9 +1543,9 @@ async def admin_list_all_syncs(
         - is_authenticated: Filter by authentication status (true=active, false=needs reauth)
         - status: Filter by sync status (active, inactive, error)
         - last_job_status: Filter by last job status (any job type)
-        - last_vespa_job_status: Filter by last Vespa job status for migration tracking
-        - has_vespa_job: Filter by Vespa job existence (false=pending backfill)
         - exclude_failed_last_n: Exclude syncs where last N non-running jobs all failed
+        - tags: Comma-separated list of tags (matches syncs with jobs having ANY of the tags)
+        - exclude_tags: Comma-separated list of tags to exclude (hides syncs with ANY of these tags)
         - include_destination_counts: Include Qdrant/Vespa counts (slower, queries destinations)
 
     **Performance Note**: Setting `include_destination_counts=true` or `include_arf_counts=true`
@@ -1547,9 +1565,9 @@ async def admin_list_all_syncs(
         is_authenticated: Optional filter by authentication status
         status: Optional filter by sync status
         last_job_status: Optional filter by last job status
-        last_vespa_job_status: Optional filter by Vespa job status
-        has_vespa_job: Optional filter by Vespa job existence
         exclude_failed_last_n: Optional exclude syncs with N consecutive failures
+        tags: Optional comma-separated list of tags to filter by
+        exclude_tags: Optional comma-separated list of tags to exclude
         include_destination_counts: Whether to fetch Qdrant/Vespa counts (slower)
         include_arf_counts: Whether to fetch ARF entity counts (slower)
 
@@ -1713,59 +1731,42 @@ async def admin_list_all_syncs(
 
         query = query.where(Sync.id.in_(sa_select(failed_syncs_subq.c.sync_id)))
 
-    # Apply Vespa job filters at SQL level (must happen before limit/offset)
-    if last_vespa_job_status is not None or has_vespa_job is not None:
-        # Build subquery for Vespa jobs (ARF -> Vespa replays)
-        vespa_jobs_subq = (
-            sa_select(
-                SyncJob.sync_id,
-                SyncJob.status,
-                func.row_number()
-                .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
-                .label("rn"),
-            )
-            .where(
-                SyncJob.sync_config.isnot(None),
-                SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
-                or_(
-                    SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
-                    SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
-                ),
-            )
-            .subquery()
-        )
+    # Apply tags filter using JSONB operators on ALL jobs
+    if tags is not None:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        if tag_list:
+            # Filter to syncs that have at least one job with ANY of the specified tags
+            # Use JSONB ?| operator to match any tag in the array
+            from sqlalchemy.dialects.postgresql import array
 
-        # Get most recent Vespa job per sync
-        latest_vespa_jobs = (
-            sa_select(vespa_jobs_subq.c.sync_id, vespa_jobs_subq.c.status)
-            .where(vespa_jobs_subq.c.rn == 1)
-            .subquery()
-        )
-
-        if has_vespa_job is not None:
-            if has_vespa_job:
-                # Only syncs with a Vespa job
-                query = query.where(Sync.id.in_(sa_select(latest_vespa_jobs.c.sync_id)))
-            else:
-                # Only syncs without a Vespa job (pending backfill)
-                query = query.where(Sync.id.notin_(sa_select(latest_vespa_jobs.c.sync_id)))
-
-        if last_vespa_job_status is not None:
-            # Filter by specific Vespa job status
-            from airweave.core.shared_models import SyncJobStatus
-
-            try:
-                status_enum = SyncJobStatus(last_vespa_job_status.lower())
-                query = query.where(
-                    Sync.id.in_(
-                        sa_select(latest_vespa_jobs.c.sync_id).where(
-                            latest_vespa_jobs.c.status == status_enum
-                        )
-                    )
+            tagged_jobs_subq = (
+                sa_select(SyncJob.sync_id)
+                .where(
+                    SyncJob.sync_id.in_(sa_select(Sync.id)),
+                    SyncJob.sync_metadata.isnot(None),
+                    SyncJob.sync_metadata["tags"].op("?|")(array(tag_list)),
                 )
-            except ValueError:
-                # Invalid status value, return empty result
-                return []
+                .distinct()
+            )
+            query = query.where(Sync.id.in_(tagged_jobs_subq))
+
+    # Apply exclude_tags filter using JSONB operators on ALL jobs
+    if exclude_tags is not None:
+        exclude_tag_list = [t.strip() for t in exclude_tags.split(",") if t.strip()]
+        if exclude_tag_list:
+            # Exclude syncs that have at least one job with ANY of the specified tags
+            from sqlalchemy.dialects.postgresql import array
+
+            excluded_jobs_subq = (
+                sa_select(SyncJob.sync_id)
+                .where(
+                    SyncJob.sync_id.in_(sa_select(Sync.id)),
+                    SyncJob.sync_metadata.isnot(None),
+                    SyncJob.sync_metadata["tags"].op("?|")(array(exclude_tag_list)),
+                )
+                .distinct()
+            )
+            query = query.where(Sync.id.notin_(excluded_jobs_subq))
 
     query = query.order_by(Sync.created_at.desc()).offset(skip).limit(limit)
 
@@ -1823,6 +1824,7 @@ async def admin_list_all_syncs(
             SyncJob.status,
             SyncJob.completed_at,
             SyncJob.error,
+            SyncJob.sync_metadata,
             func.row_number()
             .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
             .label("rn"),
@@ -1837,10 +1839,36 @@ async def admin_list_all_syncs(
             "status": row.status,
             "completed_at": row.completed_at,
             "error": row.error,
+            "sync_metadata": row.sync_metadata,
         }
         for row in last_job_result
     }
     timings["last_job_info"] = (time.monotonic() - last_job_start) * 1000
+
+    # Fetch all tags from all jobs for each sync
+    all_tags_start = time.monotonic()
+    all_tags_query = sa_select(
+        SyncJob.sync_id,
+        SyncJob.sync_metadata,
+    ).where(
+        SyncJob.sync_id.in_(sync_ids),
+        SyncJob.sync_metadata.isnot(None),
+    )
+    all_tags_result = await db.execute(all_tags_query)
+
+    # Aggregate all unique tags per sync
+    all_tags_map = {}
+    for row in all_tags_result:
+        if row.sync_metadata and isinstance(row.sync_metadata, dict):
+            tags = row.sync_metadata.get("tags")
+            if tags and isinstance(tags, list):
+                if row.sync_id not in all_tags_map:
+                    all_tags_map[row.sync_id] = set()
+                all_tags_map[row.sync_id].update(tags)
+
+    # Convert sets to sorted lists
+    all_tags_map = {sync_id: sorted(list(tag_set)) for sync_id, tag_set in all_tags_map.items()}
+    timings["all_tags"] = (time.monotonic() - all_tags_start) * 1000
 
     # Fetch source connections info in bulk with collection IDs
     from airweave.models.collection import Collection
@@ -1900,49 +1928,6 @@ async def admin_list_all_syncs(
             sync_connections[sync_id]["destinations"].append(connection.id)
     timings["sync_connections"] = (time.monotonic() - sync_conn_start) * 1000
 
-    # Fetch last ARF -> Vespa replay job info in bulk
-    # An ARF -> Vespa replay job has:
-    #   - replay_from_arf=true (read from ARF storage)
-    #   - skip_vespa is NOT true (writes to Vespa)
-    vespa_job_start = time.monotonic()
-    arf_to_vespa_job_query = (
-        sa_select(
-            SyncJob.id,
-            SyncJob.sync_id,
-            SyncJob.status,
-            SyncJob.created_at,
-            SyncJob.completed_at,
-            SyncJob.sync_config,
-        )
-        .where(
-            SyncJob.sync_id.in_(sync_ids),
-            SyncJob.sync_config.isnot(None),
-            # Must be replay from ARF
-            SyncJob.sync_config["behavior"]["replay_from_arf"].astext == "true",
-            # Must NOT skip Vespa (skip_vespa is absent or false)
-            or_(
-                SyncJob.sync_config["destinations"]["skip_vespa"].astext != "true",
-                SyncJob.sync_config["destinations"]["skip_vespa"].is_(None),
-            ),
-        )
-        .order_by(SyncJob.sync_id, SyncJob.created_at.desc())
-    )
-    vespa_job_result = await db.execute(arf_to_vespa_job_query)
-    vespa_job_rows = list(vespa_job_result)
-
-    # Build map of sync_id -> most recent Vespa job (first per sync_id due to ordering)
-    vespa_job_map = {}
-    for row in vespa_job_rows:
-        if row.sync_id not in vespa_job_map:
-            vespa_job_map[row.sync_id] = {
-                "id": row.id,
-                "status": row.status,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-                "config": row.sync_config,
-            }
-    timings["vespa_job_info"] = (time.monotonic() - vespa_job_start) * 1000
-
     # Build response using helper function
     build_start = time.monotonic()
     admin_syncs = _build_admin_sync_info_list(
@@ -1950,7 +1935,7 @@ async def admin_list_all_syncs(
         sync_connections=sync_connections,
         source_conn_map=source_conn_map,
         last_job_map=last_job_map,
-        vespa_job_map=vespa_job_map,
+        all_tags_map=all_tags_map,
         entity_count_map=entity_count_map,
         arf_count_map=arf_count_map,
         qdrant_count_map=qdrant_count_map,
@@ -1968,7 +1953,6 @@ async def admin_list_all_syncs(
         f"source_conn={timings['source_connections']:.1f}ms, "
         f"dest_counts={timings['destination_counts']:.1f}ms, "
         f"sync_conn={timings['sync_connections']:.1f}ms, "
-        f"vespa_job={timings['vespa_job_info']:.1f}ms, "
         f"build={timings['build_response']:.1f}ms) | "
         f"filters: sync_ids={len(parsed_sync_ids) if parsed_sync_ids else 0}, "
         f"org={organization_id}, collection={collection_id}, "
@@ -1976,8 +1960,8 @@ async def admin_list_all_syncs(
         f"last_job_status={last_job_status}, "
         f"has_source={has_source_connection}, "
         f"is_authenticated={is_authenticated}, "
-        f"vespa_status={last_vespa_job_status}, "
-        f"has_vespa_job={has_vespa_job}, "
+        f"tags={tags}, "
+        f"exclude_tags={exclude_tags}, "
         f"ghost_syncs_n={ghost_syncs_last_n}, "
         f"include_arf_counts={include_arf_counts}, "
         f"include_destination_counts={include_destination_counts}"
@@ -2176,7 +2160,7 @@ def _build_admin_sync_info_list(
     sync_connections: dict,
     source_conn_map: dict,
     last_job_map: dict,
-    vespa_job_map: dict,
+    all_tags_map: dict,
     entity_count_map: dict,
     arf_count_map: dict,
     qdrant_count_map: dict,
@@ -2188,7 +2172,6 @@ def _build_admin_sync_info_list(
         conn_info = sync_connections.get(sync.id, {"source": None, "destinations": []})
         source_info = source_conn_map.get(sync.id, {})
         last_job = last_job_map.get(sync.id, {})
-        vespa_job = vespa_job_map.get(sync.id, {})
 
         sync_dict = {**sync.__dict__}
         if "_sa_instance_state" in sync_dict:
@@ -2209,24 +2192,11 @@ def _build_admin_sync_info_list(
         )
         sync_dict["last_job_at"] = last_job.get("completed_at")
         sync_dict["last_job_error"] = last_job.get("error")
+        # Get all unique tags from all jobs for this sync
+        sync_dict["all_tags"] = all_tags_map.get(sync.id)
         sync_dict["source_short_name"] = source_info.get("short_name")
         sync_dict["readable_collection_id"] = source_info.get("readable_collection_id")
         sync_dict["source_is_authenticated"] = source_info.get("is_authenticated")
-
-        # Vespa migration tracking
-        sync_dict["last_vespa_job_id"] = vespa_job.get("id")
-        vespa_status = vespa_job.get("status")
-        sync_dict["last_vespa_job_status"] = (
-            (vespa_status.value if hasattr(vespa_status, "value") else vespa_status)
-            if vespa_status
-            else None
-        )
-        # Use completed_at if job is completed, otherwise use created_at for running/pending jobs
-        if vespa_job.get("completed_at"):
-            sync_dict["last_vespa_job_at"] = vespa_job.get("completed_at")
-        else:
-            sync_dict["last_vespa_job_at"] = vespa_job.get("created_at")
-        sync_dict["last_vespa_job_config"] = vespa_job.get("config")
 
         admin_syncs.append(AdminSyncInfo.model_validate(sync_dict))
 
