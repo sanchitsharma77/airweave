@@ -21,7 +21,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Search, Copy, XCircle, Trash2, CalendarX, AlertCircle, RefreshCw } from 'lucide-react';
+import { Search, Copy, XCircle, Trash2, CalendarX, AlertCircle, RefreshCw, X } from 'lucide-react';
 import {
     Tooltip,
     TooltipContent,
@@ -54,6 +54,7 @@ interface SyncInfo {
     last_job_status?: string;
     last_job_at?: string;
     last_job_error?: string;
+    all_tags?: string[];
     created_at: string;
 }
 
@@ -112,7 +113,8 @@ export function SyncsTab() {
     const [resyncingSync, setResyncingSync] = useState<{ id: string; name: string } | null>(null);
     const [selectedPreset, setSelectedPreset] = useState<SyncPreset>('default');
     const [resyncConfig, setResyncConfig] = useState<SyncConfig>(getPresetConfig('default'));
-    const [resyncTags, setResyncTags] = useState<string>('');
+    const [resyncTags, setResyncTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState<string>('');
 
     const loadSyncs = async () => {
         setIsSyncsLoading(true);
@@ -429,6 +431,21 @@ export function SyncsTab() {
         setResyncConfig(getPresetConfig(presetId));
     };
 
+    const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter' && tagInput.trim()) {
+            e.preventDefault();
+            const newTag = tagInput.trim();
+            if (!resyncTags.includes(newTag)) {
+                setResyncTags([...resyncTags, newTag]);
+            }
+            setTagInput('');
+        }
+    };
+
+    const handleRemoveTag = (tagToRemove: string) => {
+        setResyncTags(resyncTags.filter(tag => tag !== tagToRemove));
+    };
+
     const handleResync = async () => {
         if (!resyncingSync) return;
 
@@ -439,11 +456,8 @@ export function SyncsTab() {
             };
 
             // Add tags if provided
-            if (resyncTags.trim()) {
-                const tagsArray = resyncTags.split(',').map(t => t.trim()).filter(t => t);
-                if (tagsArray.length > 0) {
-                    requestBody.tags = tagsArray;
-                }
+            if (resyncTags.length > 0) {
+                requestBody.tags = resyncTags;
             }
 
             const response = await apiClient.post(
@@ -460,7 +474,8 @@ export function SyncsTab() {
             toast.success(`Resync job created for "${resyncingSync.name}" (Job ID: ${result.id})`);
             setResyncDialogOpen(false);
             setResyncingSync(null);
-            setResyncTags(''); // Clear tags after successful resync
+            setResyncTags([]); // Clear tags after successful resync
+            setTagInput('');
         } catch (error) {
             console.error('Failed to trigger resync:', error);
             toast.error(error instanceof Error ? error.message : 'Failed to trigger resync');
@@ -806,6 +821,7 @@ export function SyncsTab() {
                                         <TableHead>Auth</TableHead>
                                         <TableHead className="text-right">Entity Counts</TableHead>
                                         <TableHead>Last Job</TableHead>
+                                        <TableHead>Tags</TableHead>
                                         <TableHead>Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -949,6 +965,23 @@ export function SyncsTab() {
                                                                 </span>
                                                             )}
                                                         </div>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {sync.all_tags && sync.all_tags.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                                            {sync.all_tags.map((tag) => (
+                                                                <Badge
+                                                                    key={tag}
+                                                                    variant="secondary"
+                                                                    className="text-xs px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border-blue-500/30"
+                                                                >
+                                                                    {tag}
+                                                                </Badge>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-xs text-muted-foreground">-</span>
                                                     )}
                                                 </TableCell>
                                                 <TableCell>
@@ -1242,14 +1275,39 @@ export function SyncsTab() {
                             <Label htmlFor="resync-tags" className="text-sm font-semibold">
                                 Tags (Optional)
                             </Label>
-                            <Input
-                                id="resync-tags"
-                                placeholder="e.g., vespa-backfill-01-22-2026, manual"
-                                value={resyncTags}
-                                onChange={(e) => setResyncTags(e.target.value)}
-                            />
+                            <div className="space-y-2">
+                                {/* Tag badges */}
+                                {resyncTags.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {resyncTags.map((tag) => (
+                                            <Badge
+                                                key={tag}
+                                                variant="secondary"
+                                                className="pl-2 pr-1 py-1 gap-1 bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20"
+                                            >
+                                                <span>{tag}</span>
+                                                <button
+                                                    onClick={() => handleRemoveTag(tag)}
+                                                    className="ml-1 rounded-full hover:bg-blue-500/30 p-0.5"
+                                                    type="button"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                )}
+                                {/* Tag input */}
+                                <Input
+                                    id="resync-tags"
+                                    placeholder="Type a tag and press Enter (e.g., vespa-backfill-01-22-2026)"
+                                    value={tagInput}
+                                    onChange={(e) => setTagInput(e.target.value)}
+                                    onKeyDown={handleAddTag}
+                                />
+                            </div>
                             <p className="text-xs text-muted-foreground">
-                                Comma-separated tags for filtering and organizing sync jobs. Useful for tracking backfills or manual operations.
+                                Press <kbd className="px-1.5 py-0.5 text-xs bg-muted border rounded">Enter</kbd> to add each tag. Tags help filter and organize sync jobs for tracking backfills or manual operations.
                             </p>
                         </div>
 

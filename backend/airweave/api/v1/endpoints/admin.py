@@ -1218,6 +1218,7 @@ class AdminSyncInfo(schemas.Sync):
     last_job_status: Optional[str] = None
     last_job_at: Optional[datetime] = None
     last_job_error: Optional[str] = None
+    all_tags: Optional[List[str]] = None
     source_short_name: Optional[str] = None
     source_is_authenticated: Optional[bool] = None
     readable_collection_id: Optional[str] = None
@@ -1730,7 +1731,7 @@ async def admin_list_all_syncs(
 
         query = query.where(Sync.id.in_(sa_select(failed_syncs_subq.c.sync_id)))
 
-    # Apply tags filter using JSONB operators
+    # Apply tags filter using JSONB operators on ALL jobs
     if tags is not None:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
         if tag_list:
@@ -1743,13 +1744,13 @@ async def admin_list_all_syncs(
                 .where(
                     SyncJob.sync_id.in_(sa_select(Sync.id)),
                     SyncJob.sync_metadata.isnot(None),
-                    SyncJob.sync_metadata["tags"].astext.op("?|")(array(tag_list)),
+                    SyncJob.sync_metadata["tags"].op("?|")(array(tag_list)),
                 )
                 .distinct()
             )
             query = query.where(Sync.id.in_(tagged_jobs_subq))
 
-    # Apply exclude_tags filter using JSONB operators
+    # Apply exclude_tags filter using JSONB operators on ALL jobs
     if exclude_tags is not None:
         exclude_tag_list = [t.strip() for t in exclude_tags.split(",") if t.strip()]
         if exclude_tag_list:
@@ -1761,7 +1762,7 @@ async def admin_list_all_syncs(
                 .where(
                     SyncJob.sync_id.in_(sa_select(Sync.id)),
                     SyncJob.sync_metadata.isnot(None),
-                    SyncJob.sync_metadata["tags"].astext.op("?|")(array(exclude_tag_list)),
+                    SyncJob.sync_metadata["tags"].op("?|")(array(exclude_tag_list)),
                 )
                 .distinct()
             )
@@ -1823,6 +1824,7 @@ async def admin_list_all_syncs(
             SyncJob.status,
             SyncJob.completed_at,
             SyncJob.error,
+            SyncJob.sync_metadata,
             func.row_number()
             .over(partition_by=SyncJob.sync_id, order_by=SyncJob.created_at.desc())
             .label("rn"),
@@ -1837,10 +1839,36 @@ async def admin_list_all_syncs(
             "status": row.status,
             "completed_at": row.completed_at,
             "error": row.error,
+            "sync_metadata": row.sync_metadata,
         }
         for row in last_job_result
     }
     timings["last_job_info"] = (time.monotonic() - last_job_start) * 1000
+
+    # Fetch all tags from all jobs for each sync
+    all_tags_start = time.monotonic()
+    all_tags_query = sa_select(
+        SyncJob.sync_id,
+        SyncJob.sync_metadata,
+    ).where(
+        SyncJob.sync_id.in_(sync_ids),
+        SyncJob.sync_metadata.isnot(None),
+    )
+    all_tags_result = await db.execute(all_tags_query)
+
+    # Aggregate all unique tags per sync
+    all_tags_map = {}
+    for row in all_tags_result:
+        if row.sync_metadata and isinstance(row.sync_metadata, dict):
+            tags = row.sync_metadata.get("tags")
+            if tags and isinstance(tags, list):
+                if row.sync_id not in all_tags_map:
+                    all_tags_map[row.sync_id] = set()
+                all_tags_map[row.sync_id].update(tags)
+
+    # Convert sets to sorted lists
+    all_tags_map = {sync_id: sorted(list(tag_set)) for sync_id, tag_set in all_tags_map.items()}
+    timings["all_tags"] = (time.monotonic() - all_tags_start) * 1000
 
     # Fetch source connections info in bulk with collection IDs
     from airweave.models.collection import Collection
@@ -1907,6 +1935,7 @@ async def admin_list_all_syncs(
         sync_connections=sync_connections,
         source_conn_map=source_conn_map,
         last_job_map=last_job_map,
+        all_tags_map=all_tags_map,
         entity_count_map=entity_count_map,
         arf_count_map=arf_count_map,
         qdrant_count_map=qdrant_count_map,
@@ -2131,6 +2160,7 @@ def _build_admin_sync_info_list(
     sync_connections: dict,
     source_conn_map: dict,
     last_job_map: dict,
+    all_tags_map: dict,
     entity_count_map: dict,
     arf_count_map: dict,
     qdrant_count_map: dict,
@@ -2162,6 +2192,8 @@ def _build_admin_sync_info_list(
         )
         sync_dict["last_job_at"] = last_job.get("completed_at")
         sync_dict["last_job_error"] = last_job.get("error")
+        # Get all unique tags from all jobs for this sync
+        sync_dict["all_tags"] = all_tags_map.get(sync.id)
         sync_dict["source_short_name"] = source_info.get("short_name")
         sync_dict["readable_collection_id"] = source_info.get("readable_collection_id")
         sync_dict["source_is_authenticated"] = source_info.get("is_authenticated")
