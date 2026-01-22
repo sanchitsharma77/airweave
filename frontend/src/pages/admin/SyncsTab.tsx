@@ -85,6 +85,8 @@ interface SyncFilters {
     ghostSyncsOnly: boolean;
     includeDestinationCounts: boolean;
     includeArfCounts: boolean;
+    tags: string;
+    excludeTags: string;
     limit: number;
 }
 
@@ -104,6 +106,8 @@ export function SyncsTab() {
         ghostSyncsOnly: false,
         includeDestinationCounts: false,
         includeArfCounts: false,
+        tags: '',
+        excludeTags: '',
         limit: 100,
     });
     const [organizationMap, setOrganizationMap] = useState<OrganizationMap>({});
@@ -115,6 +119,7 @@ export function SyncsTab() {
     const [resyncingSync, setResyncingSync] = useState<{ id: string; name: string } | null>(null);
     const [selectedPreset, setSelectedPreset] = useState<SyncPreset>('default');
     const [resyncConfig, setResyncConfig] = useState<SyncConfig>(getPresetConfig('default'));
+    const [resyncTags, setResyncTags] = useState<string>('');
 
     const loadSyncs = async () => {
         setIsSyncsLoading(true);
@@ -157,6 +162,12 @@ export function SyncsTab() {
             }
             if (syncFilters.includeArfCounts) {
                 params.append('include_arf_counts', 'true');
+            }
+            if (syncFilters.tags.trim()) {
+                params.append('tags', syncFilters.tags.trim());
+            }
+            if (syncFilters.excludeTags.trim()) {
+                params.append('exclude_tags', syncFilters.excludeTags.trim());
             }
 
             const response = await apiClient.get(`/admin/syncs?${params.toString()}`);
@@ -435,10 +446,22 @@ export function SyncsTab() {
         if (!resyncingSync) return;
 
         try {
-            // Send nested SyncConfig structure
+            // Build request body with config and optional tags
+            const requestBody: any = {
+                execution_config: resyncConfig
+            };
+            
+            // Add tags if provided
+            if (resyncTags.trim()) {
+                const tagsArray = resyncTags.split(',').map(t => t.trim()).filter(t => t);
+                if (tagsArray.length > 0) {
+                    requestBody.tags = tagsArray;
+                }
+            }
+
             const response = await apiClient.post(
                 `/admin/resync/${resyncingSync.id}`,
-                resyncConfig
+                requestBody
             );
 
             if (!response.ok) {
@@ -450,6 +473,7 @@ export function SyncsTab() {
             toast.success(`Resync job created for "${resyncingSync.name}" (Job ID: ${result.id})`);
             setResyncDialogOpen(false);
             setResyncingSync(null);
+            setResyncTags(''); // Clear tags after successful resync
         } catch (error) {
             console.error('Failed to trigger resync:', error);
             toast.error(error instanceof Error ? error.message : 'Failed to trigger resync');
@@ -578,8 +602,8 @@ export function SyncsTab() {
                         </div>
                     </div>
 
-                    {/* Vespa Job Filters */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    {/* Vespa Job Filters and Tags */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                         <div>
                             <Label htmlFor="vespa-job-status-filter">Vespa Job Status</Label>
                             <Select
@@ -613,6 +637,33 @@ export function SyncsTab() {
                                     <SelectItem value="false">Pending Backfill</SelectItem>
                                 </SelectContent>
                             </Select>
+                        </div>
+                        <div>
+                            <Label htmlFor="tags-filter">Include Tags</Label>
+                            <Input
+                                id="tags-filter"
+                                placeholder="Comma-separated (e.g., vespa-backfill-01-22-2026)"
+                                value={syncFilters.tags}
+                                onChange={(e) => setSyncFilters({ ...syncFilters, tags: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Show only syncs with these tags (matches ANY tag)
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 mb-4">
+                        <div>
+                            <Label htmlFor="exclude-tags-filter">Exclude Tags</Label>
+                            <Input
+                                id="exclude-tags-filter"
+                                placeholder="Comma-separated (e.g., vespa-backfill-01-22-2026)"
+                                value={syncFilters.excludeTags}
+                                onChange={(e) => setSyncFilters({ ...syncFilters, excludeTags: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Hide syncs with these tags (useful for filtering out already-backfilled syncs)
+                            </p>
                         </div>
                     </div>
 
@@ -1277,6 +1328,22 @@ export function SyncsTab() {
                                     </Label>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Tags Input */}
+                        <div className="space-y-3">
+                            <Label htmlFor="resync-tags" className="text-sm font-semibold">
+                                Tags (Optional)
+                            </Label>
+                            <Input
+                                id="resync-tags"
+                                placeholder="e.g., vespa-backfill-01-22-2026, manual"
+                                value={resyncTags}
+                                onChange={(e) => setResyncTags(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Comma-separated tags for filtering and organizing sync jobs. Useful for tracking backfills or manual operations.
+                            </p>
                         </div>
 
                         {/* Info Box */}

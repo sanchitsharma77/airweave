@@ -995,8 +995,16 @@ async def resync_with_execution_config(
             },
         ],
     ),
+    tags: Optional[List[str]] = Body(
+        None,
+        description="Optional tags for filtering and organizing sync jobs (e.g., ['vespa-backfill-01-22-2026', 'manual'])",
+        examples=[
+            ["vespa-backfill-01-22-2026", "manual"],
+            ["production"],
+        ],
+    ),
 ) -> schemas.SyncJob:
-    """Admin-only: Trigger a sync with custom execution config via Temporal.
+    """Admin-only: Trigger a sync with custom execution config and optional tags via Temporal.
 
     This endpoint allows admins to trigger syncs with custom execution configurations
     for advanced use cases like ARF-only capture, destination-specific replays, or dry runs.
@@ -1012,11 +1020,16 @@ async def resync_with_execution_config(
         - cursor: skip_load, skip_updates
         - behavior: skip_hash_comparison, replay_from_arf
 
+    **Tags**: Optional list of strings for filtering/organizing jobs:
+        - Example: ["vespa-backfill-01-22-2026", "manual"]
+        - Stored in sync_metadata.tags for filtering in admin dashboard
+
     Args:
         db: Database session
         sync_id: ID of the sync to trigger
         ctx: API context
         execution_config: Optional nested SyncConfig
+        tags: Optional list of tags for filtering
 
     Returns:
         The created sync job
@@ -1118,12 +1131,20 @@ async def resync_with_execution_config(
         "destination_connection_ids": destination_connection_ids,
     }
     sync_schema = schemas.Sync.model_validate(sync_dict)
+
+    # Build sync_metadata with tags if provided
+    sync_metadata = None
+    if tags:
+        sync_metadata = {"tags": tags}
+        ctx.logger.info(f"Admin resync job will be tagged with: {tags}")
+
     async with UnitOfWork(db) as uow:
         sync_job_obj = SyncJob(
             sync_id=sync_id,
             organization_id=sync_obj.organization_id,
             status=SyncJobStatus.PENDING,
             sync_config=execution_config.model_dump() if execution_config else None,
+            sync_metadata=sync_metadata,
         )
         uow.session.add(sync_job_obj)
         await uow.commit()
@@ -1500,6 +1521,14 @@ async def admin_list_all_syncs(
         False,
         description="Include ARF entity counts (slower, queries ARF storage for each sync)",
     ),
+    tags: Optional[str] = Query(
+        None,
+        description="Comma-separated list of tags to filter by (matches jobs with ANY of the tags)",
+    ),
+    exclude_tags: Optional[str] = Query(
+        None,
+        description="Comma-separated list of tags to exclude (hides syncs with jobs having ANY of these tags)",
+    ),
 ) -> List[AdminSyncInfo]:
     """Admin-only: List all syncs across organizations with entity counts.
 
@@ -1528,6 +1557,8 @@ async def admin_list_all_syncs(
         - last_vespa_job_status: Filter by last Vespa job status for migration tracking
         - has_vespa_job: Filter by Vespa job existence (false=pending backfill)
         - exclude_failed_last_n: Exclude syncs where last N non-running jobs all failed
+        - tags: Comma-separated list of tags (matches syncs with jobs having ANY of the tags)
+        - exclude_tags: Comma-separated list of tags to exclude (hides syncs with ANY of these tags)
         - include_destination_counts: Include Qdrant/Vespa counts (slower, queries destinations)
 
     **Performance Note**: Setting `include_destination_counts=true` or `include_arf_counts=true`
@@ -1550,6 +1581,8 @@ async def admin_list_all_syncs(
         last_vespa_job_status: Optional filter by Vespa job status
         has_vespa_job: Optional filter by Vespa job existence
         exclude_failed_last_n: Optional exclude syncs with N consecutive failures
+        tags: Optional comma-separated list of tags to filter by
+        exclude_tags: Optional comma-separated list of tags to exclude
         include_destination_counts: Whether to fetch Qdrant/Vespa counts (slower)
         include_arf_counts: Whether to fetch ARF entity counts (slower)
 
@@ -1766,6 +1799,43 @@ async def admin_list_all_syncs(
             except ValueError:
                 # Invalid status value, return empty result
                 return []
+
+    # Apply tags filter using JSONB operators
+    if tags is not None:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        if tag_list:
+            # Filter to syncs that have at least one job with ANY of the specified tags
+            # Use JSONB ?| operator to match any tag in the array
+            from sqlalchemy.dialects.postgresql import array
+
+            tagged_jobs_subq = (
+                sa_select(SyncJob.sync_id)
+                .where(
+                    SyncJob.sync_id.in_(sa_select(Sync.id)),
+                    SyncJob.sync_metadata.isnot(None),
+                    SyncJob.sync_metadata["tags"].astext.op("?|")(array(tag_list)),
+                )
+                .distinct()
+            )
+            query = query.where(Sync.id.in_(tagged_jobs_subq))
+
+    # Apply exclude_tags filter using JSONB operators
+    if exclude_tags is not None:
+        exclude_tag_list = [t.strip() for t in exclude_tags.split(",") if t.strip()]
+        if exclude_tag_list:
+            # Exclude syncs that have at least one job with ANY of the specified tags
+            from sqlalchemy.dialects.postgresql import array
+
+            excluded_jobs_subq = (
+                sa_select(SyncJob.sync_id)
+                .where(
+                    SyncJob.sync_id.in_(sa_select(Sync.id)),
+                    SyncJob.sync_metadata.isnot(None),
+                    SyncJob.sync_metadata["tags"].astext.op("?|")(array(exclude_tag_list)),
+                )
+                .distinct()
+            )
+            query = query.where(Sync.id.notin_(excluded_jobs_subq))
 
     query = query.order_by(Sync.created_at.desc()).offset(skip).limit(limit)
 
