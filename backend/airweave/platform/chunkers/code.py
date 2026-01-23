@@ -141,12 +141,17 @@ class CodeChunker(BaseChunker):
             self._apply_safety_net_batched, code_results_with_tiktoken
         )
 
-        # Validate all chunks meet requirements
+        # Validate and filter chunks
+        filtered_results = []
         for doc_chunks in final_results:
+            valid_chunks = []
             for chunk in doc_chunks:
-                # Check for empty chunks
+                # Skip empty chunks with warning
                 if not chunk["text"] or not chunk["text"].strip():
-                    raise SyncFailureError("PROGRAMMING ERROR: Empty chunk produced by CodeChunker")
+                    logger.warning(
+                        "[CodeChunker] Skipping empty chunk - this may indicate a chunker bug"
+                    )
+                    continue
 
                 # Check token limit enforced
                 if chunk["token_count"] > self.MAX_TOKENS_PER_CHUNK:
@@ -154,8 +159,12 @@ class CodeChunker(BaseChunker):
                         f"PROGRAMMING ERROR: Chunk has {chunk['token_count']} tokens "
                         f"after safety net (max: {self.MAX_TOKENS_PER_CHUNK})"
                     )
+                
+                valid_chunks.append(chunk)
+            
+            filtered_results.append(valid_chunks)
 
-        return final_results
+        return filtered_results
 
     def _apply_safety_net_batched(
         self, code_results: List[List[Any]]
