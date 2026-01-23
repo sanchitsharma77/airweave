@@ -178,7 +178,22 @@ class SnapshotSource(BaseSource):
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
 
+            # Validate path to prevent traversal attacks
+            if ".." in stored_file_path:
+                self.logger.warning(f"Rejected path with '..' component: {stored_file_path}")
+                return None
+
             source_path = self._local_path(stored_file_path)
+
+            # Verify resolved path is still within snapshot directory (additional safety check)
+            base_path = self._local_path().resolve()
+            try:
+                resolved_path = source_path.resolve()
+                resolved_path.relative_to(base_path)
+            except ValueError:
+                self.logger.warning(f"Path traversal attempt detected: {stored_file_path}")
+                return None
+
             if not source_path.exists():
                 self.logger.debug(f"File not found at {source_path}")
                 return None
@@ -261,6 +276,11 @@ class SnapshotSource(BaseSource):
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
 
+            # Validate path to prevent traversal attacks
+            if ".." in stored_file_path:
+                self.logger.warning(f"Rejected path with '..' component: {stored_file_path}")
+                return None
+
             blob_path = f"{self._azure_blob_prefix.rstrip('/')}/{stored_file_path}"
             client = self._get_azure_client()
             container_client = client.get_container_client(self._azure_container)
@@ -332,6 +352,11 @@ class SnapshotSource(BaseSource):
             # Ensure stored_file_path includes 'files/' prefix
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
+
+            # Validate path to prevent traversal attacks
+            if ".." in stored_file_path:
+                self.logger.warning(f"Rejected path with '..' component: {stored_file_path}")
+                return None
 
             full_path = f"{self.path.rstrip('/')}/{stored_file_path}"
             content = await self.storage.read_file(full_path)

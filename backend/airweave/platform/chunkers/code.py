@@ -159,9 +159,9 @@ class CodeChunker(BaseChunker):
                         f"PROGRAMMING ERROR: Chunk has {chunk['token_count']} tokens "
                         f"after safety net (max: {self.MAX_TOKENS_PER_CHUNK})"
                     )
-                
+
                 valid_chunks.append(chunk)
-            
+
             filtered_results.append(valid_chunks)
 
         return filtered_results
