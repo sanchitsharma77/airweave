@@ -25,18 +25,18 @@ from airweave.platform.entities._base import (
 
 
 def _sanitize_for_vespa(text: str) -> str:
-    """Sanitize text for Vespa by removing control characters.
+    """Sanitize text for Vespa by removing illegal characters.
 
-    Vespa strictly rejects control characters (code points < 32) except:
-    - \n (newline, 0x0A)
-    - \r (carriage return, 0x0D)
-    - \t (tab, 0x09)
+    Vespa strictly rejects:
+    1. Control characters (code points < 32) except \n (0x0A), \r (0x0D), \t (0x09)
+    2. Unicode noncharacters (U+FDD0..U+FDEF, U+FFFE, U+FFFF, and plane pairs)
 
-    This removes all other control characters that would cause Vespa feed failures.
-    Common culprits: 0x00 (null), 0x01 (SOH), 0x0B (vertical tab), etc.
+    Common culprits:
+    - Control: 0x00 (null), 0x01 (SOH), 0x0B (vertical tab)
+    - Nonchars: 0xFDDC, 0xFFFE, 0xFFFF
 
     Args:
-        text: Raw text that may contain control characters
+        text: Raw text that may contain illegal characters
 
     Returns:
         Sanitized text safe for Vespa
@@ -44,9 +44,20 @@ def _sanitize_for_vespa(text: str) -> str:
     if not text:
         return text
 
-    # Remove all control characters except newline, carriage return, and tab
-    # Use regex for efficiency on large texts
-    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
+    # Remove ASCII control characters (except \n, \r, \t) and Unicode noncharacters
+    # U+FDD0..U+FDEF: 32 noncharacters
+    # U+FFFE, U+FFFF and pairs in all planes (U+1FFFE, U+1FFFF, ..., U+10FFFE, U+10FFFF)
+    return re.sub(
+        r"[\x00-\x08\x0B\x0C\x0E-\x1F\uFDD0-\uFDEF\uFFFE\uFFFF]|"
+        r"[\U0001FFFE\U0001FFFF\U0002FFFE\U0002FFFF\U0003FFFE\U0003FFFF"
+        r"\U0004FFFE\U0004FFFF\U0005FFFE\U0005FFFF\U0006FFFE\U0006FFFF"
+        r"\U0007FFFE\U0007FFFF\U0008FFFE\U0008FFFF\U0009FFFE\U0009FFFF"
+        r"\U000AFFFE\U000AFFFF\U000BFFFE\U000BFFFF\U000CFFFE\U000CFFFF"
+        r"\U000DFFFE\U000DFFFF\U000EFFFE\U000EFFFF\U000FFFFE\U000FFFFF"
+        r"\U0010FFFE\U0010FFFF]",
+        "",
+        text,
+    )
 
 
 def _get_system_metadata_fields() -> set[str]:
