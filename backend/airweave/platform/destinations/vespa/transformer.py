@@ -6,6 +6,7 @@ Pure transformation logic with no I/O dependencies.
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -21,6 +22,31 @@ from airweave.platform.entities._base import (
     FileEntity,
     WebEntity,
 )
+
+
+def _sanitize_for_vespa(text: str) -> str:
+    """Sanitize text for Vespa by removing control characters.
+
+    Vespa strictly rejects control characters (code points < 32) except:
+    - \n (newline, 0x0A)
+    - \r (carriage return, 0x0D)
+    - \t (tab, 0x09)
+
+    This removes all other control characters that would cause Vespa feed failures.
+    Common culprits: 0x00 (null), 0x01 (SOH), 0x0B (vertical tab), etc.
+
+    Args:
+        text: Raw text that may contain control characters
+
+    Returns:
+        Sanitized text safe for Vespa
+    """
+    if not text:
+        return text
+
+    # Remove all control characters except newline, carriage return, and tab
+    # Use regex for efficiency on large texts
+    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
 
 
 def _get_system_metadata_fields() -> set[str]:
@@ -167,7 +193,18 @@ class EntityTransformer:
         if entity.updated_at:
             fields["updated_at"] = int(entity.updated_at.timestamp())
         if entity.textual_representation:
-            fields["textual_representation"] = entity.textual_representation
+            # Sanitize text to remove control characters that Vespa rejects
+            sanitized = _sanitize_for_vespa(entity.textual_representation)
+
+            # Log if we removed control characters
+            if len(sanitized) != len(entity.textual_representation):
+                removed = len(entity.textual_representation) - len(sanitized)
+                self._logger.debug(
+                    f"[VespaTransformer] Removed {removed} control characters from "
+                    f"{entity.entity_id} (type: {entity.__class__.__name__})"
+                )
+
+            fields["textual_representation"] = sanitized
         return fields
 
     def _add_system_metadata_fields(

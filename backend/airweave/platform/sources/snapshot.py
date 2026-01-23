@@ -166,12 +166,21 @@ class SnapshotSource(BaseSource):
             return None
 
         try:
+            # Strip full storage path if present (ARF may store full paths like raw/{sync_id}/files/...)
+            # Extract just the relative path within the snapshot directory
+            if "/" in stored_file_path and "files/" in stored_file_path:
+                # Extract everything from 'files/' onward
+                files_idx = stored_file_path.find("files/")
+                if files_idx != -1:
+                    stored_file_path = stored_file_path[files_idx:]
+
             # Ensure stored_file_path includes 'files/' prefix
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
 
             source_path = self._local_path(stored_file_path)
             if not source_path.exists():
+                self.logger.debug(f"File not found at {source_path}")
                 return None
 
             # Create temp directory if needed
@@ -242,8 +251,13 @@ class SnapshotSource(BaseSource):
             return None
 
         try:
+            # Strip full storage path if present
+            if "/" in stored_file_path and "files/" in stored_file_path:
+                files_idx = stored_file_path.find("files/")
+                if files_idx != -1:
+                    stored_file_path = stored_file_path[files_idx:]
+
             # Ensure stored_file_path includes 'files/' prefix
-            # Legacy snapshots may have just the filename without the folder
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
 
@@ -309,6 +323,12 @@ class SnapshotSource(BaseSource):
             return None
 
         try:
+            # Strip full storage path if present
+            if "/" in stored_file_path and "files/" in stored_file_path:
+                files_idx = stored_file_path.find("files/")
+                if files_idx != -1:
+                    stored_file_path = stored_file_path[files_idx:]
+
             # Ensure stored_file_path includes 'files/' prefix
             if not stored_file_path.startswith("files/"):
                 stored_file_path = f"files/{stored_file_path}"
