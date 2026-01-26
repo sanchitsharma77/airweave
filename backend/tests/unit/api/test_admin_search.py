@@ -158,10 +158,13 @@ class TestAdminSearchCollectionAsUser:
 
             assert isinstance(result, SearchResponse)
 
-            # Verify service was called with user principal
+            # Verify service was called with all required parameters
             mock_service.search_as_user.assert_called_once()
             call_kwargs = mock_service.search_as_user.call_args.kwargs
+            assert call_kwargs["request_id"] == mock_ctx.request_id
+            assert call_kwargs["readable_collection_id"] == "test-collection"
             assert call_kwargs["user_principal"] == "john@acme.com"
+            assert call_kwargs["destination"] == "vespa"
 
     async def test_admin_search_as_user_returns_filtered_results(
         self, mock_ctx, mock_db, search_request, mock_service

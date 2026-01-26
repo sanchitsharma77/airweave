@@ -1324,6 +1324,8 @@ async def admin_search_collection_as_user(
     _require_admin_permission(ctx, FeatureFlagEnum.API_KEY_ADMIN_SYNC)
 
     return await service.search_as_user(
+        request_id=ctx.request_id,
+        readable_collection_id=readable_id,
         search_request=search_request,
         db=db,
         ctx=ctx,
