@@ -80,7 +80,7 @@ def _validate_text_quality(text: str, entity_id: str) -> Optional[str]:
         return None
 
     # Count Unicode replacement characters (U+FFFD)
-    replacement_count = text.count('\ufffd')
+    replacement_count = text.count("\ufffd")
 
     if replacement_count == 0:
         return None
@@ -249,8 +249,7 @@ class EntityTransformer:
         if entity.textual_representation:
             # Validate text quality before sanitization
             validation_error = _validate_text_quality(
-                entity.textual_representation,
-                entity.entity_id
+                entity.textual_representation, entity.entity_id
             )
             if validation_error:
                 self._logger.error(

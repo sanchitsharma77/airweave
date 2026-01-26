@@ -97,7 +97,7 @@ class TxtConverter(BaseTextConverter):
         # Try UTF-8 first (most common)
         try:
             text = raw_bytes.decode("utf-8")
-            replacement_count = text.count('\ufffd')
+            replacement_count = text.count("\ufffd")
             if replacement_count == 0:
                 return text
         except UnicodeDecodeError:
@@ -106,13 +106,14 @@ class TxtConverter(BaseTextConverter):
         # Try encoding detection
         try:
             import chardet
+
             detection = chardet.detect(raw_bytes[:100000])  # Sample first 100KB
-            if detection and detection.get('confidence', 0) > 0.7:
-                detected_encoding = detection['encoding']
+            if detection and detection.get("confidence", 0) > 0.7:
+                detected_encoding = detection["encoding"]
                 if detected_encoding:
                     try:
                         text = raw_bytes.decode(detected_encoding)
-                        replacement_count = text.count('\ufffd')
+                        replacement_count = text.count("\ufffd")
                         if replacement_count == 0:
                             logger.debug(
                                 f"Detected encoding {detected_encoding} for {os.path.basename(path)}"
@@ -123,9 +124,9 @@ class TxtConverter(BaseTextConverter):
         except ImportError:
             logger.debug("chardet not available, falling back to UTF-8 with ignore")
 
-        # Fallback: decode with ignore, but validate quality
-        text = raw_bytes.decode("utf-8", errors="ignore")
-        replacement_count = text.count('\ufffd')
+        # Fallback: decode with replace to create U+FFFD for validation
+        text = raw_bytes.decode("utf-8", errors="replace")
+        replacement_count = text.count("\ufffd")
 
         if replacement_count > 0:
             text_length = len(text)
@@ -167,9 +168,9 @@ class TxtConverter(BaseTextConverter):
             try:
                 text = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                # Fallback with validation
-                text = raw_bytes.decode("utf-8", errors="ignore")
-                replacement_count = text.count('\ufffd')
+                # Fallback with replace to detect corruption
+                text = raw_bytes.decode("utf-8", errors="replace")
+                replacement_count = text.count("\ufffd")
                 if replacement_count > 100:  # More lenient for CSV
                     raise EntityProcessingError(
                         f"CSV contains excessive binary data ({replacement_count} replacement chars)"
@@ -221,9 +222,9 @@ class TxtConverter(BaseTextConverter):
             try:
                 text = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                # Fallback with validation
-                text = raw_bytes.decode("utf-8", errors="ignore")
-                replacement_count = text.count('\ufffd')
+                # Fallback with replace to detect corruption
+                text = raw_bytes.decode("utf-8", errors="replace")
+                replacement_count = text.count("\ufffd")
                 if replacement_count > 50:  # Strict for JSON
                     raise EntityProcessingError(
                         f"JSON contains binary data ({replacement_count} replacement chars)"
@@ -261,9 +262,9 @@ class TxtConverter(BaseTextConverter):
             try:
                 content = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                # Fallback with validation
-                content = raw_bytes.decode("utf-8", errors="ignore")
-                replacement_count = content.count('\ufffd')
+                # Fallback with replace to detect corruption
+                content = raw_bytes.decode("utf-8", errors="replace")
+                replacement_count = content.count("\ufffd")
                 if replacement_count > 50:  # Strict for XML
                     raise EntityProcessingError(
                         f"XML contains binary data ({replacement_count} replacement chars)"
@@ -286,8 +287,8 @@ class TxtConverter(BaseTextConverter):
             try:
                 raw = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                raw = raw_bytes.decode("utf-8", errors="ignore")
-                replacement_count = raw.count('\ufffd')
+                raw = raw_bytes.decode("utf-8", errors="replace")
+                replacement_count = raw.count("\ufffd")
                 if replacement_count > 100:  # More lenient for fallback
                     raise EntityProcessingError(
                         f"XML contains excessive binary data ({replacement_count} replacement chars)"

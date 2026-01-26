@@ -54,9 +54,9 @@ class HtmlConverter(BaseTextConverter):
                         try:
                             html_content = raw_bytes.decode("utf-8")
                         except UnicodeDecodeError:
-                            # Fallback with validation
-                            html_content = raw_bytes.decode("utf-8", errors="ignore")
-                            replacement_count = html_content.count('\ufffd')
+                            # Fallback with replace to detect corruption
+                            html_content = raw_bytes.decode("utf-8", errors="replace")
+                            replacement_count = html_content.count("\ufffd")
                             if replacement_count > 100:  # Lenient for HTML
                                 raise EntityProcessingError(
                                     f"HTML contains excessive binary data "

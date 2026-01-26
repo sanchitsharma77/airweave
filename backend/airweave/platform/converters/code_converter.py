@@ -46,16 +46,16 @@ class CodeConverter(BaseTextConverter):
                     # Try UTF-8 first (most common for code)
                     try:
                         code = raw_bytes.decode("utf-8")
-                        if '\ufffd' not in code:
+                        if "\ufffd" not in code:
                             results[path] = code
                             logger.debug(f"Converted code file: {path} ({len(code)} characters)")
                             return
                     except UnicodeDecodeError:
                         pass
 
-                    # Fallback: decode with ignore but validate
-                    code = raw_bytes.decode("utf-8", errors="ignore")
-                    replacement_count = code.count('\ufffd')
+                    # Fallback: decode with replace to detect corruption
+                    code = raw_bytes.decode("utf-8", errors="replace")
+                    replacement_count = code.count("\ufffd")
 
                     if replacement_count > 0:
                         logger.warning(
