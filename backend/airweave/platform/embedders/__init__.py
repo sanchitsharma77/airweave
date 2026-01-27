@@ -15,6 +15,7 @@ from .config import (
     get_provider_for_model,
 )
 from .fastembed import SparseEmbedder
+from .local import LocalDenseEmbedder
 from .mistral import MistralDenseEmbedder
 from .openai import OpenAIDenseEmbedder
 
@@ -28,18 +29,6 @@ def _resolve_provider(model_name: str | None, provider: str | None) -> str:
         if inferred:
             return inferred
     return get_default_provider()
-
-
-def _create_local_fallback_embedder(vector_size: int) -> BaseEmbedder:
-    """Create embedder for 'local' provider (falls back to cloud providers)."""
-    if settings.OPENAI_API_KEY:
-        return OpenAIDenseEmbedder(vector_size=vector_size)
-    if settings.MISTRAL_API_KEY:
-        return MistralDenseEmbedder(model_name="mistral-embed", vector_size=vector_size)
-    raise ValueError(
-        "Local dense embeddings not yet implemented. "
-        "Set OPENAI_API_KEY or MISTRAL_API_KEY for dense embeddings."
-    )
 
 
 def get_dense_embedder(
@@ -76,7 +65,8 @@ def get_dense_embedder(
     if provider == "openai":
         return OpenAIDenseEmbedder(vector_size=vector_size)
     if provider == "local":
-        return _create_local_fallback_embedder(vector_size)
+        return LocalDenseEmbedder(vector_size=vector_size, model_name=model_name)
+
     raise ValueError(f"Unknown embedding provider: {provider}")
 
 
@@ -89,6 +79,7 @@ __all__ = [
     # Dense embedders
     "OpenAIDenseEmbedder",
     "MistralDenseEmbedder",
+    "LocalDenseEmbedder",
     "DenseEmbedder",  # Legacy alias
     # Sparse embedders
     "SparseEmbedder",
