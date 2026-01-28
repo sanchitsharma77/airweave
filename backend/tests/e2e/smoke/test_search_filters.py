@@ -545,6 +545,34 @@ async def test_filter_by_source_name_stub_only(
 
 
 @pytest.mark.asyncio
+async def test_filter_by_source_name_any(
+    stub_filter_client: httpx.AsyncClient,
+    stub_filter_collection: Dict,
+):
+    """Test filtering by source_name with 'any' (IN) operator.
+
+    This mirrors production filter format:
+    {"must": [{"key": "source_name", "match": {"any": ["github"]}}]}
+
+    Using stub source for testing since it's always available.
+    """
+    filter_dict = {"must": [{"key": "source_name", "match": {"any": ["stub"]}}]}
+
+    results = await do_search(
+        stub_filter_client, stub_filter_collection["readable_id"], "test", filter_dict
+    )
+
+    print_results_summary(results, "test_filter_by_source_name_any", filter_dict)
+
+    assert "results" in results
+    assert len(results["results"]) > 0, "Expected results for stub source with match.any"
+
+    for result in results["results"]:
+        source_name = result.get("system_metadata", {}).get("source_name")
+        assert source_name == "stub", f"Expected stub, got {source_name}"
+
+
+@pytest.mark.asyncio
 async def test_filter_by_source_name_stripe_only(
     stub_filter_client: httpx.AsyncClient,
     stub_filter_collection: Dict,
