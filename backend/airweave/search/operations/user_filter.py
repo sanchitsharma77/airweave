@@ -105,11 +105,17 @@ class UserFilter(SearchOperation):
                 op_name=self.__class__.__name__,
             )
 
+    # Valid top-level filter keys (Qdrant filter structure)
+    VALID_FILTER_KEYS = {"must", "should", "must_not", "minimum_should_match"}
+
     def _normalize_user_filter(self) -> Optional[Dict[str, Any]]:
         """Normalize user filter and map field names to Qdrant paths.
 
         Handles both Qdrant Filter objects (with .model_dump()) and plain dicts
         (Airweave canonical format).
+
+        Raises:
+            ValueError: If filter format is invalid (missing must/should/must_not)
         """
         if not self.filter:
             return None
@@ -123,8 +129,47 @@ class UserFilter(SearchOperation):
             # Unknown type - try to use as-is
             filter_dict = dict(self.filter)
 
+        # Validate filter structure
+        self._validate_filter_structure(filter_dict)
+
         # Map field names in conditions
         return self._map_filter_keys(filter_dict)
+
+    def _validate_filter_structure(self, filter_dict: Dict[str, Any]) -> None:
+        """Validate that filter has correct Qdrant structure.
+
+        A valid filter must contain at least one of: must, should, must_not.
+        A bare FieldCondition (e.g., {"key": "...", "match": {...}}) is invalid.
+
+        Args:
+            filter_dict: The filter dictionary to validate
+
+        Raises:
+            ValueError: If filter structure is invalid
+        """
+        if not filter_dict:
+            return
+
+        # Check if filter has any valid top-level keys
+        filter_keys = set(filter_dict.keys())
+        has_valid_structure = bool(filter_keys & {"must", "should", "must_not"})
+
+        if not has_valid_structure:
+            # Check if this looks like a bare FieldCondition
+            if "key" in filter_dict or "match" in filter_dict or "range" in filter_dict:
+                example_filter = {"must": [{"key": "source_name", "match": {"value": "github"}}]}
+                raise ValueError(
+                    f"Invalid filter format: filter must contain 'must', 'should', or 'must_not'. "
+                    f"Received bare FieldCondition: {filter_dict}. "
+                    f"Wrap your condition in a 'must' array. Example: {example_filter}"
+                )
+            # Unknown keys that aren't valid filter structure
+            invalid_keys = filter_keys - self.VALID_FILTER_KEYS
+            if invalid_keys:
+                raise ValueError(
+                    f"Invalid filter format: unrecognized keys {invalid_keys}. "
+                    f"Valid top-level keys are: {self.VALID_FILTER_KEYS}"
+                )
 
     def _map_filter_keys(self, filter_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively map field names in filter dict to Qdrant paths."""
