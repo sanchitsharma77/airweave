@@ -91,6 +91,10 @@ class BillingService:
         log = contextual_logger or logger
 
         # Extract plan from organization metadata
+        # SECURITY: Only self-serve plans allowed via user input;
+        # enterprise requires sales
+        SELF_SERVE_PLANS = ["developer", "pro", "team"]
+
         selected_plan = BillingPlan.PRO  # Default
         if hasattr(organization, "org_metadata") and organization.org_metadata:
             # Check for plan in onboarding metadata (from test/frontend)
@@ -100,13 +104,19 @@ class BillingService:
             direct_plan = organization.org_metadata.get("plan")
 
             plan_from_metadata = subscription_plan or direct_plan
-            if plan_from_metadata and plan_from_metadata.lower() in [
-                "developer",
-                "pro",
-                "team",
-                "enterprise",
-            ]:
-                selected_plan = BillingPlan(plan_from_metadata.lower())
+            if plan_from_metadata:
+                plan_lower = plan_from_metadata.lower()
+                if plan_lower == "enterprise":
+                    log.warning(
+                        f"Blocked enterprise plan self-provisioning attempt for org "
+                        f"{organization.id}. This may indicate abuse."
+                    )
+                    raise InvalidStateError(
+                        "Enterprise plan is only available via sales. "
+                        "Please contact support or select a different plan."
+                    )
+                elif plan_lower in SELF_SERVE_PLANS:
+                    selected_plan = BillingPlan(plan_lower)
 
         # Create billing record
         billing = await billing_transactions.create_billing_record(
@@ -121,8 +131,9 @@ class BillingService:
 
         log.info(f"Created billing record for org {organization.id} with plan {selected_plan}")
 
-        # For enterprise and developer plans, create $0 subscription for webhook-driven periods
-        if selected_plan in {BillingPlan.DEVELOPER, BillingPlan.ENTERPRISE} and stripe_client:
+        # For developer plan, create $0 subscription for webhook-driven periods
+        # Note: Enterprise is handled via sales, not self-serve creation
+        if selected_plan == BillingPlan.DEVELOPER and stripe_client:
             price_id = stripe_client.get_price_for_plan(selected_plan)
             plan_str = selected_plan.value
             if price_id:
