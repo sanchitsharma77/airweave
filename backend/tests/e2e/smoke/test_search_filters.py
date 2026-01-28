@@ -950,13 +950,14 @@ async def test_filter_bare_field_condition_returns_error(
     print(f"RESPONSE BODY: {response.text[:500]}")
     print(f"{'='*80}\n")
 
-    # Should return 422 or 400 with a helpful error message
-    assert response.status_code in (400, 422, 500), (
-        f"Expected error status for invalid filter, got {response.status_code}"
+    # Should return 400 Bad Request for invalid filter (client error, not server error)
+    assert response.status_code == 400, (
+        f"Expected 400 Bad Request for invalid filter, got {response.status_code}. "
+        f"Response: {response.text[:500]}"
     )
 
     # Check that error message mentions the issue
     response_text = response.text.lower()
-    assert "filter" in response_text or "must" in response_text, (
-        f"Expected error message to mention filter format issue: {response.text}"
+    assert "filter" in response_text and "must" in response_text, (
+        f"Expected error message to mention filter format and 'must' wrapper: {response.text}"
     )
