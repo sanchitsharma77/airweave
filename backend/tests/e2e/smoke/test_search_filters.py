@@ -13,6 +13,7 @@ This test suite fills the gap in E2E filter testing by:
 """
 
 import asyncio
+import atexit
 import time
 import pytest
 import pytest_asyncio
@@ -20,6 +21,49 @@ import httpx
 import json
 from collections import Counter
 from typing import AsyncGenerator, Dict, List, Optional
+
+
+def _cleanup_cached_collection():
+    """Cleanup cached collection on process exit.
+
+    This runs when the pytest worker process exits, ensuring we don't leave
+    orphaned collections in the test environment.
+    """
+    global _cached_filter_collection, _cached_collection_readable_id
+
+    if _cached_filter_collection is None:
+        return
+
+    try:
+        from config import settings
+
+        # Use synchronous cleanup since we're in atexit
+        import httpx as httpx_sync
+
+        with httpx_sync.Client(
+            base_url=settings.api_url,
+            headers=settings.api_headers,
+            timeout=30,
+        ) as client:
+            # Cleanup connections first
+            for conn_id in _cached_filter_collection.get("_connections_to_cleanup", []):
+                try:
+                    client.delete(f"/source-connections/{conn_id}")
+                except Exception:
+                    pass
+
+            # Cleanup collection
+            if _cached_collection_readable_id:
+                try:
+                    client.delete(f"/collections/{_cached_collection_readable_id}")
+                except Exception:
+                    pass
+    except Exception:
+        pass  # Best effort cleanup
+
+
+# Register cleanup handler
+atexit.register(_cleanup_cached_collection)
 
 
 def print_results_summary(results: dict, test_name: str, filter_dict: dict = None):
@@ -101,22 +145,13 @@ def print_results_summary(results: dict, test_name: str, filter_dict: dict = Non
     print(f"{'='*80}\n")
 
 
-# Module-scoped event loop for module-scoped async fixtures
-# Required for pytest-asyncio < 0.24 to share fixtures across tests
-@pytest.fixture(scope="module")
-def event_loop():
-    """Create a module-scoped event loop for async fixtures."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(scope="function")
 async def stub_filter_client() -> AsyncGenerator[httpx.AsyncClient, None]:
     """Create HTTP client for filter tests.
 
-    Note: loop_scope="module" is required for pytest-asyncio >= 0.21 when using
-    module-scoped async fixtures with pytest-xdist (parallel test execution).
+    Note: Using function scope to avoid event loop lifecycle issues with pytest-xdist.
+    The httpx client must be closed before the event loop closes, which can be
+    problematic with module-scoped fixtures and parallel test execution.
     """
     from config import settings
 
@@ -149,24 +184,22 @@ async def wait_for_sync(
     return False
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def stub_filter_collection(
-    stub_filter_client: httpx.AsyncClient,
-) -> AsyncGenerator[Dict, None]:
+# Module-level cache for collection data (per-worker in pytest-xdist)
+# This avoids recreating collections for each test while using function-scoped fixtures
+_cached_filter_collection: Optional[Dict] = None
+_cached_collection_readable_id: Optional[str] = None
+
+
+async def _create_filter_collection(client: httpx.AsyncClient) -> Dict:
     """Create a collection with stub + optional Stripe data for filter testing.
 
-    Module-scoped to be shared across all filter tests.
     - Stub source: seed=42, 20 entities (deterministic)
     - Stripe source: added if TEST_STRIPE_API_KEY is available
 
     Having two sources enables proper multi-source filtering tests.
-
-    Note: loop_scope="module" is required for pytest-asyncio >= 0.21 when using
-    module-scoped async fixtures with pytest-xdist (parallel test execution).
     """
     from config import settings
 
-    client = stub_filter_client
     connections_to_cleanup: List[str] = []
 
     # Create collection
@@ -276,6 +309,7 @@ async def stub_filter_collection(
         "has_stripe": has_stripe,
         "readable_id": readable_id,
         "sources": ["stub"] + (["stripe"] if has_stripe else []),
+        "_connections_to_cleanup": connections_to_cleanup,
     }
 
     # Print expected entity distribution for debugging
@@ -304,20 +338,40 @@ So total chunks ≈ 42 (not 20 entities!)
     print(f"Sources available: {result['sources']}")
     print("="*80 + "\n")
 
-    yield result
+    return result
 
-    # Cleanup all connections
-    for conn_id in connections_to_cleanup:
-        try:
-            await client.delete(f"/source-connections/{conn_id}")
-        except Exception:
-            pass
 
-    # Cleanup collection
-    try:
-        await client.delete(f"/collections/{readable_id}")
-    except Exception:
-        pass
+@pytest_asyncio.fixture(scope="function")
+async def stub_filter_collection(
+    stub_filter_client: httpx.AsyncClient,
+) -> AsyncGenerator[Dict, None]:
+    """Provide collection with stub + optional Stripe data for filter testing.
+
+    Uses a module-level cache to avoid recreating collections for each test,
+    while maintaining function-scoped fixtures for proper event loop management
+    with pytest-xdist.
+    """
+    global _cached_filter_collection, _cached_collection_readable_id
+
+    client = stub_filter_client
+
+    # Check if we have a cached collection that still exists
+    if _cached_filter_collection is not None and _cached_collection_readable_id is not None:
+        # Verify the collection still exists
+        check_response = await client.get(f"/collections/{_cached_collection_readable_id}")
+        if check_response.status_code == 200:
+            # Collection still exists, reuse it
+            yield _cached_filter_collection
+            return
+
+    # Create new collection and cache it
+    _cached_filter_collection = await _create_filter_collection(client)
+    _cached_collection_readable_id = _cached_filter_collection["readable_id"]
+
+    yield _cached_filter_collection
+
+    # Note: We don't cleanup here - let the last test or pytest session cleanup handle it
+    # This allows the collection to be reused across tests in the same worker
 
 
 async def do_search(
