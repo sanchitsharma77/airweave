@@ -855,8 +855,11 @@ class BillingService:
         )
 
         # Check if needs setup
+        # Enterprise plans are managed separately (admin-created, $0 subscriptions)
+        # and should never require payment method setup via the normal flow
+        is_enterprise = billing.billing_plan == BillingPlan.ENTERPRISE
         is_paid = is_paid_plan(billing.billing_plan)
-        needs_initial_setup = is_paid and not billing.stripe_subscription_id
+        needs_initial_setup = is_paid and not billing.stripe_subscription_id and not is_enterprise
         requires_payment_method = needs_initial_setup or in_grace_period or grace_period_expired
 
         # Update status if grace period expired
@@ -884,7 +887,8 @@ class BillingService:
             grace_period_ends_at=billing.grace_period_ends_at,
             requires_payment_method=requires_payment_method,
             is_oss=False,
-            has_active_subscription=bool(billing.stripe_subscription_id),
+            # Enterprise plans are always considered active (managed via admin, not Stripe checkout)
+            has_active_subscription=bool(billing.stripe_subscription_id) or is_enterprise,
             in_trial=False,  # We don't track trials currently
             trial_ends_at=None,
             # Yearly prepay fields
