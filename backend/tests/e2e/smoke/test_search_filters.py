@@ -982,9 +982,9 @@ async def test_filter_bare_field_condition_returns_error(
     print(f"RESPONSE BODY: {response.text[:500]}")
     print(f"{'='*80}\n")
 
-    # Should return 400 Bad Request for invalid filter (client error, not server error)
-    assert response.status_code == 400, (
-        f"Expected 400 Bad Request for invalid filter, got {response.status_code}. "
+    # Should return 422 Unprocessable Entity for invalid filter structure
+    assert response.status_code == 422, (
+        f"Expected 422 Unprocessable Entity for invalid filter, got {response.status_code}. "
         f"Response: {response.text[:500]}"
     )
 

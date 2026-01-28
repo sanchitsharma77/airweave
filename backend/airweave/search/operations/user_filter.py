@@ -115,7 +115,7 @@ class UserFilter(SearchOperation):
         (Airweave canonical format).
 
         Raises:
-            HTTPException: 400 if filter format is invalid
+            HTTPException: 422 if filter format is invalid
         """
         if not self.filter:
             return None
@@ -147,7 +147,7 @@ class UserFilter(SearchOperation):
             filter_dict: The filter dictionary to validate
 
         Raises:
-            HTTPException: 400 Bad Request if filter structure is invalid
+            HTTPException: 422 Unprocessable Entity if filter structure is invalid
         """
         if not filter_dict:
             return
@@ -164,7 +164,7 @@ class UserFilter(SearchOperation):
             if "key" in filter_dict or "match" in filter_dict or "range" in filter_dict:
                 example_filter = {"must": [{"key": "source_name", "match": {"value": "github"}}]}
                 raise HTTPException(
-                    status_code=400,
+                    status_code=422,
                     detail=(
                         f"Invalid filter format: received bare FieldCondition which must be "
                         f"wrapped in 'must', 'should', or 'must_not'. "
@@ -174,7 +174,7 @@ class UserFilter(SearchOperation):
                 )
             # Generic validation error
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail=f"Invalid filter format: {e.errors()}",
             )
 
