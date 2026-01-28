@@ -301,10 +301,11 @@ class TestGetDenseEmbedder:
         from airweave.platform.sync.exceptions import SyncFailureError
 
         with patch("airweave.platform.embedders.settings") as mock_settings, \
-             patch("airweave.platform.embedders.config.settings") as mock_config_settings:
+             patch("airweave.platform.embedders.config.settings") as mock_config_settings, \
+             patch("airweave.platform.embedders.local.settings") as mock_local_settings:
             mock_settings.EMBEDDING_DIMENSIONS = 384
-            mock_settings.TEXT2VEC_INFERENCE_URL = None
             mock_config_settings.EMBEDDING_DIMENSIONS = 384
+            mock_local_settings.TEXT2VEC_INFERENCE_URL = None
 
             with pytest.raises(SyncFailureError) as exc_info:
                 get_dense_embedder(provider="local")
