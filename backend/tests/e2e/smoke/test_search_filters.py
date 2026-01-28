@@ -237,12 +237,36 @@ async def stub_filter_collection(
 
             # Wait for stripe sync
             if await wait_for_sync(client, stripe_connection["id"], max_wait_time=300):
-                has_stripe = True
+                # Give Vespa/Qdrant time to index the data
+                await asyncio.sleep(10)
+
+                # Verify Stripe actually has data (empty test accounts will sync but produce nothing)
+                verify_response = await client.post(
+                    f"/collections/{readable_id}/search",
+                    json={
+                        "query": "customer OR invoice OR payment OR product",
+                        "expand_query": False,
+                        "interpret_filters": False,
+                        "rerank": False,
+                        "generate_answer": False,
+                        "filter": {"must": [{"key": "source_name", "match": {"value": "stripe"}}]},
+                    },
+                    timeout=60,
+                )
+                if verify_response.status_code == 200:
+                    verify_data = verify_response.json()
+                    if verify_data.get("results") and len(verify_data["results"]) > 0:
+                        has_stripe = True
+                        print(f"✓ Stripe sync verified: {len(verify_data['results'])} chunks found")
+                    else:
+                        print("⚠ Stripe sync completed but no data indexed (empty test account?)")
+                else:
+                    print(f"⚠ Stripe verification search failed: {verify_response.status_code}")
             else:
                 # Stripe sync timed out, but we can still run stub-only tests
-                pass
+                print("⚠ Stripe sync timed out")
 
-    # Give Vespa time to index
+    # Give Vespa additional time to index stub data
     await asyncio.sleep(5)
 
     result = {
@@ -473,11 +497,11 @@ async def test_filter_by_source_name_stripe_only(
 ):
     """Test filtering for stripe source returns only stripe entities.
 
-    This test only runs if Stripe credentials are available AND Stripe has data.
-    In CI, the test Stripe account may be empty, so we skip if no data.
+    This test only runs if Stripe credentials are available AND Stripe has indexed data.
+    The fixture verifies data exists before setting has_stripe=True.
     """
     if not stub_filter_collection.get("has_stripe"):
-        pytest.skip("Stripe source not available (no TEST_STRIPE_API_KEY)")
+        pytest.skip("Stripe source not available or has no data")
 
     filter_dict = {"must": [{"key": "source_name", "match": {"value": "stripe"}}]}
 
@@ -488,10 +512,7 @@ async def test_filter_by_source_name_stripe_only(
     print_results_summary(results, "test_filter_by_source_name_stripe_only", filter_dict)
 
     assert "results" in results
-
-    # Skip if Stripe sync completed but produced no data (empty test account)
-    if len(results["results"]) == 0:
-        pytest.skip("Stripe source synced but has no data (empty test account)")
+    assert len(results["results"]) > 0, "Expected results for stripe source (has_stripe=True)"
 
     for result in results["results"]:
         source_name = result.get("system_metadata", {}).get("source_name")
