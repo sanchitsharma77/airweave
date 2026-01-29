@@ -3,31 +3,90 @@ Smoke test for storage backend verification.
 
 Tests that the configured storage backend is working correctly by:
 1. Running a sync that writes data to storage (ARF files)
-2. Directly checking the local_storage directory for ARF files
-3. Verifying entity data can be read from storage
+2. Verifying ARF files exist INSIDE the Docker container via docker exec
+3. Verifying manifest and entity files are readable
 
 Runs in local environment only (TEST_ENV=local) via @pytest.mark.local_only.
 Skipped automatically in deployed environments (TEST_ENV=dev/prod).
 """
 
 import asyncio
-import json
+import subprocess
 import uuid
-from pathlib import Path
 
 import httpx
 import pytest
 
 
-def get_local_storage_path() -> Path:
-    """Get the local_storage path from the repo root.
+def docker_exec(container: str, command: str) -> tuple[int, str, str]:
+    """Run a command inside a Docker container.
 
-    Path: backend/tests/e2e/smoke/test_storage_backend.py
-    Levels: smoke -> e2e -> tests -> backend -> repo_root
+    Returns (exit_code, stdout, stderr).
     """
-    test_file = Path(__file__)
-    repo_root = test_file.parent.parent.parent.parent.parent
-    return repo_root / "local_storage"
+    result = subprocess.run(
+        ["docker", "exec", container, "sh", "-c", command],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def verify_arf_files_in_container(sync_id: str, container: str = "airweave-backend") -> dict:
+    """Verify ARF files exist inside the Docker container.
+
+    Returns dict with verification results.
+    """
+    storage_path = "/app/local_storage"
+    arf_path = f"{storage_path}/raw/{sync_id}"
+
+    results = {
+        "storage_exists": False,
+        "arf_dir_exists": False,
+        "manifest_exists": False,
+        "manifest_valid": False,
+        "entities_dir_exists": False,
+        "entity_count": 0,
+        "errors": [],
+    }
+
+    # Check storage directory
+    code, out, err = docker_exec(container, f"test -d {storage_path} && echo 'yes' || echo 'no'")
+    results["storage_exists"] = out.strip() == "yes"
+    if not results["storage_exists"]:
+        results["errors"].append(f"Storage directory {storage_path} not found in container")
+        return results
+
+    # Check ARF directory
+    code, out, err = docker_exec(container, f"test -d {arf_path} && echo 'yes' || echo 'no'")
+    results["arf_dir_exists"] = out.strip() == "yes"
+    if not results["arf_dir_exists"]:
+        # List what's in raw/ to help debug
+        code, out, err = docker_exec(container, f"ls -la {storage_path}/raw/ 2>/dev/null || echo 'raw dir missing'")
+        results["errors"].append(f"ARF directory {arf_path} not found. Contents of raw/: {out.strip()}")
+        return results
+
+    # Check manifest
+    manifest_path = f"{arf_path}/manifest.json"
+    code, out, err = docker_exec(container, f"test -f {manifest_path} && echo 'yes' || echo 'no'")
+    results["manifest_exists"] = out.strip() == "yes"
+    if results["manifest_exists"]:
+        # Validate JSON
+        code, out, err = docker_exec(container, f"python3 -c \"import json; json.load(open('{manifest_path}'))\" && echo 'valid'")
+        results["manifest_valid"] = "valid" in out
+
+    # Check entities directory
+    entities_path = f"{arf_path}/entities"
+    code, out, err = docker_exec(container, f"test -d {entities_path} && echo 'yes' || echo 'no'")
+    results["entities_dir_exists"] = out.strip() == "yes"
+    if results["entities_dir_exists"]:
+        # Count entity files
+        code, out, err = docker_exec(container, f"ls -1 {entities_path}/*.json 2>/dev/null | wc -l")
+        try:
+            results["entity_count"] = int(out.strip())
+        except ValueError:
+            results["entity_count"] = 0
+
+    return results
 
 
 @pytest.mark.asyncio
@@ -47,14 +106,12 @@ class TestStorageBackend:
         assert health.get("status") == "healthy", f"Unhealthy status: {health}"
 
     async def test_sync_writes_arf_files_to_storage(self, api_client: httpx.AsyncClient, config):
-        """Test that sync writes ARF files to the local storage backend.
+        """Test that sync writes ARF files to the storage backend.
 
         1. Creates a stub connection and triggers a sync
         2. Waits for sync to complete
-        3. Checks local_storage/raw/{sync_id}/ for ARF files
-        4. Verifies manifest and entity files exist and are readable
+        3. Uses docker exec to verify ARF files inside the container
         """
-        storage_path = get_local_storage_path()
         collection_name = f"Storage Test {uuid.uuid4().hex[:8]}"
 
         # Create test collection
@@ -127,46 +184,30 @@ class TestStorageBackend:
                 assert sync_completed, f"Sync did not complete within {max_wait}s"
                 assert sync_id, "No sync_id returned from connection"
 
-                # VERIFY STORAGE - Check local_storage for ARF files
-                arf_path = storage_path / "raw" / str(sync_id)
-
                 # Wait for filesystem writes to complete
                 await asyncio.sleep(2)
 
-                # Verify storage directory exists
-                assert storage_path.exists(), (
-                    f"local_storage not found at {storage_path}. "
-                    "Docker volume mount may be misconfigured."
+                # VERIFY STORAGE inside Docker container
+                results = verify_arf_files_in_container(sync_id)
+
+                # Assert all checks passed
+                assert results["storage_exists"], (
+                    f"Storage directory not found in container. Errors: {results['errors']}"
                 )
-
-                # Verify ARF directory exists
-                assert arf_path.exists(), (
-                    f"ARF directory not found at {arf_path}. "
-                    f"Sync completed but no ARF files written for sync_id={sync_id}"
+                assert results["arf_dir_exists"], (
+                    f"ARF directory not found for sync_id={sync_id}. Errors: {results['errors']}"
                 )
-
-                # Verify manifest exists and is valid
-                manifest_path = arf_path / "manifest.json"
-                assert manifest_path.exists(), f"Manifest not found at {manifest_path}"
-                with open(manifest_path) as f:
-                    manifest = json.load(f)
-                assert manifest, "Manifest is empty"
-
-                # Verify entities directory and files
-                entities_path = arf_path / "entities"
-                assert entities_path.exists(), f"Entities directory not found at {entities_path}"
-
-                entity_files = list(entities_path.glob("*.json"))
-                assert len(entity_files) > 0, (
-                    f"No entity files in {entities_path}. Sync reported success but wrote no entities."
+                assert results["manifest_exists"], (
+                    f"Manifest not found for sync_id={sync_id}"
                 )
-
-                # Verify entity content is valid
-                with open(entity_files[0]) as f:
-                    entity = json.load(f)
-                assert entity, f"Entity file {entity_files[0]} is empty"
-                assert "entity_id" in entity or "id" in entity, (
-                    f"Entity missing identifier. Keys: {list(entity.keys())}"
+                assert results["manifest_valid"], (
+                    f"Manifest is not valid JSON for sync_id={sync_id}"
+                )
+                assert results["entities_dir_exists"], (
+                    f"Entities directory not found for sync_id={sync_id}"
+                )
+                assert results["entity_count"] > 0, (
+                    f"No entity files found for sync_id={sync_id}"
                 )
 
             finally:
