@@ -85,7 +85,7 @@ class TestStorageBackend:
                     "name": f"Storage Test {uuid.uuid4().hex[:8]}",
                     "short_name": "stub",
                     "readable_collection_id": collection_id,
-                    "authentication": {"credentials": {}},
+                    "authentication": {"credentials": {"stub_key": "test"}},
                     "sync_immediately": True,
                 },
             )
