@@ -6,13 +6,12 @@ Tests that the configured storage backend is working correctly by:
 2. Directly checking the local_storage directory for ARF files
 3. Verifying entity data can be read from storage
 
-NOTE: These tests only run in local environment where local_storage is mounted.
-For remote environments, storage is verified implicitly through successful syncs.
+Runs in local environment only (TEST_ENV=local) via @pytest.mark.local_only.
+Skipped automatically in deployed environments (TEST_ENV=dev/prod).
 """
 
 import asyncio
 import json
-import os
 import uuid
 from pathlib import Path
 
@@ -27,7 +26,6 @@ def get_local_storage_path() -> Path:
     Levels: smoke -> e2e -> tests -> backend -> repo_root
     """
     test_file = Path(__file__)
-    # smoke/ -> e2e/ -> tests/ -> backend/ -> repo_root/
     repo_root = test_file.parent.parent.parent.parent.parent
     return repo_root / "local_storage"
 
@@ -37,36 +35,29 @@ def get_local_storage_path() -> Path:
 class TestStorageBackend:
     """Test suite for storage backend verification.
 
-    Checks the mounted local_storage directory to verify ARF files are written.
-    Only runs in local environment where the storage is accessible.
+    @pytest.mark.local_only ensures this only runs when TEST_ENV=local.
+    In deployed environments (TEST_ENV=dev), this is automatically skipped.
     """
 
     async def test_health_check_passes(self, api_client: httpx.AsyncClient):
         """Test that health check passes."""
         response = await api_client.get("/health")
-
         assert response.status_code == 200, f"Health check failed: {response.text}"
-
         health = response.json()
         assert health.get("status") == "healthy", f"Unhealthy status: {health}"
 
     async def test_sync_writes_arf_files_to_storage(self, api_client: httpx.AsyncClient, config):
-        """Test that sync writes ARF files to the storage backend.
+        """Test that sync writes ARF files to the local storage backend.
 
-        This test:
         1. Creates a stub connection and triggers a sync
         2. Waits for sync to complete
         3. Checks local_storage/raw/{sync_id}/ for ARF files
         4. Verifies manifest and entity files exist and are readable
-
-        Note: @pytest.mark.local_only on the class handles TEST_ENV checking.
         """
         storage_path = get_local_storage_path()
-        print(f"\n[DEBUG] Storage path: {storage_path}")
-        print(f"[DEBUG] TEST_ENV: {os.environ.get('TEST_ENV', 'NOT SET')}")
         collection_name = f"Storage Test {uuid.uuid4().hex[:8]}"
 
-        # Step 1: Create test collection
+        # Create test collection
         collection_response = await api_client.post(
             "/collections/", json={"name": collection_name}
         )
@@ -77,19 +68,17 @@ class TestStorageBackend:
         collection_id = collection["readable_id"]
 
         try:
-            # Step 2: Check stub source is available
+            # Check stub source is available
             sources_response = await api_client.get("/sources/")
-            assert sources_response.status_code == 200
+            assert sources_response.status_code == 200, f"Sources API failed: {sources_response.text}"
             sources = sources_response.json()
             source_names = [s["short_name"] for s in sources]
+            assert "stub" in source_names, (
+                f"Stub source not available. ENABLE_INTERNAL_SOURCES must be true. "
+                f"Available sources: {source_names}"
+            )
 
-            if "stub" not in source_names:
-                pytest.skip(
-                    "Stub source not available (ENABLE_INTERNAL_SOURCES=false). "
-                    "Storage verification requires internal sources."
-                )
-
-            # Step 3: Create stub connection and trigger sync
+            # Create stub connection and trigger sync
             connection_response = await api_client.post(
                 "/source-connections",
                 json={
@@ -100,16 +89,16 @@ class TestStorageBackend:
                     "sync_immediately": True,
                 },
             )
-
-            if connection_response.status_code != 200:
-                pytest.skip(f"Could not create stub connection: {connection_response.text}")
+            assert connection_response.status_code == 200, (
+                f"Failed to create stub connection: {connection_response.text}"
+            )
 
             connection = connection_response.json()
             connection_id = connection["id"]
             sync_id = connection.get("sync_id")
 
             try:
-                # Step 4: Wait for sync to complete
+                # Wait for sync to complete
                 max_wait = 120
                 poll_interval = 3
                 elapsed = 0
@@ -133,68 +122,52 @@ class TestStorageBackend:
                         sync_completed = True
                         break
                     elif status == "error":
-                        pytest.fail(f"Sync failed: {conn_details}")
+                        pytest.fail(f"Sync failed with error: {conn_details}")
 
                 assert sync_completed, f"Sync did not complete within {max_wait}s"
-                assert sync_id, "No sync_id returned"
+                assert sync_id, "No sync_id returned from connection"
 
-                # Step 5: VERIFY STORAGE - Check local_storage for ARF files
-                # The directory is created by Docker when the sync writes data
+                # VERIFY STORAGE - Check local_storage for ARF files
                 arf_path = storage_path / "raw" / str(sync_id)
 
-                # Wait a moment for filesystem writes to complete
+                # Wait for filesystem writes to complete
                 await asyncio.sleep(2)
 
-                # Now check if the storage directory and ARF files exist
-                if not storage_path.exists():
-                    pytest.fail(
-                        f"local_storage directory not found at {storage_path}. "
-                        "Sync completed but storage directory was not created. "
-                        "Check Docker volume mount configuration."
-                    )
+                # Verify storage directory exists
+                assert storage_path.exists(), (
+                    f"local_storage not found at {storage_path}. "
+                    "Docker volume mount may be misconfigured."
+                )
 
+                # Verify ARF directory exists
                 assert arf_path.exists(), (
                     f"ARF directory not found at {arf_path}. "
-                    "Sync completed but ARF files were not written!"
+                    f"Sync completed but no ARF files written for sync_id={sync_id}"
                 )
 
-                # Check manifest exists
+                # Verify manifest exists and is valid
                 manifest_path = arf_path / "manifest.json"
-                assert manifest_path.exists(), (
-                    f"Manifest not found at {manifest_path}. "
-                    "ARF directory exists but manifest is missing!"
-                )
-
-                # Read and verify manifest
+                assert manifest_path.exists(), f"Manifest not found at {manifest_path}"
                 with open(manifest_path) as f:
                     manifest = json.load(f)
                 assert manifest, "Manifest is empty"
 
-                # Check entities directory
+                # Verify entities directory and files
                 entities_path = arf_path / "entities"
-                assert entities_path.exists(), (
-                    f"Entities directory not found at {entities_path}"
-                )
+                assert entities_path.exists(), f"Entities directory not found at {entities_path}"
 
-                # List and verify entity files
                 entity_files = list(entities_path.glob("*.json"))
                 assert len(entity_files) > 0, (
-                    f"No entity files found in {entities_path}. "
-                    "Sync reported success but no entities were written!"
+                    f"No entity files in {entities_path}. Sync reported success but wrote no entities."
                 )
 
-                # Read first entity to verify content
+                # Verify entity content is valid
                 with open(entity_files[0]) as f:
                     entity = json.load(f)
                 assert entity, f"Entity file {entity_files[0]} is empty"
                 assert "entity_id" in entity or "id" in entity, (
-                    f"Entity missing identifier: {entity.keys()}"
+                    f"Entity missing identifier. Keys: {list(entity.keys())}"
                 )
-
-                # SUCCESS: Storage verified
-                # - ARF directory exists
-                # - Manifest exists and is valid JSON
-                # - Entity files exist and are readable
 
             finally:
                 # Cleanup connection
@@ -209,27 +182,3 @@ class TestStorageBackend:
                 await api_client.delete(f"/collections/{collection_id}")
             except Exception:
                 pass
-
-    async def test_storage_directory_accessible(self, api_client: httpx.AsyncClient, config):
-        """Basic test that local_storage directory is accessible after services start.
-
-        Note: @pytest.mark.local_only on the class handles TEST_ENV checking.
-        """
-        storage_path = get_local_storage_path()
-
-        # In local CI, the directory may not exist until Docker writes to it
-        # This is OK - the main test verifies storage works after a sync
-        if not storage_path.exists():
-            pytest.skip(
-                "local_storage directory not yet created. "
-                "This is expected before first sync."
-            )
-
-        # Verify we can list the directory
-        assert storage_path.is_dir(), f"{storage_path} is not a directory"
-
-        # Check raw directory exists or can be created
-        raw_path = storage_path / "raw"
-        # raw/ may not exist until first sync, that's OK
-        if raw_path.exists():
-            assert raw_path.is_dir(), f"{raw_path} is not a directory"
