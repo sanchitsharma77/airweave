@@ -32,11 +32,6 @@ def get_local_storage_path() -> Path:
     return repo_root / "local_storage"
 
 
-def is_local_environment() -> bool:
-    """Check if we're running in local environment (not remote API)."""
-    return os.environ.get("TEST_ENV", "local") == "local"
-
-
 @pytest.mark.asyncio
 @pytest.mark.local_only
 class TestStorageBackend:
@@ -63,12 +58,12 @@ class TestStorageBackend:
         2. Waits for sync to complete
         3. Checks local_storage/raw/{sync_id}/ for ARF files
         4. Verifies manifest and entity files exist and are readable
-        """
-        # Only check storage in local environment
-        if not is_local_environment():
-            pytest.skip("Storage verification only runs in local environment")
 
+        Note: @pytest.mark.local_only on the class handles TEST_ENV checking.
+        """
         storage_path = get_local_storage_path()
+        print(f"\n[DEBUG] Storage path: {storage_path}")
+        print(f"[DEBUG] TEST_ENV: {os.environ.get('TEST_ENV', 'NOT SET')}")
         collection_name = f"Storage Test {uuid.uuid4().hex[:8]}"
 
         # Step 1: Create test collection
@@ -216,10 +211,10 @@ class TestStorageBackend:
                 pass
 
     async def test_storage_directory_accessible(self, api_client: httpx.AsyncClient, config):
-        """Basic test that local_storage directory is accessible after services start."""
-        if not is_local_environment():
-            pytest.skip("Storage verification only runs in local environment")
+        """Basic test that local_storage directory is accessible after services start.
 
+        Note: @pytest.mark.local_only on the class handles TEST_ENV checking.
+        """
         storage_path = get_local_storage_path()
 
         # In local CI, the directory may not exist until Docker writes to it
