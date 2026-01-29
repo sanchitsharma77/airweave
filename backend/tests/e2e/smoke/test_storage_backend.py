@@ -12,6 +12,7 @@ For remote environments, storage is verified implicitly through successful syncs
 
 import asyncio
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -29,6 +30,11 @@ def get_local_storage_path() -> Path:
     # smoke/ -> e2e/ -> tests/ -> backend/ -> repo_root/
     repo_root = test_file.parent.parent.parent.parent.parent
     return repo_root / "local_storage"
+
+
+def is_local_environment() -> bool:
+    """Check if we're running in local environment (not remote API)."""
+    return os.environ.get("TEST_ENV", "local") == "local"
 
 
 @pytest.mark.asyncio
@@ -58,14 +64,11 @@ class TestStorageBackend:
         3. Checks local_storage/raw/{sync_id}/ for ARF files
         4. Verifies manifest and entity files exist and are readable
         """
-        # Check if we're in local environment with accessible storage
-        storage_path = get_local_storage_path()
-        if not storage_path.exists():
-            pytest.skip(
-                f"local_storage not found at {storage_path}. "
-                "This test only runs in local environment."
-            )
+        # Only check storage in local environment
+        if not is_local_environment():
+            pytest.skip("Storage verification only runs in local environment")
 
+        storage_path = get_local_storage_path()
         collection_name = f"Storage Test {uuid.uuid4().hex[:8]}"
 
         # Step 1: Create test collection
@@ -141,10 +144,19 @@ class TestStorageBackend:
                 assert sync_id, "No sync_id returned"
 
                 # Step 5: VERIFY STORAGE - Check local_storage for ARF files
+                # The directory is created by Docker when the sync writes data
                 arf_path = storage_path / "raw" / str(sync_id)
 
                 # Wait a moment for filesystem writes to complete
                 await asyncio.sleep(2)
+
+                # Now check if the storage directory and ARF files exist
+                if not storage_path.exists():
+                    pytest.fail(
+                        f"local_storage directory not found at {storage_path}. "
+                        "Sync completed but storage directory was not created. "
+                        "Check Docker volume mount configuration."
+                    )
 
                 assert arf_path.exists(), (
                     f"ARF directory not found at {arf_path}. "
@@ -204,13 +216,18 @@ class TestStorageBackend:
                 pass
 
     async def test_storage_directory_accessible(self, api_client: httpx.AsyncClient, config):
-        """Basic test that local_storage directory is accessible."""
+        """Basic test that local_storage directory is accessible after services start."""
+        if not is_local_environment():
+            pytest.skip("Storage verification only runs in local environment")
+
         storage_path = get_local_storage_path()
 
+        # In local CI, the directory may not exist until Docker writes to it
+        # This is OK - the main test verifies storage works after a sync
         if not storage_path.exists():
             pytest.skip(
-                f"local_storage not found at {storage_path}. "
-                "This test only runs in local environment."
+                "local_storage directory not yet created. "
+                "This is expected before first sync."
             )
 
         # Verify we can list the directory
