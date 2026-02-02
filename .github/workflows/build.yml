@@ -7,6 +7,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_BACKEND: ${{ github.repository }}-backend
   IMAGE_NAME_FRONTEND: ${{ github.repository }}-frontend
+  IMAGE_NAME_MCP: ${{ github.repository }}-mcp
 
 jobs:
   build-and-push-image:
@@ -41,7 +42,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
 
-      - name: Build and push Docker image
+      # Backend image is also used for temporal-worker (same code, different entrypoint)
+      - name: Build and push backend image
         id: push-backend
         uses: docker/build-push-action@v6
         with:
@@ -57,7 +59,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
 
-      - name: Build and push Docker image
+      - name: Build and push frontend image
         id: push-frontend
         uses: docker/build-push-action@v6
         with:
@@ -66,3 +68,19 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta-mcp
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_MCP }}
+
+      - name: Build and push MCP server image
+        id: push-mcp
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta-mcp.outputs.tags }}
+          labels: ${{ steps.meta-mcp.outputs.labels }}
