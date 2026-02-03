@@ -8,38 +8,41 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  # Build each component on native runners for each platform
+  build:
     strategy:
       fail-fast: true
       matrix:
-        include:
-          # Backend image is also used for sync-worker (same code, different entrypoint)
+        component:
           - name: backend
             context: ./backend
-            image: ${{ github.repository }}-backend
           - name: frontend
             context: ./frontend
-            image: ${{ github.repository }}-frontend
           - name: mcp
             context: ./mcp
-            image: ${{ github.repository }}-mcp
+        platform:
+          - runner: ubuntu-latest
+            arch: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            arch: linux/arm64
+            suffix: arm64
+
+    runs-on: ${{ matrix.platform.runner }}
 
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
+
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -48,17 +51,70 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component.name }}
 
-      - name: Build and push ${{ matrix.name }} image
+      - name: Build and push ${{ matrix.component.name }} (${{ matrix.platform.suffix }})
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: ${{ matrix.component.context }}
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform.arch }}
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component.name }}:${{ steps.meta.outputs.version }}-${{ matrix.platform.suffix }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component.name }}-${{ matrix.platform.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component.name }}-${{ matrix.platform.suffix }}
+
+  # Merge platform-specific images into multi-arch manifests
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      matrix:
+        component: [backend, frontend, mcp]
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component }}"
+
+          echo "Creating manifest for ${IMAGE}:${VERSION}"
+
+          # Create manifest from platform-specific images
+          docker manifest create "${IMAGE}:${VERSION}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+
+          # Push the manifest
+          docker manifest push "${IMAGE}:${VERSION}"
+
+          # Also create 'latest' manifest for version tags
+          if [[ "${VERSION}" == v* ]]; then
+            docker manifest create "${IMAGE}:latest" \
+              "${IMAGE}:${VERSION}-amd64" \
+              "${IMAGE}:${VERSION}-arm64"
+            docker manifest push "${IMAGE}:latest"
+          fi
