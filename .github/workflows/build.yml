@@ -11,10 +11,10 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
-          # Backend image is also used for temporal-worker (same code, different entrypoint)
+          # Backend image is also used for sync-worker (same code, different entrypoint)
           - name: backend
             context: ./backend
             image: ${{ github.repository }}-backend
