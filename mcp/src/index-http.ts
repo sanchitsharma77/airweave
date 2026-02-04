@@ -141,14 +141,16 @@ const localSessionCache = new Map<string, SessionWithTransport>();
  * Note: apiKey parameter is the PLAINTEXT key needed for API calls
  */
 async function createSessionObjects(sessionData: SessionData, apiKey: string): Promise<SessionWithTransport> {
-    const { sessionId, collection, baseUrl } = sessionData;
+    const { sessionId, collection, baseUrl, initialized } = sessionData;
 
     // Create a new server with the API key and collection
     const server = createMcpServer(apiKey, collection);
 
     // Create a new transport for this session
+    // Note: sessionIdGenerator is undefined to disable session validation
+    // This allows stateless operation where each POST is independent
     const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => sessionId
+        sessionIdGenerator: undefined
     });
 
     // Set up session management callbacks
@@ -165,6 +167,15 @@ async function createSessionObjects(sessionData: SessionData, apiKey: string): P
 
     // Connect the transport to the server
     await server.connect(transport);
+
+    // If restoring an already-initialized session, mark transport as initialized
+    // This handles stateless HTTP where transport is recreated per request
+    if (initialized) {
+        console.log(`[${new Date().toISOString()}] Restoring initialized state for session ${sessionId}`);
+        // Mark transport as initialized by accessing internal state
+        // TypeScript workaround: Cast to any to access private _initialized property
+        (transport as any)._initialized = true;
+    }
 
     return { server, transport, data: sessionData };
 }
@@ -236,6 +247,7 @@ app.post('/mcp', async (req, res) => {
                     baseUrl,
                     createdAt: Date.now(),
                     lastAccessedAt: Date.now(),
+                    initialized: false,  // Not initialized yet
                     clientIP,
                     userAgent
                 };
@@ -322,6 +334,7 @@ app.post('/mcp', async (req, res) => {
                     baseUrl,
                     createdAt: Date.now(),
                     lastAccessedAt: Date.now(),
+                    initialized: false,  // Not initialized yet
                     clientIP,
                     userAgent
                 };
@@ -335,8 +348,19 @@ app.post('/mcp', async (req, res) => {
             }
         }
 
+        // Check if this is an initialize request
+        const isInitializeRequest = req.body?.method === 'initialize';
+
         // Handle the request with the session's transport
         await session.transport.handleRequest(req, res, req.body);
+
+        // If initialize succeeded, mark session as initialized
+        if (isInitializeRequest && !session.data.initialized) {
+            console.log(`[${new Date().toISOString()}] Marking session ${sessionId} as initialized`);
+            session.data.initialized = true;
+            session.data.lastAccessedAt = Date.now();
+            await sessionManager.setSession(session.data, false);
+        }
 
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Error handling MCP request:`, error);
