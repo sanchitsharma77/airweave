@@ -80,12 +80,11 @@ class MistralConverter(BaseTextConverter):
         except ImportError:
             raise SyncFailureError("mistralai package required but not installed")
 
-    async def _mistral_api_call_with_retry(self, operation, operation_name: str = "unknown"):
+    async def _mistral_api_call_with_retry(self, operation):
         """Generic wrapper for Mistral API calls with rate limiting + retry.
 
         Args:
-            operation: Sync function to call (will be run in thread pool)
-            operation_name: Name of the operation for logging
+            operation: Async coroutine to call
 
         Returns:
             Result from operation
@@ -106,23 +105,7 @@ class MistralConverter(BaseTextConverter):
         )
         async def _call():
             await self.rate_limiter.acquire()  # Rate limit before each attempt
-
-            start_time = time.time()
-            logger.debug(f"[MISTRAL_API] Starting operation: {operation_name}")
-
-            try:
-                result = await run_in_thread_pool(operation)
-                duration = time.time() - start_time
-                logger.debug(
-                    f"[MISTRAL_API] Completed operation: {operation_name} in {duration:.2f}s"
-                )
-                return result
-            except Exception as e:
-                duration = time.time() - start_time
-                logger.warning(
-                    f"[MISTRAL_API] Failed operation: {operation_name} after {duration:.2f}s: {e}"
-                )
-                raise
+            return await operation
 
         return await _call()
 
@@ -697,22 +680,20 @@ class MistralConverter(BaseTextConverter):
             async with semaphore:
                 try:
                     # Upload file with retry + rate limiting
-                    def _upload():
-                        with open(chunk_path, "rb") as f:
-                            return self._mistral_client.files.upload(
+                    with open(chunk_path, "rb") as f:
+                        file_response = await self._mistral_api_call_with_retry(
+                            self._mistral_client.files.upload_async(
                                 file={"file_name": os.path.basename(chunk_path), "content": f},
                                 purpose="ocr",
-                            ).id
-
-                    file_id = await self._mistral_api_call_with_retry(
-                        _upload, operation_name=f"upload_file_{os.path.basename(chunk_path)}"
-                    )
+                            )
+                        )
+                    file_id = file_response.id
 
                     # Get signed URL with retry + rate limiting
-                    signed_url = await self._mistral_api_call_with_retry(
-                        lambda: self._mistral_client.files.get_signed_url(file_id=file_id).url,
-                        operation_name=f"get_signed_url_{file_id[:8]}",
+                    signed_url_response = await self._mistral_api_call_with_retry(
+                        self._mistral_client.files.get_signed_url_async(file_id=file_id)
                     )
+                    signed_url = signed_url_response.url
 
                     # Store result
                     upload_key = f"{unique_key}__chunk_{chunk_path}"
@@ -796,23 +777,21 @@ class MistralConverter(BaseTextConverter):
         """
         try:
             # Upload JSONL with retry + rate limiting
-            def _upload_jsonl():
-                with open(jsonl_path, "rb") as f:
-                    return self._mistral_client.files.upload(
+            with open(jsonl_path, "rb") as f:
+                batch_file_response = await self._mistral_api_call_with_retry(
+                    self._mistral_client.files.upload_async(
                         file={"file_name": "batch.jsonl", "content": f}, purpose="batch"
-                    ).id
-
-            batch_file_id = await self._mistral_api_call_with_retry(
-                _upload_jsonl, operation_name="upload_batch_jsonl"
-            )
+                    )
+                )
+            batch_file_id = batch_file_response.id
 
             # Create batch job with retry + rate limiting
-            job_id = await self._mistral_api_call_with_retry(
-                lambda: self._mistral_client.batch.jobs.create(
+            job_response = await self._mistral_api_call_with_retry(
+                self._mistral_client.batch.jobs.create_async(
                     input_files=[batch_file_id], model="mistral-ocr-latest", endpoint="/v1/ocr"
-                ).id,
-                operation_name=f"create_batch_job_{batch_file_id[:8]}",
+                )
             )
+            job_id = job_response.id
 
             logger.debug(f"Submitted batch job {job_id} (batch file: {batch_file_id})")
             return job_id, batch_file_id
@@ -1093,8 +1072,7 @@ class MistralConverter(BaseTextConverter):
             try:
                 # Delete with retry + rate limiting (best effort)
                 await self._mistral_api_call_with_retry(
-                    lambda: self._mistral_client.files.delete(file_id=file_id),
-                    operation_name=f"delete_file_{file_id[:8]}",
+                    self._mistral_client.files.delete_async(file_id=file_id)
                 )
             except Exception:
                 pass  # Best effort cleanup - don't fail if deletion fails
