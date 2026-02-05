@@ -74,7 +74,10 @@ class MistralConverter(BaseTextConverter):
         try:
             from mistralai import Mistral
 
-            self._mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY)
+            self._mistral_client = Mistral(
+                api_key=settings.MISTRAL_API_KEY,
+                timeout_ms=300_000,  # 5 minute timeout (300 seconds)
+            )
             self._mistral_initialized = True
             logger.debug("Mistral client initialized for document conversion")
         except ImportError:
