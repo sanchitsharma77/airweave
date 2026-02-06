@@ -582,11 +582,12 @@ class BaseSource:
                     async for item in items:  # type: ignore[union-attr]
                         await items_queue.put((idx, item))
                         idx += 1
+                        total_items_cell[0] = idx
                 else:
                     for item in items:  # type: ignore[union-attr]
                         await items_queue.put((idx, item))
                         idx += 1
-                total_items_cell[0] = idx
+                        total_items_cell[0] = idx
             finally:
                 await items_queue.put(items_done)
                 producer_finished.set()

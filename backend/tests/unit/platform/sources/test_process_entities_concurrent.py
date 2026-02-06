@@ -229,3 +229,23 @@ async def test_worker_yields_multiple():
     assert len(results) == 3
     ids = sorted(r.stub_id for r in results)
     assert ids == sorted([f"test-{v}" for v in [700, 701, 702]])
+
+
+@pytest.mark.asyncio
+async def test_producer_iterator_failure_still_drains():
+    """If the items iterator raises mid-iteration, already-queued items still complete."""
+    src = _TestSource()
+
+    async def _exploding_items():
+        for i in range(10):
+            if i == 5:
+                raise RuntimeError("iterator broke")
+            yield i
+
+    results = await _collect(
+        src.process_entities_concurrent(
+            _exploding_items(), _worker_single, batch_size=3, stop_on_error=False
+        )
+    )
+    ids = sorted(r.stub_id for r in results)
+    assert ids == sorted(f"test-{i}" for i in range(5))
