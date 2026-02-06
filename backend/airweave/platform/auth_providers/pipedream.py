@@ -281,7 +281,9 @@ class PipedreamAuthProvider(BaseAuthProvider):
 
             # Extract and map credentials
             found_credentials = self._extract_and_map_credentials(
-                account_data, source_auth_config_fields, source_short_name,
+                account_data,
+                source_auth_config_fields,
+                source_short_name,
                 optional_fields=optional_fields,
             )
 

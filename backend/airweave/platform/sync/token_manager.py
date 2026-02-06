@@ -258,10 +258,11 @@ class TokenManager:
             # Get the runtime auth fields required by the source
             from airweave.core.auth_provider_service import auth_provider_service
 
-            source_auth_config_fields, optional_fields = (
-                await auth_provider_service.get_runtime_auth_fields_for_source(
-                    self.db, self.source_short_name
-                )
+            (
+                source_auth_config_fields,
+                optional_fields,
+            ) = await auth_provider_service.get_runtime_auth_fields_for_source(
+                self.db, self.source_short_name
             )
 
             # Get fresh credentials from auth provider instance
