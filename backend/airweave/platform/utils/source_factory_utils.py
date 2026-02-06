@@ -349,10 +349,7 @@ async def get_auth_configuration(
         from airweave.db.session import get_db_context
 
         async with get_db_context() as db:
-            (
-                source_auth_config_fields,
-                optional_fields,
-            ) = await auth_provider_service.get_runtime_auth_fields_for_source(
+            auth_fields = await auth_provider_service.get_runtime_auth_fields_for_source(
                 db, source_connection_data["short_name"]
             )
 
@@ -361,8 +358,8 @@ async def get_auth_configuration(
 
         auth_result = await auth_provider_instance.get_auth_result(
             source_short_name=source_connection_data["short_name"],
-            source_auth_config_fields=source_auth_config_fields,
-            optional_fields=optional_fields,
+            source_auth_config_fields=auth_fields.all_fields,
+            optional_fields=auth_fields.optional_fields,
             source_config_field_mappings=source_config_field_mappings or None,
         )
 

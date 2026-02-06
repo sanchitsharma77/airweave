@@ -1,6 +1,7 @@
 """Service for managing auth provider operations."""
 
-from typing import List, Optional, Set, Tuple, Union, get_origin
+from dataclasses import dataclass
+from typing import List, Optional, Set, Union, get_origin
 
 from fastapi import HTTPException
 from pydantic_core import PydanticUndefined
@@ -14,6 +15,25 @@ from airweave.platform.locator import resource_locator
 auth_provider_logger = logger.with_prefix("Auth Provider Service: ").with_context(
     component="auth_provider_service"
 )
+
+
+@dataclass
+class AuthFieldsResponse:
+    """Auth fields required for a source.
+
+    Attributes:
+        all_fields: All auth field names that should be fetched
+        optional_fields: Field names that are optional (can be missing without error)
+    """
+
+    all_fields: List[str]
+    optional_fields: Set[str]
+
+    @property
+    def required_fields(self) -> Set[str]:
+        """Get the set of required (non-optional) fields."""
+        return set(self.all_fields) - self.optional_fields
+
 
 # function to get most recent connection for an auth provider short name
 # function to get credentials of most recent connection
@@ -58,7 +78,7 @@ class AuthProviderService:
 
     async def get_runtime_auth_fields_for_source(
         self, db: AsyncSession, source_short_name: str
-    ) -> Tuple[List[str], Set[str]]:
+    ) -> AuthFieldsResponse:
         """Get the runtime auth fields required from an auth provider for a source.
 
         Returns all auth config fields along with which ones are optional, so auth
@@ -69,8 +89,9 @@ class AuthProviderService:
             source_short_name: The short name of the source
 
         Returns:
-            Tuple of (all_field_names, optional_field_names). Auth providers should
-            attempt to fetch all fields but only fail on missing required ones.
+            AuthFieldsResponse with all field names and optional field names.
+            Auth providers should attempt to fetch all fields but only fail on
+            missing required ones.
 
         Raises:
             HTTPException: If source not found
@@ -97,13 +118,15 @@ class AuthProviderService:
                 f"Source '{source_short_name}' auth fields: {all_fields}, "
                 f"optional: {optional_fields}"
             )
-            return all_fields, optional_fields
+            return AuthFieldsResponse(all_fields=all_fields, optional_fields=optional_fields)
         else:
             # Pure OAuth -- all fields are required
             if source_model.oauth_type == "with_refresh":
-                return ["access_token", "refresh_token"], set()
+                return AuthFieldsResponse(
+                    all_fields=["access_token", "refresh_token"], optional_fields=set()
+                )
             else:
-                return ["access_token"], set()
+                return AuthFieldsResponse(all_fields=["access_token"], optional_fields=set())
 
     async def validate_auth_provider_config(
         self,
