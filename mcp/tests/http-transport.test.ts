@@ -20,7 +20,8 @@ describe('HTTP Transport - Stateless Architecture', () => {
      * Extract Bearer token per RFC 6750.
      */
     function extractBearerToken(header: string | undefined): string | undefined {
-        if (!header?.startsWith('Bearer ')) return undefined;
+        if (!header || header.length < 8) return undefined;
+        if (header.slice(0, 7).toLowerCase() !== 'bearer ') return undefined;
         return header.slice(7);
     }
 
@@ -99,13 +100,14 @@ describe('HTTP Transport - Stateless Architecture', () => {
             expect(response.status).toBe(401);
         });
 
-        it('should reject case-mismatched Bearer scheme', async () => {
+        it('should accept case-insensitive Bearer scheme per RFC 7235', async () => {
             const response = await request(app)
                 .post('/mcp')
                 .set('Authorization', 'BEARER test-api-key')
                 .send({ method: 'test' });
 
-            expect(response.status).toBe(401);
+            expect(response.status).toBe(200);
+            expect(response.body.apiKey).toBe('test-api-key');
         });
 
         it('should accept API key via query parameter', async () => {

@@ -28,7 +28,9 @@ app.use(express.json({ limit: '10mb' }));
  * Returns undefined for non-Bearer schemes or malformed headers.
  */
 function extractBearerToken(header: string | undefined): string | undefined {
-    if (!header?.startsWith('Bearer ')) return undefined;
+    if (!header || header.length < 8) return undefined;
+    // RFC 7235 Section 2.1 / RFC 9110 Section 11.1: auth scheme is case-insensitive
+    if (header.slice(0, 7).toLowerCase() !== 'bearer ') return undefined;
     return header.slice(7);
 }
 
