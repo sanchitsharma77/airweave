@@ -53,21 +53,6 @@ export function trackMcpRequest(apiKey: string, properties: {
     });
 }
 
-export function trackMcpSearch(apiKey: string, properties: {
-    collection: string;
-    resultCount: number;
-    responseTimeMs: number;
-    responseType: string;
-    searchMethod?: string;
-}): void {
-    if (!client) return;
-    client.capture({
-        distinctId: hashApiKey(apiKey),
-        event: 'mcp_search',
-        properties
-    });
-}
-
 export function trackMcpError(apiKey: string | undefined, properties: {
     errorCode: number;
     errorMessage: string;
