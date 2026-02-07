@@ -2,6 +2,7 @@
 
 import { AirweaveSDKClient } from '@airweave/sdk';
 import { AirweaveConfig, SearchRequest, SearchResponse } from './types.js';
+import { VERSION } from '../server.js';
 
 export class AirweaveClient {
     private client: AirweaveSDKClient;
@@ -9,7 +10,11 @@ export class AirweaveClient {
     constructor(private config: AirweaveConfig) {
         this.client = new AirweaveSDKClient({
             apiKey: config.apiKey,
-            baseUrl: config.baseUrl
+            baseUrl: config.baseUrl,
+            headers: {
+                'X-Client-Name': 'airweave-mcp-search',
+                'X-Client-Version': VERSION,
+            }
         });
     }
 
