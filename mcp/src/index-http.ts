@@ -40,8 +40,6 @@ function extractBearerToken(header: string | undefined): string | undefined {
 function extractApiKey(req: express.Request): string | undefined {
     return (req.headers['x-api-key'] as string) ||
         extractBearerToken(req.headers['authorization'] as string) ||
-        (req.query.apiKey as string) ||
-        (req.query.api_key as string) ||
         undefined;
 }
 
@@ -72,9 +70,7 @@ app.get('/', (req, res) => {
             required: true,
             methods: [
                 "X-API-Key: <your-api-key> (recommended)",
-                "Authorization: Bearer <your-api-key>",
-                "Query parameter: ?apiKey=your-key",
-                "Query parameter: ?api_key=your-key"
+                "Authorization: Bearer <your-api-key>"
             ],
             headers: {
                 "X-API-Key": "Your Airweave API key (required)",
@@ -102,7 +98,7 @@ app.post('/mcp', async (req, res) => {
                 error: {
                     code: -32001,
                     message: 'Authentication required',
-                    data: 'Please provide an API key via X-API-Key header, Authorization header, or apiKey query parameter'
+                    data: 'Please provide an API key via X-API-Key header or Authorization: Bearer header'
                 },
                 id: req.body?.id || null
             });

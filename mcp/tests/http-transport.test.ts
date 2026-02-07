@@ -32,9 +32,7 @@ describe('HTTP Transport - Stateless Architecture', () => {
         // Simplified stateless /mcp endpoint matching production behavior
         app.post('/mcp', async (req, res) => {
             const apiKey = (req.headers['x-api-key'] as string) ||
-                extractBearerToken(req.headers['authorization'] as string) ||
-                (req.query.apiKey as string) ||
-                (req.query.api_key as string);
+                extractBearerToken(req.headers['authorization'] as string);
 
             if (!apiKey) {
                 return res.status(401).json({
@@ -110,13 +108,12 @@ describe('HTTP Transport - Stateless Architecture', () => {
             expect(response.body.apiKey).toBe('test-api-key');
         });
 
-        it('should accept API key via query parameter', async () => {
+        it('should reject API key via query parameter', async () => {
             const response = await request(app)
                 .post('/mcp?apiKey=query-key')
                 .send({ method: 'test' });
 
-            expect(response.status).toBe(200);
-            expect(response.body.apiKey).toBe('query-key');
+            expect(response.status).toBe(401);
         });
     });
 
