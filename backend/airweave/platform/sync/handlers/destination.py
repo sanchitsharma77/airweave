@@ -175,7 +175,15 @@ class DestinationHandler(EntityActionHandler):
 
             # Deep-copy to avoid cross-contamination
             dest_entities = [e.model_copy(deep=True) for e in entities]
+
+            proc_start = asyncio.get_running_loop().time()
             processed = await processor.process(dest_entities, sync_context)
+            proc_elapsed = asyncio.get_running_loop().time() - proc_start
+            if proc_elapsed > 10:
+                sync_context.logger.warning(
+                    f"[{self.name}] {processor.__class__.__name__} slow: "
+                    f"{proc_elapsed:.1f}s for {len(dest_entities)} entities"
+                )
 
             if not processed:
                 sync_context.logger.debug(
