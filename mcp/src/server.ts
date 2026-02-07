@@ -5,15 +5,9 @@ import { AirweaveClient } from "./api/airweave-client.js";
 import { AirweaveConfig } from "./api/types.js";
 import { createSearchTool } from "./tools/search-tool.js";
 import { createConfigTool } from "./tools/config-tool.js";
-import { DEFAULT_BASE_URL, ERROR_MESSAGES } from "./config/constants.js";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { DEFAULT_BASE_URL, ERROR_MESSAGES, VERSION } from "./config/constants.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
-
-export const VERSION: string = pkg.version;
+export { VERSION };
 
 export function createMcpServer(config: AirweaveConfig) {
     const server = new McpServer({

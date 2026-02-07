@@ -2,7 +2,7 @@
 
 import { AirweaveSDKClient } from '@airweave/sdk';
 import { AirweaveConfig, SearchRequest, SearchResponse } from './types.js';
-import { VERSION } from '../server.js';
+import { VERSION } from '../config/constants.js';
 
 export class AirweaveClient {
     private client: AirweaveSDKClient;

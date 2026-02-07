@@ -1,8 +1,9 @@
 /**
  * PostHog analytics for the hosted MCP server.
  *
- * Only active when POSTHOG_API_KEY is set (i.e., hosted mode).
- * The npx/local mode never sets this env var, so no events are emitted.
+ * Only used by the hosted HTTP entry point (index-http.ts).
+ * The local/npx entry point (index.ts) never imports this module,
+ * so no analytics are emitted in local mode.
  *
  * Events are batched and flushed asynchronously -- they never block
  * request handling or add latency to MCP responses.
