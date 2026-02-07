@@ -11,31 +11,31 @@
  *
  * Endpoint: https://mcp.airweave.ai/mcp
  * Protocol: MCP 2025-03-26 (Streamable HTTP)
- * Authentication: X-API-Key, Bearer token, or query parameter
+ * Authentication: X-API-Key or Bearer token
  */
 
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpServer } from './server.js';
+import { createMcpServer, VERSION } from './server.js';
 import { AirweaveConfig } from './api/types.js';
 import { DEFAULT_BASE_URL } from './config/constants.js';
+import { initPostHog, shutdownPostHog, trackMcpRequest, trackMcpError } from './analytics/posthog.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 /**
  * Extract Bearer token per RFC 6750.
- * Returns undefined for non-Bearer schemes or malformed headers.
+ * RFC 7235 Section 2.1 / RFC 9110 Section 11.1: auth scheme is case-insensitive.
  */
 function extractBearerToken(header: string | undefined): string | undefined {
     if (!header || header.length < 8) return undefined;
-    // RFC 7235 Section 2.1 / RFC 9110 Section 11.1: auth scheme is case-insensitive
     if (header.slice(0, 7).toLowerCase() !== 'bearer ') return undefined;
     return header.slice(7);
 }
 
 /**
- * Extract API key from request using multiple methods.
+ * Extract API key from request headers.
  */
 function extractApiKey(req: express.Request): string | undefined {
     return (req.headers['x-api-key'] as string) ||
@@ -50,6 +50,7 @@ app.get('/health', (req, res) => {
         transport: 'streamable-http',
         protocol: 'MCP 2025-03-26',
         mode: 'stateless',
+        version: VERSION,
         timestamp: new Date().toISOString()
     });
 });
@@ -58,7 +59,7 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
     res.json({
         name: "Airweave MCP Search Server",
-        version: "0.5.7",
+        version: VERSION,
         transport: "Streamable HTTP",
         protocol: "MCP 2025-03-26",
         mode: "stateless",
@@ -89,10 +90,16 @@ app.get('/', (req, res) => {
 
 // Main MCP endpoint - fully stateless, fresh server per request
 app.post('/mcp', async (req, res) => {
+    const startTime = Date.now();
+
     try {
         const apiKey = extractApiKey(req);
 
         if (!apiKey) {
+            trackMcpError(undefined, {
+                errorCode: -32001,
+                errorMessage: 'Authentication required'
+            });
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: {
@@ -109,6 +116,7 @@ app.post('/mcp', async (req, res) => {
             process.env.AIRWEAVE_COLLECTION ||
             'default';
         const baseUrl = process.env.AIRWEAVE_BASE_URL || DEFAULT_BASE_URL;
+        const method = req.body?.method || 'unknown';
 
         const config: AirweaveConfig = { apiKey, collection, baseUrl };
         const server = createMcpServer(config);
@@ -119,6 +127,12 @@ app.post('/mcp', async (req, res) => {
 
         await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
+
+        trackMcpRequest(apiKey, {
+            method,
+            collection,
+            responseTimeMs: Date.now() - startTime
+        });
 
         // Clean up after the response is sent
         res.on('close', async () => {
@@ -132,6 +146,10 @@ app.post('/mcp', async (req, res) => {
 
     } catch (error) {
         console.error(`[${new Date().toISOString()}] Error handling MCP request:`, error);
+        trackMcpError(extractApiKey(req), {
+            errorCode: -32603,
+            errorMessage: error instanceof Error ? error.message : 'Internal server error'
+        });
         if (!res.headersSent) {
             res.status(500).json({
                 jsonrpc: '2.0',
@@ -175,8 +193,10 @@ async function startServer() {
     const collection = process.env.AIRWEAVE_COLLECTION || 'default';
     const baseUrl = process.env.AIRWEAVE_BASE_URL || DEFAULT_BASE_URL;
 
+    initPostHog();
+
     const server = app.listen(PORT, () => {
-        console.log(`Airweave MCP Search Server (Streamable HTTP) started`);
+        console.log(`Airweave MCP Search Server v${VERSION} (Streamable HTTP) started`);
         console.log(`Protocol: MCP 2025-03-26 | Mode: stateless`);
         console.log(`Endpoint: http://localhost:${PORT}/mcp`);
         console.log(`Health: http://localhost:${PORT}/health`);
@@ -185,6 +205,7 @@ async function startServer() {
 
     const shutdown = async (signal: string) => {
         console.log(`${signal} received. Shutting down...`);
+        await shutdownPostHog();
         server.close(() => {
             console.log('HTTP server closed');
             process.exit(0);
